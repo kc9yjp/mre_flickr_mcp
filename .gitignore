@@ -162,5 +162,5 @@ cython_debug/
 #.idea/
 
 # Custom project settings
-*.db
+data/
 .DS_Store

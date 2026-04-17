@@ -1,2 +1,7 @@
 #!/usr/bin/env sh
-cd "$(dirname "$0")/.." && exec docker compose run --rm -it flickr "$@"
+cd "$(dirname "$0")/.."
+if [ -t 0 ]; then
+    exec docker compose run --rm -it flickr "$@"
+else
+    exec docker compose run --rm -i flickr "$@"
+fi
