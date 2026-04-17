@@ -1,33 +1,62 @@
 # Flickr MCP Server
 
-Write a MCP server that can be used to search for photos on Flickr and return the results to the client.
-Author: Eric Wettstein, Mr. E Photos, ejwettstein on flickr
+A Flickr MCP (Model Context Protocol) server with supporting Python CLI scripts.  
+Author: Eric Wettstein — [Mr. E Photos](https://www.flickr.com/photos/ejwettstein/) (`ejwettstein` on Flickr)
 
-## MCP Server
-The MCP server will work with the command line python scripts.  The scripts are located in the `scripts` directory.  The scripts are used to search for photos on Flickr and return the results to the client.  The scripts are used to search for photos on Flickr and return the results to the client.
+---
 
-## Python Scripts
-The scripts will use the Flickr API to search for photos on Flickr and return the results to the client.  The scripts will use the Flickr API to manage an individual photos, albums and followers.
+## Architecture
 
-## API Keys
-API keys are stored in the `.env` file.
+Two-tier design:
 
-## Database
-Database is stored in the `.db` file.  It is a sqlite database. It is used to map a users flickr account.
+1. **CLI scripts** (`scripts/`) — standalone Python tools for Flickr API interaction
+2. **MCP server** (planned) — wraps CLI functionality for use by AI clients
 
-## Features for CLI
-1. Login to flickr (API and OA  uth)
-1. Logout of flickr
-1. Get my public photos (with pagination): title, description, date taken, date uploaded, url, tags, comments, favorites, notes, licenses, sizes, exif, history, geo, people, related, similar, stats
-1. Save data to the database
-1. Refresh this list from flickr (this will update the database with new photos and update existing photos)
-1. Update a photo title, description and tags
+---
 
-## Features for the MCP Server
-1. Login to flickr (API and OA  uth)
-1. get recent photos from the database
-1. update the photo title, description and tags
+## Quick Start
 
+```bash
+pip install requests
+# add FLICKR_API_KEY and FLICKR_API_SECRET to .env
+python scripts/flickr.py login
+```
+
+Or with Docker:
+
+```bash
+docker compose build
+bin/flickr login
+```
+
+See [usage.md](usage.md) for full instructions.
+
+---
+
+## CLI Features (implemented)
+
+- OAuth 1.0a login / status / logout
+- Manual HMAC-SHA1 request signing — no third-party OAuth library
+
+## Planned Features
+
+- Full MCP server layer
+- SQLite database mapping Flickr accounts and photos
+- Photo search and CRUD (title, description, tags)
+- Album and follower management
+- Paginated photo listing with rich metadata (EXIF, geo, stats, etc.)
+
+---
+
+## Configuration
+
+| File | Purpose |
+|---|---|
+| `.env` | `FLICKR_API_KEY` and `FLICKR_API_SECRET` |
+| `~/.flickr_mcp/credentials.json` | OAuth access tokens (outside repo, auto-created on login) |
+
+---
 
 ## Resources
-* https://www.flickr.com/services/api/
+
+- [Flickr API docs](https://www.flickr.com/services/api/)
