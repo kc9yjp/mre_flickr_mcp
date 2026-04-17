@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "flickr": {
+      "command": "docker",
+      "args": ["compose", "run", "--rm", "-i", "mcp"],
+      "cwd": "/Users/ericwettstein/coder/mre_flickr_mcp"
+    }
+  }
+}

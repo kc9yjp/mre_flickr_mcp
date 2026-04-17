@@ -86,6 +86,26 @@ The first run always does a full sync regardless of the flag. Subsequent runs de
 
 ---
 
-## MCP Server
+## MCP Server (`scripts/flickr_mcp.py`)
 
-Not yet implemented. See `readme.md` for planned features.
+Stdio MCP server for use with Claude Code (or any MCP client).
+
+### Claude Code setup
+
+The project's `.mcp.json` registers the server and `.claude/settings.json` auto-approves it. After `docker compose build`, restart Claude Code from this directory and the `flickr` MCP server will be available.
+
+### Tools
+
+| Tool | Description |
+|---|---|
+| `search_photos` | Filter by title keyword, tag, date range; sort by date or views |
+| `get_photo` | Full metadata for one photo by ID |
+| `get_summary` | Total count, views, date range, top tags |
+| `list_recent_syncs` | Sync history |
+| `sync` | Trigger an incremental or full sync from Flickr |
+
+### Running manually
+
+```bash
+docker compose run --rm -i mcp
+```
