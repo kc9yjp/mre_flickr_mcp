@@ -71,6 +71,25 @@ def _oauth_params(api_key, extra=None):
     return p
 
 
+def _api_get(method, extra=None):
+    api_key, api_secret = _load_env()
+    creds = _load_credentials()
+    params = _oauth_params(api_key, {
+        "oauth_token": creds["oauth_token"],
+        "method": method,
+        "format": "json",
+        "nojsoncallback": "1",
+    })
+    if extra:
+        params.update(extra)
+    params["oauth_signature"] = _sign("GET", API_URL, params, api_secret, creds["oauth_token_secret"])
+    resp = requests.get(API_URL, params=params)
+    data = resp.json()
+    if data.get("stat") != "ok":
+        raise RuntimeError(f"Flickr API error: {data.get('message', 'unknown')}")
+    return data
+
+
 def _api_post(method, extra=None):
     api_key, api_secret = _load_env()
     creds = _load_credentials()
@@ -178,6 +197,58 @@ async def list_tools():
             },
         ),
         Tool(
+            name="find_groups",
+            description="Search the user's Flickr groups by keyword from the local database.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Keyword to search group names"},
+                    "limit": {"type": "integer", "description": "Max results (default 10)"},
+                },
+            },
+        ),
+        Tool(
+            name="add_to_group",
+            description="Add a photo to a Flickr group pool.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "photo_id": {"type": "string", "description": "Flickr photo ID"},
+                    "group_id": {"type": "string", "description": "Flickr group NSID"},
+                },
+                "required": ["photo_id", "group_id"],
+            },
+        ),
+        Tool(
+            name="find_weak_photos",
+            description=(
+                "Rank public photos by a weakness score combining low views-per-day, "
+                "zero favorites, and zero comments. Use to find candidates for making private."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "limit":                  {"type": "integer", "description": "Max results (default 20, max 100)"},
+                    "min_age_days":           {"type": "integer", "description": "Min days since upload (default 30)"},
+                    "require_zero_favorites": {"type": "boolean", "description": "Only include photos with 0 favorites"},
+                },
+            },
+        ),
+        Tool(
+            name="set_visibility",
+            description="Set a photo's visibility on Flickr — pass is_public=false to make it private.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "id":        {"type": "string",  "description": "Flickr photo ID"},
+                    "is_public": {"type": "boolean", "description": "False = private"},
+                    "is_friend": {"type": "boolean", "description": "Visible to friends (default false)"},
+                    "is_family": {"type": "boolean", "description": "Visible to family (default false)"},
+                },
+                "required": ["id", "is_public"],
+            },
+        ),
+        Tool(
             name="sync",
             description=(
                 "Fetch updated photo metadata from Flickr into the local database. "
@@ -203,6 +274,10 @@ async def call_tool(name: str, arguments: dict):
             case "list_recent_syncs": return await _list_recent_syncs(arguments)
             case "update_photo":      return await _update_photo(arguments)
             case "fetch_photo_image": return await _fetch_photo_image(arguments)
+            case "find_groups":       return await _find_groups(arguments)
+            case "add_to_group":      return await _add_to_group(arguments)
+            case "find_weak_photos":  return await _find_weak_photos(arguments)
+            case "set_visibility":    return await _set_visibility(arguments)
             case "sync":             return await _sync(arguments)
             case _: return [TextContent(type="text", text=f"Unknown tool: {name}")]
     except FileNotFoundError as e:
@@ -367,6 +442,97 @@ async def _fetch_photo_image(args):
         TextContent(type="text", text=f"Photo ID: {args['id']}\n{row['url_photopage']}"),
         ImageContent(type="image", data=data, mimeType=mime),
     ]
+
+
+async def _find_groups(args):
+    query = args.get("query", "")
+    limit = int(args.get("limit", 10))
+    conn = db()
+    rows = conn.execute(
+        "SELECT id, name, members, pool_count FROM groups WHERE name LIKE ? ORDER BY members DESC LIMIT ?",
+        (f"%{query}%", limit),
+    ).fetchall()
+    conn.close()
+    if not rows:
+        return [TextContent(type="text", text=f"No groups found matching '{query}'. Run sync to populate groups.")]
+    return [TextContent(type="text", text=json.dumps([dict(r) for r in rows], indent=2))]
+
+
+async def _add_to_group(args):
+    _api_post("flickr.groups.pools.add", {
+        "photo_id": args["photo_id"],
+        "group_id": args["group_id"],
+    })
+    return [TextContent(type="text", text=f"Photo {args['photo_id']} added to group {args['group_id']}.")]
+
+
+async def _find_weak_photos(args):
+    limit = min(int(args.get("limit", 20)), 100)
+    min_age_days = int(args.get("min_age_days", 30))
+    extra_where = "AND favorites = 0" if args.get("require_zero_favorites") else ""
+
+    sql = f"""
+        WITH scored AS (
+            SELECT id, title, tags, date_taken, date_uploaded, views, favorites, comments,
+                   url_photopage,
+                   CAST((strftime('%s','now') - date_uploaded) AS REAL) / 86400.0 AS days_since_upload,
+                   CAST(views AS REAL) / MAX(
+                       CAST((strftime('%s','now') - date_uploaded) AS REAL) / 86400.0, 1.0
+                   ) AS views_per_day,
+                   (1.0 / (
+                       CAST(views AS REAL) / MAX(
+                           CAST((strftime('%s','now') - date_uploaded) AS REAL) / 86400.0, 1.0
+                       ) + 0.1
+                   ))
+                   + CASE WHEN favorites = 0 THEN 2.0 ELSE 0.0 END
+                   + CASE WHEN comments = 0 THEN 1.0 ELSE 0.0 END
+                   AS weakness_score
+            FROM photos
+            WHERE date_uploaded IS NOT NULL
+              AND date_uploaded < (strftime('%s','now') - ? * 86400)
+              {extra_where}
+        )
+        SELECT * FROM scored ORDER BY weakness_score DESC LIMIT ?
+    """
+
+    conn = db()
+    rows = conn.execute(sql, (min_age_days, limit)).fetchall()
+    conn.close()
+
+    results = [{
+        "id":               r["id"],
+        "title":            r["title"],
+        "tags":             r["tags"],
+        "date_taken":       r["date_taken"],
+        "days_since_upload": round(r["days_since_upload"], 1),
+        "views":            r["views"],
+        "favorites":        r["favorites"],
+        "comments":         r["comments"],
+        "views_per_day":    round(r["views_per_day"], 4),
+        "weakness_score":   round(r["weakness_score"], 2),
+        "url_photopage":    r["url_photopage"],
+    } for r in rows]
+
+    return [TextContent(type="text", text=json.dumps(results, indent=2))]
+
+
+async def _set_visibility(args):
+    photo_id = args["id"]
+    is_public = 1 if args["is_public"] else 0
+    is_friend = 1 if args.get("is_friend", False) else 0
+    is_family = 1 if args.get("is_family", False) else 0
+
+    _api_post("flickr.photos.setPerms", {
+        "photo_id":      photo_id,
+        "is_public":     str(is_public),
+        "is_friend":     str(is_friend),
+        "is_family":     str(is_family),
+        "perm_comment":  "3" if is_public else "0",
+        "perm_addmeta":  "2" if is_public else "0",
+    })
+
+    visibility = "public" if is_public else "private"
+    return [TextContent(type="text", text=f"Photo {photo_id} is now {visibility} on Flickr.")]
 
 
 async def _sync(args):
