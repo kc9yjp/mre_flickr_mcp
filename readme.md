@@ -33,18 +33,17 @@ See [usage.md](usage.md) for full instructions.
 
 ---
 
-## CLI Features (implemented)
+## Features
 
-- OAuth 1.0a login / status / logout
-- Manual HMAC-SHA1 request signing — no third-party OAuth library
+**Implemented**
+- OAuth 1.0a login / status / logout (`bin/flickr`)
+- Public photo metadata sync to SQLite (`bin/flickr-sync`)
+- MCP server with 5 tools: search, get, summary, sync history, trigger sync
 
-## Planned Features
-
-- Full MCP server layer
-- SQLite database mapping Flickr accounts and photos
-- Photo search and CRUD (title, description, tags)
+**Planned**
+- Photo CRUD (title, description, tags)
 - Album and follower management
-- Paginated photo listing with rich metadata (EXIF, geo, stats, etc.)
+- EXIF, geo, stats metadata
 
 ---
 

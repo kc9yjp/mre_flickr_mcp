@@ -18,5 +18,15 @@ services:
       - ./data:/app/data
       - ./scripts:/app/scripts
 
+  mcp:
+    build: .
+    entrypoint: ["python", "scripts/flickr_mcp.py"]
+    env_file: .env
+    volumes:
+      - flickr-creds:/root/.flickr_mcp
+      - ./data:/app/data
+      - ./scripts:/app/scripts
+    stdin_open: true
+
 volumes:
   flickr-creds:
