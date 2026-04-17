@@ -1,0 +1,13 @@
+services:
+  flickr:
+    build: .
+    env_file: .env
+    volumes:
+      # persist OAuth credentials across container runs
+      - flickr-creds:/root/.flickr_mcp
+    # login requires interactive TTY for the OAuth verifier prompt
+    stdin_open: true
+    tty: true
+
+volumes:
+  flickr-creds:
