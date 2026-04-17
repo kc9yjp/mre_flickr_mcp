@@ -25,7 +25,7 @@ ENV_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__
 API_URL = "https://api.flickr.com/services/rest/"
 PER_PAGE = 500
 
-EXTRAS = "description,date_upload,date_taken,last_update,tags,views,url_o,url_l,path_alias,media"
+EXTRAS = "description,date_upload,date_taken,last_update,tags,views,count_faves,url_o,url_l,path_alias,media"
 
 
 # --- Auth (mirrors flickr.py) ---
@@ -109,6 +109,7 @@ def init_db(conn):
             url_original  TEXT,
             tags          TEXT,
             views         INTEGER,
+            favorites     INTEGER,
             synced_at     INTEGER
         );
 
@@ -145,8 +146,8 @@ def upsert_photo(conn, p, owner_nsid, synced_at):
     conn.execute("""
         INSERT INTO photos
             (id, title, description, date_taken, date_uploaded, last_updated,
-             url_photopage, url_original, tags, views, synced_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             url_photopage, url_original, tags, views, favorites, synced_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
             title=excluded.title,
             description=excluded.description,
@@ -157,6 +158,7 @@ def upsert_photo(conn, p, owner_nsid, synced_at):
             url_original=excluded.url_original,
             tags=excluded.tags,
             views=excluded.views,
+            favorites=excluded.favorites,
             synced_at=excluded.synced_at
     """, (
         p["id"],
@@ -169,6 +171,7 @@ def upsert_photo(conn, p, owner_nsid, synced_at):
         url_original,
         tags,
         int(p.get("views", 0) or 0),
+        int(p.get("count_faves", 0) or 0),
         synced_at,
     ))
 

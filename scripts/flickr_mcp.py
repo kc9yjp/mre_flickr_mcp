@@ -116,7 +116,7 @@ async def list_tools():
                     "tags":      {"type": "string", "description": "Tag (partial match)"},
                     "date_from": {"type": "string", "description": "Earliest date taken, YYYY-MM-DD"},
                     "date_to":   {"type": "string", "description": "Latest date taken, YYYY-MM-DD"},
-                    "sort_by":   {"type": "string", "enum": ["date_taken", "views", "date_uploaded"], "default": "date_taken"},
+                    "sort_by":   {"type": "string", "enum": ["date_taken", "views", "favorites", "date_uploaded"], "default": "date_taken"},
                     "order":     {"type": "string", "enum": ["asc", "desc"], "default": "desc"},
                     "limit":     {"type": "integer", "description": "Max results (default 50, max 200)"},
                     "incomplete": {"type": "boolean", "description": "Only return photos missing a title, description, or tags"},
@@ -237,7 +237,7 @@ async def _search_photos(args):
     where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
 
     sort_by = args.get("sort_by", "date_taken")
-    if sort_by not in ("date_taken", "views", "date_uploaded"):
+    if sort_by not in ("date_taken", "views", "favorites", "date_uploaded"):
         sort_by = "date_taken"
     order = "ASC" if args.get("order", "desc") == "asc" else "DESC"
     limit = min(int(args.get("limit", 50)), 200)
