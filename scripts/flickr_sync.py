@@ -25,7 +25,7 @@ ENV_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__
 API_URL = "https://api.flickr.com/services/rest/"
 PER_PAGE = 500
 
-EXTRAS = "description,date_upload,date_taken,last_update,tags,views,count_faves,url_o,url_l,path_alias,media"
+EXTRAS = "description,date_upload,date_taken,last_update,tags,views,count_faves,count_comments,url_o,url_l,path_alias,media"
 
 
 # --- Auth (mirrors flickr.py) ---
@@ -110,7 +110,16 @@ def init_db(conn):
             tags          TEXT,
             views         INTEGER,
             favorites     INTEGER,
+            comments      INTEGER,
             synced_at     INTEGER
+        );
+
+        CREATE TABLE IF NOT EXISTS groups (
+            id         TEXT PRIMARY KEY,
+            name       TEXT,
+            members    INTEGER,
+            pool_count INTEGER,
+            synced_at  INTEGER
         );
 
         CREATE TABLE IF NOT EXISTS sync_log (
@@ -146,8 +155,8 @@ def upsert_photo(conn, p, owner_nsid, synced_at):
     conn.execute("""
         INSERT INTO photos
             (id, title, description, date_taken, date_uploaded, last_updated,
-             url_photopage, url_original, tags, views, favorites, synced_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             url_photopage, url_original, tags, views, favorites, comments, synced_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
             title=excluded.title,
             description=excluded.description,
@@ -159,6 +168,7 @@ def upsert_photo(conn, p, owner_nsid, synced_at):
             tags=excluded.tags,
             views=excluded.views,
             favorites=excluded.favorites,
+            comments=excluded.comments,
             synced_at=excluded.synced_at
     """, (
         p["id"],
@@ -172,6 +182,7 @@ def upsert_photo(conn, p, owner_nsid, synced_at):
         tags,
         int(p.get("views", 0) or 0),
         int(p.get("count_faves", 0) or 0),
+        int(p.get("count_comments", 0) or 0),
         synced_at,
     ))
 
@@ -217,6 +228,48 @@ def fetch_updated(api_key, api_secret, creds, since):
             time.sleep(0.5)
 
 
+# --- Groups ---
+
+def sync_groups(api_key, api_secret, creds, conn):
+    page, pages = 1, 1
+    synced_at = int(time.time())
+    total = 0
+    while page <= pages:
+        params = oauth_params(api_key, {
+            "oauth_token": creds["oauth_token"],
+            "method": "flickr.people.getGroups",
+            "user_id": creds["user_nsid"],
+            "format": "json",
+            "nojsoncallback": "1",
+        })
+        params["oauth_signature"] = sign_request("GET", API_URL, params, api_secret, creds["oauth_token_secret"])
+        resp = requests.get(API_URL, params=params)
+        data = resp.json()
+        if data.get("stat") != "ok":
+            print(f"Error fetching groups: {data.get('message')}", file=sys.stderr)
+            return
+        groups = data["groups"]["group"]
+        for g in groups:
+            conn.execute("""
+                INSERT INTO groups (id, name, members, pool_count, synced_at)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    name=excluded.name, members=excluded.members,
+                    pool_count=excluded.pool_count, synced_at=excluded.synced_at
+            """, (
+                g["nsid"], g["name"],
+                int(g.get("members", 0) or 0),
+                int(g.get("pool_count", 0) or 0),
+                synced_at,
+            ))
+            total += 1
+        # getGroups doesn't paginate, but handle it if it does
+        pages = int(data["groups"].get("pages", 1))
+        page += 1
+    conn.commit()
+    print(f"  {total} groups synced.")
+
+
 # --- Command ---
 
 def cmd_sync(args):
@@ -259,6 +312,9 @@ def cmd_sync(args):
         (synced_at, mode, total),
     )
     conn.commit()
+
+    print("Syncing groups...")
+    sync_groups(api_key, api_secret, creds, conn)
     conn.close()
     print(f"Done. {total} photos synced ({mode}).")
 
