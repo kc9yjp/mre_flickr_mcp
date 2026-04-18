@@ -122,6 +122,16 @@ def init_db(conn):
             synced_at  INTEGER
         );
 
+        CREATE TABLE IF NOT EXISTS albums (
+            id               TEXT PRIMARY KEY,
+            title            TEXT,
+            description      TEXT,
+            primary_photo_id TEXT,
+            count_photos     INTEGER,
+            count_views      INTEGER,
+            synced_at        INTEGER
+        );
+
         CREATE TABLE IF NOT EXISTS contacts (
             id        TEXT PRIMARY KEY,
             username  TEXT,
@@ -152,6 +162,18 @@ def init_db(conn):
         );
     """)
     conn.commit()
+
+    # Migrations: safely add columns that may be missing from older databases
+    migrations = [
+        "ALTER TABLE photos ADD COLUMN favorites INTEGER DEFAULT 0",
+        "ALTER TABLE photos ADD COLUMN comments  INTEGER DEFAULT 0",
+    ]
+    for sql in migrations:
+        try:
+            conn.execute(sql)
+            conn.commit()
+        except Exception:
+            pass  # column already exists
 
 
 def last_sync_time(conn):
