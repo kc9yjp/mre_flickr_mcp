@@ -143,6 +143,29 @@ async def list_tools():
             },
         ),
         Tool(
+            name="get_photo_comments",
+            description="Fetch all comments on a Flickr photo.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "photo_id": {"type": "string", "description": "Flickr photo ID"},
+                },
+                "required": ["photo_id"],
+            },
+        ),
+        Tool(
+            name="get_photo_stats",
+            description="Get view/favorite/comment stats for a photo on a specific date (defaults to today).",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "photo_id": {"type": "string", "description": "Flickr photo ID"},
+                    "date":     {"type": "string", "description": "Date to query, YYYY-MM-DD (default: today)"},
+                },
+                "required": ["photo_id"],
+            },
+        ),
+        Tool(
             name="get_photo",
             description="Return full metadata for a single photo by its Flickr ID.",
             inputSchema={
@@ -414,6 +437,8 @@ async def call_tool(name: str, arguments: dict):
             case "find_unfollow_candidates": return await _find_unfollow_candidates(arguments)
             case "protect_contact":   return await _protect_contact(arguments)
             case "unfollow_contact":  return await _unfollow_contact(arguments)
+            case "get_photo_comments": return await _get_photo_comments(arguments)
+            case "get_photo_stats":   return await _get_photo_stats(arguments)
             case "find_albums":       return await _find_albums(arguments)
             case "get_album_photos":  return await _get_album_photos(arguments)
             case "add_to_album":      return await _add_to_album(arguments)
@@ -681,6 +706,33 @@ async def _unfollow_contact(args):
         await proc.communicate()
 
     return [TextContent(type="text", text=f"{api_result}Profile: {profile_url}")]
+
+
+async def _get_photo_comments(args):
+    data = _api_get("flickr.photos.comments.getList", {"photo_id": args["photo_id"]})
+    comments = [{
+        "author":     c["authorname"],
+        "date":       datetime.fromtimestamp(int(c["datecreate"])).strftime("%Y-%m-%d"),
+        "comment":    c["_content"],
+        "permalink":  c["permalink"],
+    } for c in data.get("comments", {}).get("comment", [])]
+    if not comments:
+        return [TextContent(type="text", text="No comments found.")]
+    return [TextContent(type="text", text=json.dumps(comments, indent=2))]
+
+
+async def _get_photo_stats(args):
+    from datetime import date as date_type
+    photo_id = args["photo_id"]
+    query_date = args.get("date", date_type.today().isoformat())
+    data = _api_get("flickr.stats.getPhotoStats", {"photo_id": photo_id, "date": query_date})
+    stats = data.get("stats", {})
+    return [TextContent(type="text", text=json.dumps({
+        "date":     query_date,
+        "views":    stats.get("views", 0),
+        "favorites": stats.get("favorites", 0),
+        "comments": stats.get("comments", 0),
+    }, indent=2))]
 
 
 async def _find_albums(args):
