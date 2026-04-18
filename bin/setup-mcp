@@ -1,0 +1,36 @@
+#!/usr/bin/env sh
+# Configure Claude Code to use the Flickr MCP server for this project.
+set -e
+
+REPO="$(cd "$(dirname "$0")/.." && pwd)"
+MCP_JSON="$REPO/.mcp.json"
+CLAUDE_SETTINGS="$REPO/.claude/settings.json"
+
+# Write .mcp.json with the absolute path to this repo
+cat > "$MCP_JSON" <<EOF
+{
+  "mcpServers": {
+    "flickr": {
+      "command": "docker",
+      "args": ["compose", "run", "--rm", "-i", "mcp"],
+      "cwd": "$REPO"
+    }
+  }
+}
+EOF
+echo "✓ .mcp.json written (cwd: $REPO)"
+
+# Ensure .claude/settings.json enables project MCP servers
+mkdir -p "$REPO/.claude"
+cat > "$CLAUDE_SETTINGS" <<EOF
+{
+  "enableAllProjectMcpServers": true
+}
+EOF
+echo "✓ .claude/settings.json written"
+
+echo ""
+echo "Build the Docker image if you haven't already:"
+echo "  docker compose build"
+echo ""
+echo "Then restart Claude Code and run /mcp to confirm the flickr server is connected."
