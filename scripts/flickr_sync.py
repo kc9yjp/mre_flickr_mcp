@@ -122,6 +122,28 @@ def init_db(conn):
             synced_at  INTEGER
         );
 
+        CREATE TABLE IF NOT EXISTS contacts (
+            id        TEXT PRIMARY KEY,
+            username  TEXT,
+            realname  TEXT,
+            is_friend INTEGER DEFAULT 0,
+            is_family INTEGER DEFAULT 0,
+            synced_at INTEGER
+        );
+
+        CREATE TABLE IF NOT EXISTS contact_engagement (
+            contact_id   TEXT PRIMARY KEY,
+            faves        INTEGER DEFAULT 0,
+            comments     INTEGER DEFAULT 0,
+            last_updated INTEGER
+        );
+
+        CREATE TABLE IF NOT EXISTS do_not_unfollow (
+            contact_id TEXT PRIMARY KEY,
+            reason     TEXT,
+            added_at   INTEGER
+        );
+
         CREATE TABLE IF NOT EXISTS sync_log (
             id             INTEGER PRIMARY KEY AUTOINCREMENT,
             synced_at      INTEGER,

@@ -1,0 +1,63 @@
+#!/usr/bin/env python3
+"""Sync Flickr contacts (people you follow) to the local SQLite database."""
+
+import os
+import sqlite3
+import sys
+import time
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from flickr_sync import load_env, load_credentials, oauth_params, sign_request, init_db, DB_FILE, API_URL
+
+import requests
+
+if not os.path.exists(DB_FILE):
+    print(f"Database not found: {DB_FILE}\nRun: bin/flickr-sync --create", file=sys.stderr)
+    sys.exit(1)
+
+conn = sqlite3.connect(DB_FILE)
+init_db(conn)
+api_key, api_secret = load_env()
+creds = load_credentials()
+
+print("Syncing contacts...")
+page, pages, total = 1, 1, 0
+synced_at = int(time.time())
+
+while page <= pages:
+    params = oauth_params(api_key, {
+        "oauth_token": creds["oauth_token"],
+        "method": "flickr.contacts.getList",
+        "per_page": "1000",
+        "page": str(page),
+        "format": "json",
+        "nojsoncallback": "1",
+    })
+    params["oauth_signature"] = sign_request("GET", API_URL, params, api_secret, creds["oauth_token_secret"])
+    resp = requests.get(API_URL, params=params)
+    data = resp.json()
+    if data.get("stat") != "ok":
+        print(f"Error: {data.get('message')}", file=sys.stderr)
+        sys.exit(1)
+
+    contacts = data["contacts"]
+    pages = int(contacts.get("pages", 1))
+    for c in contacts.get("contact", []):
+        conn.execute("""
+            INSERT INTO contacts (id, username, realname, is_friend, is_family, synced_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+                username=excluded.username, realname=excluded.realname,
+                is_friend=excluded.is_friend, is_family=excluded.is_family,
+                synced_at=excluded.synced_at
+        """, (
+            c["nsid"], c.get("username", ""), c.get("realname", ""),
+            int(c.get("friend", 0)), int(c.get("family", 0)),
+            synced_at,
+        ))
+        total += 1
+    conn.commit()
+    page += 1
+
+conn.close()
+print(f"Done. {total} contacts synced.")

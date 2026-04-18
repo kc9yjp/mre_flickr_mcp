@@ -220,6 +220,47 @@ async def list_tools():
             },
         ),
         Tool(
+            name="find_unfollow_candidates",
+            description=(
+                "List contacts you follow ranked by lowest engagement (faves + comments on your photos). "
+                "Excludes contacts on the do-not-unfollow list."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "limit":                  {"type": "integer", "description": "Max results (default 20)"},
+                    "require_zero_engagement": {"type": "boolean", "description": "Only include contacts with zero engagement"},
+                },
+            },
+        ),
+        Tool(
+            name="protect_contact",
+            description="Add a contact to the do-not-unfollow whitelist so they never appear as a candidate.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "contact_id": {"type": "string", "description": "Flickr NSID of the contact"},
+                    "reason":     {"type": "string", "description": "Optional reason for protecting"},
+                },
+                "required": ["contact_id"],
+            },
+        ),
+        Tool(
+            name="unfollow_contact",
+            description=(
+                "Attempt to unfollow a contact via the Flickr API. "
+                "Returns their profile URL regardless; optionally opens it in Safari."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "contact_id":   {"type": "string",  "description": "Flickr NSID of the contact"},
+                    "open_browser": {"type": "boolean", "description": "Open their profile in Safari (default false)"},
+                },
+                "required": ["contact_id"],
+            },
+        ),
+        Tool(
             name="find_weak_photos",
             description=(
                 "Rank public photos by a weakness score combining low views-per-day, "
@@ -274,6 +315,9 @@ async def call_tool(name: str, arguments: dict):
             case "list_recent_syncs": return await _list_recent_syncs(arguments)
             case "update_photo":      return await _update_photo(arguments)
             case "fetch_photo_image": return await _fetch_photo_image(arguments)
+            case "find_unfollow_candidates": return await _find_unfollow_candidates(arguments)
+            case "protect_contact":   return await _protect_contact(arguments)
+            case "unfollow_contact":  return await _unfollow_contact(arguments)
             case "find_groups":       return await _find_groups(arguments)
             case "add_to_group":      return await _add_to_group(arguments)
             case "find_weak_photos":  return await _find_weak_photos(arguments)
@@ -442,6 +486,82 @@ async def _fetch_photo_image(args):
         TextContent(type="text", text=f"Photo ID: {args['id']}\n{row['url_photopage']}"),
         ImageContent(type="image", data=data, mimeType=mime),
     ]
+
+
+async def _find_unfollow_candidates(args):
+    limit = int(args.get("limit", 20))
+    require_zero = args.get("require_zero_engagement", False)
+    extra_where = "AND COALESCE(e.faves, 0) + COALESCE(e.comments, 0) = 0" if require_zero else ""
+
+    sql = f"""
+        SELECT c.id, c.username, c.realname,
+               COALESCE(e.faves, 0)    AS faves,
+               COALESCE(e.comments, 0) AS comments,
+               COALESCE(e.faves, 0) + COALESCE(e.comments, 0) AS total_engagement
+        FROM contacts c
+        LEFT JOIN contact_engagement e ON e.contact_id = c.id
+        WHERE c.id NOT IN (SELECT contact_id FROM do_not_unfollow)
+        {extra_where}
+        ORDER BY total_engagement ASC, c.username ASC
+        LIMIT ?
+    """
+    conn = db()
+    rows = conn.execute(sql, (limit,)).fetchall()
+    conn.close()
+
+    if not rows:
+        return [TextContent(type="text", text="No contacts found. Run bin/sync-contacts first.")]
+
+    results = [{
+        "contact_id":       r["id"],
+        "username":         r["username"],
+        "realname":         r["realname"],
+        "faves":            r["faves"],
+        "comments":         r["comments"],
+        "total_engagement": r["total_engagement"],
+        "url_profile":      f"https://www.flickr.com/people/{r['id']}/",
+    } for r in rows]
+    return [TextContent(type="text", text=json.dumps(results, indent=2))]
+
+
+async def _protect_contact(args):
+    contact_id = args["contact_id"]
+    reason = args.get("reason", "")
+    conn = db()
+    conn.execute(
+        "INSERT INTO do_not_unfollow (contact_id, reason, added_at) VALUES (?, ?, ?) "
+        "ON CONFLICT(contact_id) DO UPDATE SET reason=excluded.reason",
+        (contact_id, reason, int(time.time())),
+    )
+    conn.commit()
+    conn.close()
+    return [TextContent(type="text", text=f"Contact {contact_id} added to do-not-unfollow list.")]
+
+
+async def _unfollow_contact(args):
+    contact_id = args["contact_id"]
+    open_browser = args.get("open_browser", False)
+    profile_url = f"https://www.flickr.com/people/{contact_id}/"
+    api_result = ""
+
+    try:
+        _api_post("flickr.contacts.remove", {"user_nsid": contact_id})
+        conn = db()
+        conn.execute("DELETE FROM contacts WHERE id = ?", (contact_id,))
+        conn.commit()
+        conn.close()
+        api_result = "Unfollowed via API. "
+    except RuntimeError as e:
+        api_result = f"API unfollow failed ({e}) — use profile URL to unfollow manually. "
+
+    if open_browser:
+        proc = await asyncio.create_subprocess_exec(
+            "osascript", "-e",
+            f'tell application "Safari" to set URL of current tab of front window to "{profile_url}"',
+        )
+        await proc.communicate()
+
+    return [TextContent(type="text", text=f"{api_result}Profile: {profile_url}")]
 
 
 async def _find_groups(args):
