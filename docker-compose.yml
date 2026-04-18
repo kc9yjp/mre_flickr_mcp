@@ -1,6 +1,7 @@
 services:
   flickr:
     build: .
+    entrypoint: ["python", "scripts/flickr.py"]
     env_file: .env
     volumes:
       - flickr-creds:/root/.flickr_mcp
@@ -20,7 +21,6 @@ services:
 
   mcp:
     build: .
-    entrypoint: ["python", "scripts/flickr_mcp.py"]
     env_file: .env
     volumes:
       - flickr-creds:/root/.flickr_mcp
