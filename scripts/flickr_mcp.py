@@ -670,8 +670,53 @@ async def _sync(args):
     return [TextContent(type="text", text=f"Sync {status}:\n{stdout.decode()}")]
 
 
+REFRESH_INTERVAL = 86400  # 24 hours
+
+
+async def _background_refresh():
+    """Check daily whether photo/contact/group data needs refreshing and sync if so."""
+    while True:
+        try:
+            if os.path.exists(DB_FILE):
+                conn = sqlite3.connect(DB_FILE)
+                row = conn.execute("SELECT MAX(synced_at) FROM sync_log").fetchone()
+                conn.close()
+                last_sync = row[0] if row and row[0] else 0
+                age = time.time() - last_sync
+
+                if age >= REFRESH_INTERVAL:
+                    proc = await asyncio.create_subprocess_exec(
+                        sys.executable, SYNC_SCRIPT,
+                        stdout=asyncio.subprocess.DEVNULL,
+                        stderr=asyncio.subprocess.DEVNULL,
+                    )
+                    await proc.communicate()
+
+                    # also refresh contacts and groups
+                    for script in ("sync_contacts.py", "sync_groups.py"):
+                        path = os.path.join(os.path.dirname(SYNC_SCRIPT), script)
+                        if os.path.exists(path):
+                            p = await asyncio.create_subprocess_exec(
+                                sys.executable, path,
+                                stdout=asyncio.subprocess.DEVNULL,
+                                stderr=asyncio.subprocess.DEVNULL,
+                            )
+                            await p.communicate()
+
+                    sleep_for = REFRESH_INTERVAL
+                else:
+                    sleep_for = REFRESH_INTERVAL - age
+            else:
+                sleep_for = REFRESH_INTERVAL
+        except Exception:
+            sleep_for = REFRESH_INTERVAL
+
+        await asyncio.sleep(sleep_for)
+
+
 async def main():
     async with stdio_server() as (read_stream, write_stream):
+        asyncio.create_task(_background_refresh())
         await server.run(read_stream, write_stream, server.create_initialization_options())
 
 
