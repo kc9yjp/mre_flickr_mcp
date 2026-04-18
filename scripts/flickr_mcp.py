@@ -197,6 +197,102 @@ async def list_tools():
             },
         ),
         Tool(
+            name="find_albums",
+            description="Search the user's Flickr albums by keyword from the local database.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Keyword to search album titles"},
+                    "limit": {"type": "integer", "description": "Max results (default 10)"},
+                },
+            },
+        ),
+        Tool(
+            name="get_album_photos",
+            description="List photos in a Flickr album.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "album_id": {"type": "string", "description": "Flickr photoset ID"},
+                    "limit":    {"type": "integer", "description": "Max photos to return (default 50)"},
+                },
+                "required": ["album_id"],
+            },
+        ),
+        Tool(
+            name="add_to_album",
+            description="Add a photo to a Flickr album.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "photo_id": {"type": "string", "description": "Flickr photo ID"},
+                    "album_id": {"type": "string", "description": "Flickr photoset ID"},
+                },
+                "required": ["photo_id", "album_id"],
+            },
+        ),
+        Tool(
+            name="remove_from_album",
+            description="Remove a photo from a Flickr album.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "photo_id": {"type": "string", "description": "Flickr photo ID"},
+                    "album_id": {"type": "string", "description": "Flickr photoset ID"},
+                },
+                "required": ["photo_id", "album_id"],
+            },
+        ),
+        Tool(
+            name="create_album",
+            description="Create a new Flickr album with an initial primary photo.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "title":            {"type": "string", "description": "Album title"},
+                    "primary_photo_id": {"type": "string", "description": "Photo ID for the album cover"},
+                    "description":      {"type": "string", "description": "Optional album description"},
+                },
+                "required": ["title", "primary_photo_id"],
+            },
+        ),
+        Tool(
+            name="edit_album",
+            description="Rename an album or update its description.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "album_id":    {"type": "string", "description": "Flickr photoset ID"},
+                    "title":       {"type": "string", "description": "New title"},
+                    "description": {"type": "string", "description": "New description"},
+                },
+                "required": ["album_id"],
+            },
+        ),
+        Tool(
+            name="delete_album",
+            description="Delete a Flickr album (photos are not deleted).",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "album_id": {"type": "string", "description": "Flickr photoset ID"},
+                },
+                "required": ["album_id"],
+            },
+        ),
+        Tool(
+            name="remove_from_group",
+            description="Remove a photo from a Flickr group pool.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "photo_id": {"type": "string", "description": "Flickr photo ID"},
+                    "group_id": {"type": "string", "description": "Flickr group NSID"},
+                },
+                "required": ["photo_id", "group_id"],
+            },
+        ),
+        Tool(
             name="find_groups",
             description="Search the user's Flickr groups by keyword from the local database.",
             inputSchema={
@@ -318,6 +414,14 @@ async def call_tool(name: str, arguments: dict):
             case "find_unfollow_candidates": return await _find_unfollow_candidates(arguments)
             case "protect_contact":   return await _protect_contact(arguments)
             case "unfollow_contact":  return await _unfollow_contact(arguments)
+            case "find_albums":       return await _find_albums(arguments)
+            case "get_album_photos":  return await _get_album_photos(arguments)
+            case "add_to_album":      return await _add_to_album(arguments)
+            case "remove_from_album": return await _remove_from_album(arguments)
+            case "create_album":      return await _create_album(arguments)
+            case "edit_album":        return await _edit_album(arguments)
+            case "delete_album":      return await _delete_album(arguments)
+            case "remove_from_group": return await _remove_from_group(arguments)
             case "find_groups":       return await _find_groups(arguments)
             case "add_to_group":      return await _add_to_group(arguments)
             case "find_weak_photos":  return await _find_weak_photos(arguments)
@@ -465,15 +569,30 @@ async def _update_photo(args):
 
 
 async def _fetch_photo_image(args):
+    photo_id = args["id"]
     conn = db()
     row = conn.execute(
-        "SELECT url_original, url_photopage FROM photos WHERE id = ?", (args["id"],)
+        "SELECT url_original, url_photopage FROM photos WHERE id = ?", (photo_id,)
     ).fetchone()
     conn.close()
-    if not row:
-        return [TextContent(type="text", text=f"Photo {args['id']} not found.")]
 
-    url = row["url_original"]
+    if row:
+        photopage = row["url_photopage"]
+    else:
+        info = _api_get("flickr.photos.getInfo", {"photo_id": photo_id})
+        photo = info["photo"]
+        owner = photo["owner"]["nsid"]
+        photopage = f"https://www.flickr.com/photos/{owner}/{photo_id}/"
+
+    # always fetch the live URL so edits are reflected
+    sizes_data = _api_get("flickr.photos.getSizes", {"photo_id": photo_id})
+    sizes = sizes_data["sizes"]["size"]
+    preferred = ("Original", "Large 2048", "Large 1600", "Large")
+    url = next(
+        (s["source"] for label in preferred for s in sizes if s["label"] == label),
+        sizes[-1]["source"],
+    )
+
     if not url:
         return [TextContent(type="text", text="No image URL available for this photo.")]
 
@@ -483,7 +602,7 @@ async def _fetch_photo_image(args):
     mime = resp.headers.get("content-type", "image/jpeg").split(";")[0]
     data = base64.standard_b64encode(resp.content).decode()
     return [
-        TextContent(type="text", text=f"Photo ID: {args['id']}\n{row['url_photopage']}"),
+        TextContent(type="text", text=f"Photo ID: {photo_id}\n{photopage}"),
         ImageContent(type="image", data=data, mimeType=mime),
     ]
 
@@ -562,6 +681,94 @@ async def _unfollow_contact(args):
         await proc.communicate()
 
     return [TextContent(type="text", text=f"{api_result}Profile: {profile_url}")]
+
+
+async def _find_albums(args):
+    query = args.get("query", "")
+    limit = int(args.get("limit", 10))
+    conn = db()
+    rows = conn.execute(
+        "SELECT id, title, description, count_photos, count_views FROM albums "
+        "WHERE title LIKE ? ORDER BY title LIMIT ?",
+        (f"%{query}%", limit),
+    ).fetchall()
+    conn.close()
+    if not rows:
+        return [TextContent(type="text", text=f"No albums found matching '{query}'. Run bin/sync-albums first.")]
+    return [TextContent(type="text", text=json.dumps([dict(r) for r in rows], indent=2))]
+
+
+async def _get_album_photos(args):
+    album_id = args["album_id"]
+    limit = int(args.get("limit", 50))
+    creds = _load_credentials()
+    data = _api_get("flickr.photosets.getPhotos", {
+        "photoset_id": album_id,
+        "user_id": creds["user_nsid"],
+        "per_page": str(limit),
+        "page": "1",
+        "extras": "title,url_photopage",
+    })
+    photos = [{"id": p["id"], "title": p.get("title", "")} for p in data["photoset"]["photo"]]
+    total = int(data["photoset"]["total"])
+    return [TextContent(type="text", text=json.dumps({"total": total, "returned": len(photos), "photos": photos}, indent=2))]
+
+
+async def _add_to_album(args):
+    _api_post("flickr.photosets.addPhoto", {"photoset_id": args["album_id"], "photo_id": args["photo_id"]})
+    return [TextContent(type="text", text=f"Photo {args['photo_id']} added to album {args['album_id']}.")]
+
+
+async def _remove_from_album(args):
+    _api_post("flickr.photosets.removePhoto", {"photoset_id": args["album_id"], "photo_id": args["photo_id"]})
+    return [TextContent(type="text", text=f"Photo {args['photo_id']} removed from album {args['album_id']}.")]
+
+
+async def _create_album(args):
+    data = _api_post("flickr.photosets.create", {
+        "title": args["title"],
+        "primary_photo_id": args["primary_photo_id"],
+        "description": args.get("description", ""),
+    })
+    album = data["photoset"]
+    conn = db()
+    conn.execute("""
+        INSERT INTO albums (id, title, description, primary_photo_id, count_photos, count_views, synced_at)
+        VALUES (?, ?, ?, ?, 1, 0, ?)
+        ON CONFLICT(id) DO UPDATE SET title=excluded.title, description=excluded.description,
+            primary_photo_id=excluded.primary_photo_id, synced_at=excluded.synced_at
+    """, (album["id"], args["title"], args.get("description", ""), args["primary_photo_id"], int(time.time())))
+    conn.commit()
+    conn.close()
+    return [TextContent(type="text", text=f"Album created: {args['title']} (ID: {album['id']})\n{album.get('url', '')}")]
+
+
+async def _edit_album(args):
+    album_id = args["album_id"]
+    conn = db()
+    row = conn.execute("SELECT title, description FROM albums WHERE id = ?", (album_id,)).fetchone()
+    title = args.get("title", row["title"] if row else "")
+    description = args.get("description", row["description"] if row else "")
+    _api_post("flickr.photosets.editMeta", {"photoset_id": album_id, "title": title, "description": description})
+    conn.execute("UPDATE albums SET title=?, description=? WHERE id=?", (title, description, album_id))
+    conn.commit()
+    conn.close()
+    return [TextContent(type="text", text=f"Album {album_id} updated.")]
+
+
+async def _delete_album(args):
+    album_id = args["album_id"]
+    _api_post("flickr.photosets.delete", {"photoset_id": album_id})
+    conn = db()
+    conn.execute("DELETE FROM albums WHERE id = ?", (album_id,))
+    conn.commit()
+    conn.close()
+    return [TextContent(type="text", text=f"Album {album_id} deleted.")]
+
+
+async def _remove_from_group(args):
+    _api_post("flickr.groups.pools.remove", {"photo_id": args["photo_id"], "group_id": args["group_id"]})
+    return [TextContent(type="text", text=f"Photo {args['photo_id']} removed from group {args['group_id']}.")]
 
 
 async def _find_groups(args):
