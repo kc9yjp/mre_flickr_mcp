@@ -6,12 +6,19 @@ import base64
 import hashlib
 import hmac
 import json
+import logging
 import os
 import sqlite3
 import sys
 import time
 import urllib.parse
 from datetime import datetime
+
+logging.basicConfig(
+    stream=sys.stderr,
+    level=logging.DEBUG if os.environ.get("MCP_DEBUG") else logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+)
 
 import requests
 from mcp.server import Server
@@ -974,8 +981,16 @@ async def _background_refresh():
 
 
 async def main():
+    logging.info("Flickr MCP server starting (db=%s, creds=%s)", DB_FILE, CREDENTIALS_FILE)
+    try:
+        _load_env()
+        logging.info("Credentials and env loaded OK")
+    except Exception as e:
+        logging.error("Startup failed: %s", e)
+        sys.exit(1)
     async with stdio_server() as (read_stream, write_stream):
         asyncio.create_task(_background_refresh())
+        logging.info("stdio ready — waiting for MCP client")
         await server.run(read_stream, write_stream, server.create_initialization_options())
 
 
