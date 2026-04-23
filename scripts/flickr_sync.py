@@ -165,8 +165,10 @@ def init_db(conn):
 
     # Migrations: safely add columns that may be missing from older databases
     migrations = [
-        "ALTER TABLE photos ADD COLUMN favorites INTEGER DEFAULT 0",
-        "ALTER TABLE photos ADD COLUMN comments  INTEGER DEFAULT 0",
+        "ALTER TABLE photos ADD COLUMN favorites    INTEGER DEFAULT 0",
+        "ALTER TABLE photos ADD COLUMN comments     INTEGER DEFAULT 0",
+        "ALTER TABLE photos ADD COLUMN reviewed_at  INTEGER DEFAULT NULL",
+        "ALTER TABLE photos ADD COLUMN is_public    INTEGER DEFAULT 1",
     ]
     for sql in migrations:
         try:
@@ -199,8 +201,8 @@ def upsert_photo(conn, p, owner_nsid, synced_at):
     conn.execute("""
         INSERT INTO photos
             (id, title, description, date_taken, date_uploaded, last_updated,
-             url_photopage, url_original, tags, views, favorites, comments, synced_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             url_photopage, url_original, tags, views, favorites, comments, synced_at, is_public)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
         ON CONFLICT(id) DO UPDATE SET
             title=excluded.title,
             description=excluded.description,
@@ -213,7 +215,8 @@ def upsert_photo(conn, p, owner_nsid, synced_at):
             views=excluded.views,
             favorites=excluded.favorites,
             comments=excluded.comments,
-            synced_at=excluded.synced_at
+            synced_at=excluded.synced_at,
+            is_public=1
     """, (
         p["id"],
         p.get("title", ""),
