@@ -24,6 +24,7 @@ CREDENTIALS_FILE = os.path.expanduser("~/.flickr_mcp/credentials.json")
 ENV_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env")
 API_URL = "https://api.flickr.com/services/rest/"
 PER_PAGE = 500
+HTTP_TIMEOUT = int(os.environ.get("FLICKR_HTTP_TIMEOUT", 30))
 
 EXTRAS = "description,date_upload,date_taken,last_update,tags,views,count_faves,count_comments,url_o,url_l,path_alias,media"
 
@@ -86,7 +87,20 @@ def api_get(api_key, api_secret, creds, method, extra=None):
     if extra:
         params.update(extra)
     params["oauth_signature"] = sign_request("GET", API_URL, params, api_secret, creds["oauth_token_secret"])
-    resp = requests.get(API_URL, params=params)
+    try:
+        resp = requests.get(API_URL, params=params, timeout=HTTP_TIMEOUT)
+    except requests.exceptions.Timeout:
+        print(f"API error ({method}): timed out after {HTTP_TIMEOUT}s", file=sys.stderr)
+        sys.exit(1)
+    except requests.exceptions.RequestException as e:
+        print(f"API error ({method}): {e}", file=sys.stderr)
+        sys.exit(1)
+    if resp.status_code == 429:
+        print(f"API error ({method}): rate limited (HTTP 429)", file=sys.stderr)
+        sys.exit(1)
+    if not resp.ok:
+        print(f"API error ({method}): HTTP {resp.status_code}", file=sys.stderr)
+        sys.exit(1)
     data = resp.json()
     if data.get("stat") != "ok":
         print(f"API error ({method}): {data.get('message', 'unknown')}", file=sys.stderr)
@@ -290,7 +304,20 @@ def sync_groups(api_key, api_secret, creds, conn):
             "nojsoncallback": "1",
         })
         params["oauth_signature"] = sign_request("GET", API_URL, params, api_secret, creds["oauth_token_secret"])
-        resp = requests.get(API_URL, params=params)
+        try:
+            resp = requests.get(API_URL, params=params, timeout=HTTP_TIMEOUT)
+        except requests.exceptions.Timeout:
+            print(f"Error fetching groups: timed out after {HTTP_TIMEOUT}s", file=sys.stderr)
+            return
+        except requests.exceptions.RequestException as e:
+            print(f"Error fetching groups: {e}", file=sys.stderr)
+            return
+        if resp.status_code == 429:
+            print("Error fetching groups: rate limited (HTTP 429)", file=sys.stderr)
+            return
+        if not resp.ok:
+            print(f"Error fetching groups: HTTP {resp.status_code}", file=sys.stderr)
+            return
         data = resp.json()
         if data.get("stat") != "ok":
             print(f"Error fetching groups: {data.get('message')}", file=sys.stderr)
@@ -359,9 +386,6 @@ def cmd_sync(args):
         (synced_at, mode, total),
     )
     conn.commit()
-
-    print("Syncing groups...")
-    sync_groups(api_key, api_secret, creds, conn)
     conn.close()
     print(f"Done. {total} photos synced ({mode}).")
 

@@ -30,6 +30,7 @@ SYNC_SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "flickr_s
 CREDENTIALS_FILE = os.path.expanduser("~/.flickr_mcp/credentials.json")
 ENV_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env")
 API_URL = "https://api.flickr.com/services/rest/"
+HTTP_TIMEOUT = int(os.environ.get("FLICKR_HTTP_TIMEOUT", 30))
 
 
 # --- Flickr auth (mirrors flickr.py) ---
@@ -90,7 +91,20 @@ def _api_get(method, extra=None):
     if extra:
         params.update(extra)
     params["oauth_signature"] = _sign("GET", API_URL, params, api_secret, creds["oauth_token_secret"])
-    resp = requests.get(API_URL, params=params)
+    try:
+        resp = requests.get(API_URL, params=params, timeout=HTTP_TIMEOUT)
+    except requests.exceptions.Timeout:
+        logging.error("GET %s timed out after %ss", method, HTTP_TIMEOUT)
+        raise RuntimeError(f"Flickr API request timed out ({method})")
+    except requests.exceptions.RequestException as e:
+        logging.error("GET %s failed: %s", method, e)
+        raise RuntimeError(f"Flickr API request failed ({method}): {e}")
+    if resp.status_code == 429:
+        logging.error("GET %s rate limited (HTTP 429)", method)
+        raise RuntimeError(f"Flickr rate limit hit ({method})")
+    if not resp.ok:
+        logging.error("GET %s HTTP %s", method, resp.status_code)
+        raise RuntimeError(f"Flickr API HTTP {resp.status_code} ({method})")
     data = resp.json()
     if data.get("stat") != "ok":
         raise RuntimeError(f"Flickr API error: {data.get('message', 'unknown')}")
@@ -109,13 +123,27 @@ def _api_post(method, extra=None):
     if extra:
         params.update(extra)
     params["oauth_signature"] = _sign("POST", API_URL, params, api_secret, creds["oauth_token_secret"])
-    resp = requests.post(API_URL, data=params)
+    try:
+        resp = requests.post(API_URL, data=params, timeout=HTTP_TIMEOUT)
+    except requests.exceptions.Timeout:
+        logging.error("POST %s timed out after %ss", method, HTTP_TIMEOUT)
+        raise RuntimeError(f"Flickr API request timed out ({method})")
+    except requests.exceptions.RequestException as e:
+        logging.error("POST %s failed: %s", method, e)
+        raise RuntimeError(f"Flickr API request failed ({method}): {e}")
+    if resp.status_code == 429:
+        logging.error("POST %s rate limited (HTTP 429)", method)
+        raise RuntimeError(f"Flickr rate limit hit ({method})")
+    if not resp.ok:
+        logging.error("POST %s HTTP %s", method, resp.status_code)
+        raise RuntimeError(f"Flickr API HTTP {resp.status_code} ({method})")
     data = resp.json()
     if data.get("stat") != "ok":
         raise RuntimeError(f"Flickr API error: {data.get('message', 'unknown')}")
     return data
 
 server = Server("flickr")
+_sync_lock = asyncio.Lock()
 
 
 def db():
@@ -627,7 +655,7 @@ async def _fetch_photo_image(args):
     if not url:
         return [TextContent(type="text", text="No image URL available for this photo.")]
 
-    resp = requests.get(url, timeout=30)
+    resp = requests.get(url, timeout=HTTP_TIMEOUT)
     resp.raise_for_status()
 
     mime = resp.headers.get("content-type", "image/jpeg").split(";")[0]
@@ -928,16 +956,20 @@ async def _set_visibility(args):
 
 
 async def _sync(args):
+    if _sync_lock.locked():
+        return [TextContent(type="text", text="Sync already in progress.")]
+
     cmd = [sys.executable, SYNC_SCRIPT]
     if args.get("full"):
         cmd.append("--full")
 
-    proc = await asyncio.create_subprocess_exec(
-        *cmd,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.STDOUT,
-    )
-    stdout, _ = await proc.communicate()
+    async with _sync_lock:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+        stdout, _ = await proc.communicate()
     status = "completed" if proc.returncode == 0 else "failed"
     return [TextContent(type="text", text=f"Sync {status}:\n{stdout.decode()}")]
 
@@ -957,23 +989,16 @@ async def _background_refresh():
                 age = time.time() - last_sync
 
                 if age >= REFRESH_INTERVAL:
-                    proc = await asyncio.create_subprocess_exec(
-                        sys.executable, SYNC_SCRIPT,
-                        stdout=asyncio.subprocess.DEVNULL,
-                        stderr=asyncio.subprocess.DEVNULL,
-                    )
-                    await proc.communicate()
-
-                    # also refresh contacts and groups
-                    for script in ("sync_contacts.py", "sync_groups.py"):
-                        path = os.path.join(os.path.dirname(SYNC_SCRIPT), script)
-                        if os.path.exists(path):
-                            p = await asyncio.create_subprocess_exec(
-                                sys.executable, path,
-                                stdout=asyncio.subprocess.DEVNULL,
-                                stderr=asyncio.subprocess.DEVNULL,
-                            )
-                            await p.communicate()
+                    async with _sync_lock:
+                        for script in (SYNC_SCRIPT, "sync_contacts.py", "sync_groups.py"):
+                            path = script if script == SYNC_SCRIPT else os.path.join(os.path.dirname(SYNC_SCRIPT), script)
+                            if os.path.exists(path):
+                                p = await asyncio.create_subprocess_exec(
+                                    sys.executable, path,
+                                    stdout=asyncio.subprocess.DEVNULL,
+                                    stderr=asyncio.subprocess.DEVNULL,
+                                )
+                                await p.communicate()
 
                     sleep_for = REFRESH_INTERVAL
                 else:
@@ -981,6 +1006,7 @@ async def _background_refresh():
             else:
                 sleep_for = REFRESH_INTERVAL
         except Exception:
+            logging.exception("Background refresh error")
             sleep_for = REFRESH_INTERVAL
 
         await asyncio.sleep(sleep_for)
