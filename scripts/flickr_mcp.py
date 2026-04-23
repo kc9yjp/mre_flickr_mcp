@@ -8,6 +8,7 @@ import hmac
 import json
 import logging
 import os
+import secrets
 import sqlite3
 import sys
 import time
@@ -68,7 +69,7 @@ def _sign(method, url, params, api_secret, token_secret=""):
 
 def _oauth_params(api_key, extra=None):
     p = {
-        "oauth_nonce": hashlib.md5(str(time.time()).encode()).hexdigest(),
+        "oauth_nonce": secrets.token_hex(16),
         "oauth_timestamp": str(int(time.time())),
         "oauth_consumer_key": api_key,
         "oauth_signature_method": "HMAC-SHA1",
@@ -487,10 +488,11 @@ async def call_tool(name: str, arguments: dict):
             case "set_visibility":    return await _set_visibility(arguments)
             case "sync":             return await _sync(arguments)
             case _: return [TextContent(type="text", text=f"Unknown tool: {name}")]
-    except FileNotFoundError as e:
+    except (FileNotFoundError, RuntimeError) as e:
         return [TextContent(type="text", text=str(e))]
     except Exception as e:
-        return [TextContent(type="text", text=f"Error: {e}")]
+        logging.exception("Unexpected error in tool %s", name)
+        return [TextContent(type="text", text=f"Unexpected error: {type(e).__name__}")]
 
 
 async def _search_photos(args):
@@ -508,7 +510,7 @@ async def _search_photos(args):
         params.append(args["date_from"])
     if args.get("date_to"):
         conditions.append("date_taken <= ?")
-        params.append(args["date_to"] + " 99:99:99")
+        params.append(args["date_to"] + " 23:59:59")
     if args.get("incomplete"):
         conditions.append("""(
             (title IS NULL OR title = '' OR title = id)
@@ -668,10 +670,9 @@ async def _fetch_photo_image(args):
 
 async def _find_unfollow_candidates(args):
     limit = int(args.get("limit", 20))
-    require_zero = args.get("require_zero_engagement", False)
-    extra_where = "AND COALESCE(e.faves, 0) + COALESCE(e.comments, 0) = 0" if require_zero else ""
+    require_zero = 1 if args.get("require_zero_engagement") else 0
 
-    sql = f"""
+    sql = """
         SELECT c.id, c.username, c.realname,
                COALESCE(e.faves, 0)    AS faves,
                COALESCE(e.comments, 0) AS comments,
@@ -679,12 +680,12 @@ async def _find_unfollow_candidates(args):
         FROM contacts c
         LEFT JOIN contact_engagement e ON e.contact_id = c.id
         WHERE c.id NOT IN (SELECT contact_id FROM do_not_unfollow)
-        {extra_where}
+          AND (? = 0 OR COALESCE(e.faves, 0) + COALESCE(e.comments, 0) = 0)
         ORDER BY total_engagement ASC, c.username ASC
         LIMIT ?
     """
     conn = db()
-    rows = conn.execute(sql, (limit,)).fetchall()
+    rows = conn.execute(sql, (require_zero, limit)).fetchall()
     conn.close()
 
     if not rows:
@@ -874,10 +875,10 @@ async def _add_to_group(args):
 async def _find_weak_photos(args):
     limit = min(int(args.get("limit", 20)), 100)
     min_age_days = int(args.get("min_age_days", 30))
-    extra_where = "AND favorites = 0" if args.get("require_zero_favorites") else ""
+    require_zero_faves = 1 if args.get("require_zero_favorites") else 0
     review_cooldown_days = int(args.get("review_cooldown_days", 21))
 
-    sql = f"""
+    sql = """
         WITH scored AS (
             SELECT id, title, tags, date_taken, date_uploaded, views, favorites, comments,
                    url_photopage,
@@ -898,13 +899,13 @@ async def _find_weak_photos(args):
               AND date_uploaded < (strftime('%s','now') - ? * 86400)
               AND (reviewed_at IS NULL OR reviewed_at < (strftime('%s','now') - ? * 86400))
               AND (is_public IS NULL OR is_public != 0)
-              {extra_where}
+              AND (? = 0 OR favorites = 0)
         )
         SELECT * FROM scored ORDER BY weakness_score DESC LIMIT ?
     """
 
     conn = db()
-    rows = conn.execute(sql, (min_age_days, review_cooldown_days, limit)).fetchall()
+    rows = conn.execute(sql, (min_age_days, review_cooldown_days, require_zero_faves, limit)).fetchall()
     ids = [r["id"] for r in rows]
     if ids:
         conn.execute(
