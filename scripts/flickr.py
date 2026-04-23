@@ -18,6 +18,8 @@ import requests
 # Credentials saved outside the repo so they're never committed
 CREDENTIALS_FILE = os.path.expanduser("~/.flickr_mcp/credentials.json")
 ENV_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env")
+DB_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "flickr.db")
+SYNC_SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "flickr_sync.py")
 
 REQUEST_TOKEN_URL = "https://www.flickr.com/services/oauth/request_token"
 AUTHORIZE_URL = "https://www.flickr.com/services/oauth/authorize"
@@ -124,6 +126,15 @@ def cmd_login(args):
     save_credentials(creds)
     print(f"\nLogged in as {creds['fullname']} (@{creds['username']})")
 
+    print("Starting initial sync...")
+    import subprocess
+    result = subprocess.run(
+        [sys.executable, SYNC_SCRIPT, "--create", "--full"],
+        check=False,
+    )
+    if result.returncode != 0:
+        print("Warning: initial sync failed. Run: bin/flickr-sync --create --full", file=sys.stderr)
+
 
 def cmd_status(args):
     api_key, api_secret = load_env()
@@ -152,11 +163,15 @@ def cmd_status(args):
 
 
 def cmd_logout(args):
-    if os.path.exists(CREDENTIALS_FILE):
-        os.remove(CREDENTIALS_FILE)
-        print("Logged out.")
-    else:
+    if not os.path.exists(CREDENTIALS_FILE):
         print("Not logged in.")
+        return
+    os.remove(CREDENTIALS_FILE)
+    if os.path.exists(DB_FILE):
+        os.remove(DB_FILE)
+        print("Logged out. Credentials and local database removed.")
+    else:
+        print("Logged out. Credentials removed.")
 
 
 # --- Entry point ---
