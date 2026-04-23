@@ -7,6 +7,7 @@ import hashlib
 import hmac
 import json
 import os
+import secrets
 import sys
 import time
 import urllib.parse
@@ -64,11 +65,12 @@ def save_credentials(data):
     os.makedirs(os.path.dirname(CREDENTIALS_FILE), exist_ok=True)
     with open(CREDENTIALS_FILE, "w") as f:
         json.dump(data, f, indent=2)
+    os.chmod(CREDENTIALS_FILE, 0o600)
 
 
 def oauth_params(api_key, extra=None):
     params = {
-        "oauth_nonce": hashlib.md5(str(time.time()).encode()).hexdigest(),
+        "oauth_nonce": secrets.token_hex(16),
         "oauth_timestamp": str(int(time.time())),
         "oauth_consumer_key": api_key,
         "oauth_signature_method": "HMAC-SHA1",

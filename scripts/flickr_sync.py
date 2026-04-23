@@ -12,6 +12,7 @@ import hashlib
 import hmac
 import json
 import os
+import secrets
 import sqlite3
 import sys
 import time
@@ -66,7 +67,7 @@ def load_credentials():
 
 def oauth_params(api_key, extra=None):
     params = {
-        "oauth_nonce": hashlib.md5(str(time.time()).encode()).hexdigest(),
+        "oauth_nonce": secrets.token_hex(16),
         "oauth_timestamp": str(int(time.time())),
         "oauth_consumer_key": api_key,
         "oauth_signature_method": "HMAC-SHA1",
