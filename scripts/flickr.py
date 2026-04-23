@@ -174,6 +174,18 @@ def cmd_logout(args):
         print("Logged out. Credentials removed.")
 
 
+def cmd_sync(args):
+    import subprocess
+    cmd = [sys.executable, SYNC_SCRIPT]
+    if args.full:
+        cmd.append("--full")
+    if args.create:
+        cmd.append("--create")
+    result = subprocess.run(cmd, check=False)
+    if result.returncode != 0:
+        sys.exit(result.returncode)
+
+
 # --- Entry point ---
 
 def main():
@@ -182,7 +194,10 @@ def main():
 
     sub.add_parser("login", help="Authenticate with Flickr via OAuth")
     sub.add_parser("status", help="Show current login status")
-    sub.add_parser("logout", help="Clear saved credentials")
+    sub.add_parser("logout", help="Clear saved credentials and local database")
+    sync_parser = sub.add_parser("sync", help="Sync photo metadata from Flickr")
+    sync_parser.add_argument("--full", action="store_true", help="Re-fetch all photos")
+    sync_parser.add_argument("--create", action="store_true", help="Create database if missing")
 
     args = parser.parse_args()
 
@@ -190,6 +205,7 @@ def main():
         "login": cmd_login,
         "status": cmd_status,
         "logout": cmd_logout,
+        "sync": cmd_sync,
     }
 
     if args.command in commands:

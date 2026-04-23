@@ -20,17 +20,27 @@ docker compose build
 ### Authentication
 
 ```bash
-# OAuth login — opens browser, prompts for verifier code
+# OAuth login — opens browser, prompts for verifier code, then runs initial full sync
 python scripts/flickr.py login
 
 # Verify session is active
 python scripts/flickr.py status
 
-# Delete saved credentials
+# Delete saved credentials and local database
 python scripts/flickr.py logout
 ```
 
-Credentials are saved to `~/.flickr_mcp/credentials.json` (outside the repo).
+Credentials are saved to `~/.flickr_mcp/credentials.json` (outside the repo). Logout removes both credentials and `data/flickr.db`.
+
+### Sync
+
+```bash
+python scripts/flickr.py sync             # incremental — only photos updated since last sync
+python scripts/flickr.py sync --full      # re-fetch all public photos
+python scripts/flickr.py sync --create    # create database if missing, then sync
+```
+
+`login` runs a full sync automatically, so manual syncs are only needed for subsequent refreshes.
 
 ### Configuration
 
@@ -48,41 +58,16 @@ Set these in `.env` or as environment variables.
 A wrapper script at `bin/flickr` handles the Docker boilerplate. From the repo root:
 
 ```bash
-bin/flickr login    # OAuth login — opens browser, prompts for verifier
+bin/flickr login    # OAuth login — opens browser, prompts for verifier, then runs initial sync
 bin/flickr status   # Verify session is active
-bin/flickr logout   # Delete saved credentials
+bin/flickr logout   # Delete saved credentials and local database
+bin/flickr sync     # Incremental sync
+bin/flickr sync --full   # Full re-fetch
 ```
 
 OAuth credentials are persisted in the `flickr-creds` Docker volume so you only need to log in once.
 
 ---
-
-## Photo Sync (`scripts/flickr_sync.py`)
-
-Fetches public photo metadata into a local SQLite database (`flickr.db`).
-
-```bash
-bin/flickr-sync --create          # first run — creates data/flickr.db
-bin/flickr-sync                   # incremental — only photos updated since last sync
-bin/flickr-sync --full            # fetch all public photos
-bin/flickr-sync --full --create   # full sync, creating db if needed
-```
-
-Or without Docker:
-```bash
-python scripts/flickr_sync.py --create
-python scripts/flickr_sync.py
-python scripts/flickr_sync.py --full
-```
-
-The first run always does a full sync regardless of the flag. Subsequent runs default to incremental.
-
-### Database schema
-
-| Table | Purpose |
-|---|---|
-| `photos` | One row per photo: title, description, dates, tags, views, URLs |
-| `sync_log` | History of each sync run (timestamp, mode, count) |
 
 ---
 
