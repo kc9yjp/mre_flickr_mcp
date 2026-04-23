@@ -375,13 +375,12 @@ async def list_tools():
             name="unfollow_contact",
             description=(
                 "Attempt to unfollow a contact via the Flickr API. "
-                "Returns their profile URL regardless; optionally opens it in Safari."
+                "Returns their profile URL regardless."
             ),
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "contact_id":   {"type": "string",  "description": "Flickr NSID of the contact"},
-                    "open_browser": {"type": "boolean", "description": "Open their profile in Safari (default false)"},
+                    "contact_id": {"type": "string", "description": "Flickr NSID of the contact"},
                 },
                 "required": ["contact_id"],
             },
@@ -691,7 +690,6 @@ async def _protect_contact(args):
 
 async def _unfollow_contact(args):
     contact_id = args["contact_id"]
-    open_browser = args.get("open_browser", False)
     profile_url = f"https://www.flickr.com/people/{contact_id}/"
     api_result = ""
 
@@ -704,13 +702,6 @@ async def _unfollow_contact(args):
         api_result = "Unfollowed via API. "
     except RuntimeError as e:
         api_result = f"API unfollow failed ({e}) — use profile URL to unfollow manually. "
-
-    if open_browser:
-        proc = await asyncio.create_subprocess_exec(
-            "osascript", "-e",
-            f'tell application "Safari" to set URL of current tab of front window to "{profile_url}"',
-        )
-        await proc.communicate()
 
     return [TextContent(type="text", text=f"{api_result}Profile: {profile_url}")]
 
@@ -856,6 +847,7 @@ async def _find_weak_photos(args):
     limit = min(int(args.get("limit", 20)), 100)
     min_age_days = int(args.get("min_age_days", 30))
     extra_where = "AND favorites = 0" if args.get("require_zero_favorites") else ""
+    review_cooldown_days = int(args.get("review_cooldown_days", 21))
 
     sql = f"""
         WITH scored AS (
@@ -876,13 +868,22 @@ async def _find_weak_photos(args):
             FROM photos
             WHERE date_uploaded IS NOT NULL
               AND date_uploaded < (strftime('%s','now') - ? * 86400)
+              AND (reviewed_at IS NULL OR reviewed_at < (strftime('%s','now') - ? * 86400))
+              AND (is_public IS NULL OR is_public != 0)
               {extra_where}
         )
         SELECT * FROM scored ORDER BY weakness_score DESC LIMIT ?
     """
 
     conn = db()
-    rows = conn.execute(sql, (min_age_days, limit)).fetchall()
+    rows = conn.execute(sql, (min_age_days, review_cooldown_days, limit)).fetchall()
+    ids = [r["id"] for r in rows]
+    if ids:
+        conn.execute(
+            f"UPDATE photos SET reviewed_at = strftime('%s','now') WHERE id IN ({','.join('?'*len(ids))})",
+            ids,
+        )
+        conn.commit()
     conn.close()
 
     results = [{
@@ -916,6 +917,11 @@ async def _set_visibility(args):
         "perm_comment":  "3" if is_public else "0",
         "perm_addmeta":  "2" if is_public else "0",
     })
+
+    conn = db()
+    conn.execute("UPDATE photos SET is_public = ? WHERE id = ?", (is_public, photo_id))
+    conn.commit()
+    conn.close()
 
     visibility = "public" if is_public else "private"
     return [TextContent(type="text", text=f"Photo {photo_id} is now {visibility} on Flickr.")]
