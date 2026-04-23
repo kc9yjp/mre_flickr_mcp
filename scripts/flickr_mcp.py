@@ -978,29 +978,45 @@ async def _sync(args):
 REFRESH_INTERVAL = 86400  # 24 hours
 
 
+async def _run_sync_script(path: str, label: str) -> int:
+    logging.info("Sync starting: %s", label)
+    p = await asyncio.create_subprocess_exec(
+        sys.executable, path,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.STDOUT,
+    )
+    stdout, _ = await p.communicate()
+    for line in stdout.decode().splitlines():
+        if line.strip():
+            logging.info("[%s] %s", label, line)
+    if p.returncode != 0:
+        logging.error("Sync failed: %s (exit %s)", label, p.returncode)
+    else:
+        logging.info("Sync completed: %s", label)
+    return p.returncode
+
+
 async def _background_refresh():
     """Check daily whether photo/contact/group data needs refreshing and sync if so."""
     while True:
         try:
             if os.path.exists(DB_FILE):
                 conn = sqlite3.connect(DB_FILE)
-                row = conn.execute("SELECT MAX(synced_at) FROM sync_log").fetchone()
+                row = conn.execute("SELECT MAX(synced_at) FROM sync_log WHERE type = 'photos'").fetchone()
                 conn.close()
                 last_sync = row[0] if row and row[0] else 0
                 age = time.time() - last_sync
 
                 if age >= REFRESH_INTERVAL:
+                    logging.info("Background refresh triggered (last photos sync %.1fh ago)", age / 3600)
                     async with _sync_lock:
-                        for script in (SYNC_SCRIPT, "sync_contacts.py", "sync_groups.py"):
-                            path = script if script == SYNC_SCRIPT else os.path.join(os.path.dirname(SYNC_SCRIPT), script)
-                            if os.path.exists(path):
-                                p = await asyncio.create_subprocess_exec(
-                                    sys.executable, path,
-                                    stdout=asyncio.subprocess.DEVNULL,
-                                    stderr=asyncio.subprocess.DEVNULL,
-                                )
-                                await p.communicate()
-
+                        await _run_sync_script(SYNC_SCRIPT, "photos")
+                        contacts_path = os.path.join(os.path.dirname(SYNC_SCRIPT), "sync_contacts.py")
+                        groups_path   = os.path.join(os.path.dirname(SYNC_SCRIPT), "sync_groups.py")
+                        await asyncio.gather(
+                            _run_sync_script(contacts_path, "contacts"),
+                            _run_sync_script(groups_path,   "groups"),
+                        )
                     sleep_for = REFRESH_INTERVAL
                 else:
                     sleep_for = REFRESH_INTERVAL - age
