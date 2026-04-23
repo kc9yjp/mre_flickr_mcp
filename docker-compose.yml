@@ -10,15 +10,6 @@ services:
     stdin_open: true
     tty: true
 
-  sync:
-    build: .
-    entrypoint: ["python", "scripts/flickr_sync.py"]
-    env_file: .env
-    volumes:
-      - flickr-creds:/root/.flickr_mcp
-      - ./data:/app/data
-      - ./scripts:/app/scripts
-
   mcp:
     build: .
     env_file: .env
