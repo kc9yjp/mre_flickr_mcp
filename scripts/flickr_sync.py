@@ -113,6 +113,9 @@ def api_get(api_key, api_secret, creds, method, extra=None):
 
 def init_db(conn):
     conn.executescript("""
+        PRAGMA journal_mode=WAL;
+        PRAGMA busy_timeout=5000;
+
         CREATE TABLE IF NOT EXISTS photos (
             id            TEXT PRIMARY KEY,
             title         TEXT,
@@ -173,7 +176,8 @@ def init_db(conn):
             id             INTEGER PRIMARY KEY AUTOINCREMENT,
             synced_at      INTEGER,
             mode           TEXT,
-            photos_fetched INTEGER
+            photos_fetched INTEGER,
+            type           TEXT DEFAULT 'photos'
         );
     """)
     conn.commit()
@@ -184,6 +188,7 @@ def init_db(conn):
         "ALTER TABLE photos ADD COLUMN comments     INTEGER DEFAULT 0",
         "ALTER TABLE photos ADD COLUMN reviewed_at  INTEGER DEFAULT NULL",
         "ALTER TABLE photos ADD COLUMN is_public    INTEGER DEFAULT 1",
+        "ALTER TABLE sync_log ADD COLUMN type       TEXT DEFAULT 'photos'",
     ]
     for sql in migrations:
         try:
@@ -194,7 +199,7 @@ def init_db(conn):
 
 
 def last_sync_time(conn):
-    row = conn.execute("SELECT MAX(synced_at) FROM sync_log").fetchone()
+    row = conn.execute("SELECT MAX(synced_at) FROM sync_log WHERE type = 'photos'").fetchone()
     return row[0] if row and row[0] else None
 
 
@@ -343,6 +348,7 @@ def sync_groups(api_key, api_secret, creds, conn):
         page += 1
     conn.commit()
     print(f"  {total} groups synced.")
+    return total
 
 
 # --- Command ---
@@ -383,7 +389,7 @@ def cmd_sync(args):
 
     conn.commit()
     conn.execute(
-        "INSERT INTO sync_log (synced_at, mode, photos_fetched) VALUES (?, ?, ?)",
+        "INSERT INTO sync_log (synced_at, mode, photos_fetched, type) VALUES (?, ?, ?, 'photos')",
         (synced_at, mode, total),
     )
     conn.commit()
