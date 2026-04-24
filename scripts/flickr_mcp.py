@@ -190,6 +190,18 @@ async def list_tools():
             },
         ),
         Tool(
+            name="add_comment",
+            description="Post a comment on a Flickr photo.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "photo_id":      {"type": "string", "description": "Flickr photo ID"},
+                    "comment_text":  {"type": "string", "description": "Text of the comment to post"},
+                },
+                "required": ["photo_id", "comment_text"],
+            },
+        ),
+        Tool(
             name="get_photo_stats",
             description="Get view/favorite/comment stats for a photo on a specific date (defaults to today).",
             inputSchema={
@@ -473,6 +485,7 @@ async def call_tool(name: str, arguments: dict):
             case "protect_contact":   return await _protect_contact(arguments)
             case "unfollow_contact":  return await _unfollow_contact(arguments)
             case "get_photo_comments": return await _get_photo_comments(arguments)
+            case "add_comment":        return await _add_comment(arguments)
             case "get_photo_stats":   return await _get_photo_stats(arguments)
             case "find_albums":       return await _find_albums(arguments)
             case "get_album_photos":  return await _get_album_photos(arguments)
@@ -746,6 +759,15 @@ async def _get_photo_comments(args):
     if not comments:
         return [TextContent(type="text", text="No comments found.")]
     return [TextContent(type="text", text=json.dumps(comments, indent=2))]
+
+
+async def _add_comment(args):
+    data = _api_post("flickr.photos.comments.addComment", {
+        "photo_id":     args["photo_id"],
+        "comment_text": args["comment_text"],
+    })
+    comment_id = data.get("comment", {}).get("id", "unknown")
+    return [TextContent(type="text", text=f"Comment posted (id: {comment_id}).")]
 
 
 async def _get_photo_stats(args):
