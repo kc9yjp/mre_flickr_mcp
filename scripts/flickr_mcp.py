@@ -1076,12 +1076,14 @@ async def _background_refresh():
                     logging.info("Background refresh triggered (last photos sync %.1fh ago)", age / 3600)
                     async with _sync_lock:
                         await _run_sync_script(SYNC_SCRIPT, "photos")
-                        contacts_path = os.path.join(os.path.dirname(SYNC_SCRIPT), "sync_contacts.py")
-                        groups_path   = os.path.join(os.path.dirname(SYNC_SCRIPT), "sync_groups.py")
+                        contacts_path    = os.path.join(os.path.dirname(SYNC_SCRIPT), "sync_contacts.py")
+                        groups_path      = os.path.join(os.path.dirname(SYNC_SCRIPT), "sync_groups.py")
+                        engagement_path  = os.path.join(os.path.dirname(SYNC_SCRIPT), "sync_engagement.py")
                         await asyncio.gather(
                             _run_sync_script(contacts_path, "contacts"),
                             _run_sync_script(groups_path,   "groups"),
                         )
+                        await _run_sync_script(engagement_path, "engagement")
                     sleep_for = REFRESH_INTERVAL
                 else:
                     sleep_for = REFRESH_INTERVAL - age
