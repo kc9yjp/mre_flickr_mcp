@@ -387,6 +387,11 @@ async def list_tools():
             },
         ),
         Tool(
+            name="get_contacts_summary",
+            description="Return an overview of followed contacts: total count, friend/family breakdown, engagement stats, and top engagers.",
+            inputSchema={"type": "object", "properties": {}},
+        ),
+        Tool(
             name="find_unfollow_candidates",
             description=(
                 "List contacts you follow ranked by lowest engagement (faves + comments on your photos). "
@@ -481,6 +486,7 @@ async def call_tool(name: str, arguments: dict):
             case "list_recent_syncs": return await _list_recent_syncs(arguments)
             case "update_photo":      return await _update_photo(arguments)
             case "fetch_photo_image": return await _fetch_photo_image(arguments)
+            case "get_contacts_summary":     return await _get_contacts_summary()
             case "find_unfollow_candidates": return await _find_unfollow_candidates(arguments)
             case "protect_contact":   return await _protect_contact(arguments)
             case "unfollow_contact":  return await _unfollow_contact(arguments)
@@ -679,6 +685,43 @@ async def _fetch_photo_image(args):
         TextContent(type="text", text=f"Photo ID: {photo_id}\n{photopage}"),
         ImageContent(type="image", data=data, mimeType=mime),
     ]
+
+
+async def _get_contacts_summary():
+    conn = db()
+    total       = conn.execute("SELECT COUNT(*) FROM contacts").fetchone()[0]
+    friends     = conn.execute("SELECT COUNT(*) FROM contacts WHERE is_friend = 1").fetchone()[0]
+    family      = conn.execute("SELECT COUNT(*) FROM contacts WHERE is_family = 1").fetchone()[0]
+    protected   = conn.execute("SELECT COUNT(*) FROM do_not_unfollow").fetchone()[0]
+    eng_total   = conn.execute("SELECT COUNT(*) FROM contact_engagement").fetchone()[0]
+    eng_nonzero = conn.execute("SELECT COUNT(*) FROM contact_engagement WHERE faves > 0 OR comments > 0").fetchone()[0]
+    top_rows    = conn.execute("""
+        SELECT c.username, c.realname, e.faves, e.comments, e.faves + e.comments AS total
+        FROM contact_engagement e
+        JOIN contacts c ON c.id = e.contact_id
+        WHERE e.faves > 0 OR e.comments > 0
+        ORDER BY total DESC
+        LIMIT 10
+    """).fetchall()
+    conn.close()
+
+    summary = {
+        "total_following": total,
+        "friends": friends,
+        "family": family,
+        "protected_from_unfollow": protected,
+        "engagement_data": {
+            "contacts_with_records": eng_total,
+            "contacts_with_any_engagement": eng_nonzero,
+            "note": "Run bin/sync-engagement to populate engagement data (~20 min)." if eng_total == 0 else None,
+        },
+        "top_engagers": [
+            {"username": r["username"], "realname": r["realname"],
+             "faves": r["faves"], "comments": r["comments"]}
+            for r in top_rows
+        ],
+    }
+    return [TextContent(type="text", text=json.dumps(summary, indent=2))]
 
 
 async def _find_unfollow_candidates(args):
