@@ -463,13 +463,15 @@ async def list_tools():
         Tool(
             name="sync",
             description=(
-                "Fetch updated photo metadata from Flickr into the local database. "
-                "Incremental by default; pass full=true to re-fetch everything."
+                "Sync Flickr data into the local database. "
+                "type controls what to sync: 'photos' (default), 'groups', 'contacts', 'albums', or 'all'. "
+                "Pass full=true to re-fetch all photos instead of just updates."
             ),
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "full": {"type": "boolean", "description": "Re-fetch all photos instead of just updates"},
+                    "type": {"type": "string", "description": "What to sync: photos, groups, contacts, albums, or all (default: photos)"},
+                    "full": {"type": "boolean", "description": "Re-fetch all photos instead of just updates (photos sync only)"},
                 },
             },
         ),
@@ -566,6 +568,8 @@ async def _get_summary():
     conn = db()
     stats = conn.execute("""
         SELECT COUNT(*) AS total_photos,
+               SUM(CASE WHEN is_public = 1 THEN 1 ELSE 0 END) AS public_photos,
+               SUM(CASE WHEN is_public = 0 THEN 1 ELSE 0 END) AS private_photos,
                SUM(views) AS total_views,
                MIN(date_taken) AS earliest,
                MAX(date_taken) AS latest,
@@ -585,8 +589,10 @@ async def _get_summary():
     top_tags = [{"tag": t, "count": c} for t, c in sorted(counts.items(), key=lambda x: -x[1])[:20]]
 
     result = {
-        "total_photos": stats["total_photos"],
-        "total_views":  stats["total_views"],
+        "total_photos":   stats["total_photos"],
+        "public_photos":  stats["public_photos"],
+        "private_photos": stats["private_photos"],
+        "total_views":    stats["total_views"],
         "date_range":   {"earliest": stats["earliest"], "latest": stats["latest"]},
         "last_synced":  datetime.fromtimestamp(stats["last_synced"]).isoformat() if stats["last_synced"] else None,
         "top_tags":     top_tags,
@@ -1025,19 +1031,39 @@ async def _sync(args):
     if _sync_lock.locked():
         return [TextContent(type="text", text="Sync already in progress.")]
 
-    cmd = [sys.executable, SYNC_SCRIPT]
-    if args.get("full"):
-        cmd.append("--full")
+    scripts_dir = os.path.dirname(SYNC_SCRIPT)
+    sync_type = args.get("type", "photos")
 
+    script_map = {
+        "photos":   SYNC_SCRIPT,
+        "groups":   os.path.join(scripts_dir, "sync_groups.py"),
+        "contacts": os.path.join(scripts_dir, "sync_contacts.py"),
+        "albums":   os.path.join(scripts_dir, "sync_albums.py"),
+    }
+
+    if sync_type == "all":
+        targets = list(script_map.items())
+    elif sync_type in script_map:
+        targets = [(sync_type, script_map[sync_type])]
+    else:
+        return [TextContent(type="text", text=f"Unknown sync type '{sync_type}'. Use: photos, groups, contacts, albums, all.")]
+
+    results = []
     async with _sync_lock:
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
-        )
-        stdout, _ = await proc.communicate()
-    status = "completed" if proc.returncode == 0 else "failed"
-    return [TextContent(type="text", text=f"Sync {status}:\n{stdout.decode()}")]
+        for label, path in targets:
+            cmd = [sys.executable, path]
+            if label == "photos" and args.get("full"):
+                cmd.append("--full")
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            stdout, _ = await proc.communicate()
+            status = "completed" if proc.returncode == 0 else "failed"
+            results.append(f"{label}: {status}\n{stdout.decode().strip()}")
+
+    return [TextContent(type="text", text="\n\n".join(results))]
 
 
 REFRESH_INTERVAL = 86400  # 24 hours
