@@ -83,6 +83,7 @@ sync_log          — type, mode, photos_fetched, synced_at
 | `set_visibility` | Make photo public or private |
 | `find_weak_photos` | Rank photos by weakness score (low views, zero faves/comments) |
 | `add_comment` | Post a comment on a photo |
+| `fave_photo` | Add a photo to the user's favorites |
 | `find_albums` | Search albums by keyword |
 | `get_album_photos` | List photos in an album |
 | `add_to_album` | Add photo to an album |
@@ -97,6 +98,7 @@ sync_log          — type, mode, photos_fetched, synced_at
 | `find_unfollow_candidates` | Contacts ranked by lowest engagement (faves + comments) |
 | `protect_contact` | Add contact to do-not-unfollow whitelist |
 | `unfollow_contact` | Unfollow a contact via API |
+| `set_location` | Set photo geolocation (lat/lon) on Flickr |
 | `sync` | Trigger an incremental (or full) photo sync from within MCP |
 
 ## Key Implementation Details
@@ -110,6 +112,7 @@ sync_log          — type, mode, photos_fetched, synced_at
 ## Skills (Claude Code slash commands)
 
 - `/flickr-photo` — process a photo from the current Safari tab: suggest metadata, update, add to groups/albums
+- `/flickr-fave` — fave the current Safari photo immediately, then suggest a comment
 - `/flickr-hide` — find weak photos, review visually, make private or update and keep
 - `/flickr-sync` — run all sync scripts in order and report results
 

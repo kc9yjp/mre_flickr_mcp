@@ -202,6 +202,17 @@ async def list_tools():
             },
         ),
         Tool(
+            name="fave_photo",
+            description="Add a photo to the user's Flickr favorites.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "photo_id": {"type": "string", "description": "Flickr photo ID"},
+                },
+                "required": ["photo_id"],
+            },
+        ),
+        Tool(
             name="get_photo_stats",
             description="Get view/favorite/comment stats for a photo on a specific date (defaults to today).",
             inputSchema={
@@ -461,6 +472,24 @@ async def list_tools():
             },
         ),
         Tool(
+            name="set_location",
+            description=(
+                "Set the geolocation of a photo on Flickr. "
+                "Accepts latitude and longitude (decimal degrees). "
+                "accuracy is optional (1–16, default 16 = street level)."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "id":       {"type": "string",  "description": "Flickr photo ID"},
+                    "lat":      {"type": "number",  "description": "Latitude (decimal degrees)"},
+                    "lon":      {"type": "number",  "description": "Longitude (decimal degrees)"},
+                    "accuracy": {"type": "integer", "description": "Location accuracy 1–16 (default 16 = street)"},
+                },
+                "required": ["id", "lat", "lon"],
+            },
+        ),
+        Tool(
             name="sync",
             description=(
                 "Sync Flickr data into the local database. "
@@ -494,6 +523,7 @@ async def call_tool(name: str, arguments: dict):
             case "unfollow_contact":  return await _unfollow_contact(arguments)
             case "get_photo_comments": return await _get_photo_comments(arguments)
             case "add_comment":        return await _add_comment(arguments)
+            case "fave_photo":         return await _fave_photo(arguments)
             case "get_photo_stats":   return await _get_photo_stats(arguments)
             case "find_albums":       return await _find_albums(arguments)
             case "get_album_photos":  return await _get_album_photos(arguments)
@@ -507,6 +537,7 @@ async def call_tool(name: str, arguments: dict):
             case "add_to_group":      return await _add_to_group(arguments)
             case "find_weak_photos":  return await _find_weak_photos(arguments)
             case "set_visibility":    return await _set_visibility(arguments)
+            case "set_location":      return await _set_location(arguments)
             case "sync":             return await _sync(arguments)
             case _: return [TextContent(type="text", text=f"Unknown tool: {name}")]
     except (FileNotFoundError, RuntimeError) as e:
@@ -819,6 +850,11 @@ async def _add_comment(args):
     return [TextContent(type="text", text=f"Comment posted (id: {comment_id}).")]
 
 
+async def _fave_photo(args):
+    _api_post("flickr.favorites.add", {"photo_id": args["photo_id"]})
+    return [TextContent(type="text", text=f"Photo {args['photo_id']} added to favorites.")]
+
+
 async def _get_photo_stats(args):
     from datetime import date as date_type
     photo_id = args["photo_id"]
@@ -1025,6 +1061,20 @@ async def _set_visibility(args):
 
     visibility = "public" if is_public else "private"
     return [TextContent(type="text", text=f"Photo {photo_id} is now {visibility} on Flickr.")]
+
+
+async def _set_location(args):
+    photo_id = args["id"]
+    lat = args["lat"]
+    lon = args["lon"]
+    accuracy = str(args.get("accuracy", 16))
+    _api_post("flickr.photos.geo.setLocation", {
+        "photo_id": photo_id,
+        "lat":      str(lat),
+        "lon":      str(lon),
+        "accuracy": accuracy,
+    })
+    return [TextContent(type="text", text=f"Photo {photo_id} location set to ({lat}, {lon}).")]
 
 
 async def _sync(args):
