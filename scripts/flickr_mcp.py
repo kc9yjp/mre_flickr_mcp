@@ -296,7 +296,8 @@ async def list_tools():
                 "type": "object",
                 "properties": {
                     "album_id": {"type": "string", "description": "Flickr photoset ID"},
-                    "limit":    {"type": "integer", "description": "Max photos to return (default 50)"},
+                    "limit":    {"type": "integer", "description": "Max photos to return per page (default 50)"},
+                    "page":     {"type": "integer", "description": "Page number (default 1)"},
                 },
                 "required": ["album_id"],
             },
@@ -887,17 +888,19 @@ async def _find_albums(args):
 async def _get_album_photos(args):
     album_id = args["album_id"]
     limit = int(args.get("limit", 50))
+    page = int(args.get("page", 1))
     creds = _load_credentials()
     data = _api_get("flickr.photosets.getPhotos", {
         "photoset_id": album_id,
         "user_id": creds["user_nsid"],
         "per_page": str(limit),
-        "page": "1",
+        "page": str(page),
         "extras": "title,url_photopage",
     })
     photos = [{"id": p["id"], "title": p.get("title", "")} for p in data["photoset"]["photo"]]
     total = int(data["photoset"]["total"])
-    return [TextContent(type="text", text=json.dumps({"total": total, "returned": len(photos), "photos": photos}, indent=2))]
+    pages = int(data["photoset"]["pages"])
+    return [TextContent(type="text", text=json.dumps({"total": total, "pages": pages, "page": page, "returned": len(photos), "photos": photos}, indent=2))]
 
 
 async def _add_to_album(args):
