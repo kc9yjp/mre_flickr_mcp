@@ -8,7 +8,7 @@ import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from flickr_sync import load_env, load_credentials, sync_groups, init_db, DB_FILE
+from flickr_sync import load_env, load_credentials, sync_groups, sync_group_descriptions, init_db, DB_FILE
 
 
 def main():
@@ -28,6 +28,9 @@ def main():
     print("Syncing groups...")
     synced_at = int(time.time())
     total = sync_groups(api_key, api_secret, creds, conn)
+
+    print("Fetching group descriptions...")
+    sync_group_descriptions(api_key, api_secret, creds, conn)
 
     conn.execute(
         "INSERT INTO sync_log (synced_at, mode, photos_fetched, type) VALUES (?, 'full', ?, 'groups')",
