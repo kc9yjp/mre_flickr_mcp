@@ -377,13 +377,25 @@ async def list_tools():
         ),
         Tool(
             name="find_groups",
-            description="Search the user's Flickr groups by keyword from the local database.",
+            description="Search the user's Flickr groups by keyword from the local database. Searches group name, description, and keywords.",
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "query": {"type": "string", "description": "Keyword to search group names"},
+                    "query": {"type": "string", "description": "Keyword to search group names, descriptions, and keywords"},
                     "limit": {"type": "integer", "description": "Max results (default 10)"},
                 },
+            },
+        ),
+        Tool(
+            name="set_group_keywords",
+            description="Set custom search keywords/synonyms for a group to improve future findability.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "group_id": {"type": "string", "description": "Flickr group NSID"},
+                    "keywords": {"type": "string", "description": "Space or comma-separated keywords/synonyms"},
+                },
+                "required": ["group_id", "keywords"],
             },
         ),
         Tool(
@@ -534,8 +546,9 @@ async def call_tool(name: str, arguments: dict):
             case "edit_album":        return await _edit_album(arguments)
             case "delete_album":      return await _delete_album(arguments)
             case "remove_from_group": return await _remove_from_group(arguments)
-            case "find_groups":       return await _find_groups(arguments)
-            case "add_to_group":      return await _add_to_group(arguments)
+            case "find_groups":        return await _find_groups(arguments)
+            case "set_group_keywords": return await _set_group_keywords(arguments)
+            case "add_to_group":       return await _add_to_group(arguments)
             case "find_weak_photos":  return await _find_weak_photos(arguments)
             case "set_visibility":    return await _set_visibility(arguments)
             case "set_location":      return await _set_location(arguments)
@@ -964,14 +977,31 @@ async def _find_groups(args):
     query = args.get("query", "")
     limit = int(args.get("limit", 10))
     conn = db()
+    pat = f"%{query}%"
     rows = conn.execute(
-        "SELECT id, name, members, pool_count FROM groups WHERE name LIKE ? ORDER BY members DESC LIMIT ?",
-        (f"%{query}%", limit),
+        """SELECT id, name, members, pool_count FROM groups
+           WHERE name LIKE ? OR description LIKE ? OR keywords LIKE ?
+           ORDER BY members DESC LIMIT ?""",
+        (pat, pat, pat, limit),
     ).fetchall()
     conn.close()
     if not rows:
         return [TextContent(type="text", text=f"No groups found matching '{query}'. Run sync to populate groups.")]
     return [TextContent(type="text", text=json.dumps([dict(r) for r in rows], indent=2))]
+
+
+async def _set_group_keywords(args):
+    group_id = args["group_id"]
+    keywords = args["keywords"]
+    conn = db()
+    updated = conn.execute(
+        "UPDATE groups SET keywords=? WHERE id=?", (keywords, group_id)
+    ).rowcount
+    conn.commit()
+    conn.close()
+    if not updated:
+        return [TextContent(type="text", text=f"Group {group_id} not found in local database.")]
+    return [TextContent(type="text", text=f"Keywords updated for group {group_id}.")]
 
 
 async def _add_to_group(args):

@@ -189,6 +189,8 @@ def init_db(conn):
         "ALTER TABLE photos ADD COLUMN reviewed_at  INTEGER DEFAULT NULL",
         "ALTER TABLE photos ADD COLUMN is_public    INTEGER DEFAULT 1",
         "ALTER TABLE sync_log ADD COLUMN type       TEXT DEFAULT 'photos'",
+        "ALTER TABLE groups ADD COLUMN description  TEXT",
+        "ALTER TABLE groups ADD COLUMN keywords     TEXT",
     ]
     for sql in migrations:
         try:
@@ -349,6 +351,43 @@ def sync_groups(api_key, api_secret, creds, conn):
     conn.commit()
     print(f"  {total} groups synced.")
     return total
+
+
+def sync_group_descriptions(api_key, api_secret, creds, conn):
+    """Fetch descriptions from flickr.groups.getInfo for groups missing them."""
+    rows = conn.execute("SELECT id FROM groups WHERE description IS NULL").fetchall()
+    if not rows:
+        return 0
+    updated = 0
+    for (group_id,) in rows:
+        params = oauth_params(api_key, {
+            "oauth_token": creds["oauth_token"],
+            "method": "flickr.groups.getInfo",
+            "group_id": group_id,
+            "format": "json",
+            "nojsoncallback": "1",
+        })
+        params["oauth_signature"] = sign_request("GET", API_URL, params, api_secret, creds["oauth_token_secret"])
+        try:
+            resp = requests.get(API_URL, params=params, timeout=HTTP_TIMEOUT)
+        except Exception:
+            continue
+        if not resp.ok:
+            continue
+        data = resp.json()
+        if data.get("stat") != "ok":
+            continue
+        group = data.get("group", {})
+        description = (group.get("description") or {}).get("_content", "") or ""
+        conn.execute(
+            "UPDATE groups SET description=? WHERE id=?",
+            (description[:2000], group_id),
+        )
+        updated += 1
+        time.sleep(0.15)
+    conn.commit()
+    print(f"  {updated} group descriptions fetched.")
+    return updated
 
 
 # --- Command ---
