@@ -19,5 +19,18 @@ services:
       - ./scripts:/app/scripts
     stdin_open: true
 
+  mcp-web:
+    build: .
+    env_file: .env
+    environment:
+      - MCP_TRANSPORT=sse
+      - MCP_PORT=8000
+    volumes:
+      - flickr-creds:/root/.flickr_mcp
+      - ./data:/app/data
+      - ./scripts:/app/scripts
+    ports:
+      - "8000:8000"
+
 volumes:
   flickr-creds:
