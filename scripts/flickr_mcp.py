@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Flickr MCP server — stdio interface."""
+"""Flickr MCP server — stdio and SSE transports."""
 
 import asyncio
 import base64
@@ -25,6 +25,10 @@ import requests
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp.types import ImageContent, TextContent, Tool
+
+MCP_TRANSPORT = os.environ.get("MCP_TRANSPORT", "stdio")
+MCP_PORT = int(os.environ.get("MCP_PORT", "8000"))
+MCP_API_KEY = os.environ.get("MCP_API_KEY", "")
 
 DB_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "flickr.db")
 SYNC_SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "flickr_sync.py")
@@ -1212,18 +1216,74 @@ async def _background_refresh():
         await asyncio.sleep(sleep_for)
 
 
+async def main_stdio():
+    async with stdio_server() as (read_stream, write_stream):
+        asyncio.create_task(_background_refresh())
+        logging.info("stdio ready — waiting for MCP client")
+        await server.run(read_stream, write_stream, server.create_initialization_options())
+
+
+async def main_sse():
+    from mcp.server.sse import SseServerTransport
+    from starlette.applications import Starlette
+    from starlette.middleware import Middleware
+    from starlette.middleware.base import BaseHTTPMiddleware
+    from starlette.requests import Request
+    from starlette.responses import Response
+    from starlette.routing import Mount, Route
+    import uvicorn
+
+    sse = SseServerTransport("/messages/")
+
+    async def handle_sse(request: Request):
+        async with sse.connect_sse(
+            request.scope, request.receive, request._send
+        ) as streams:
+            await server.run(streams[0], streams[1], server.create_initialization_options())
+
+    class ApiKeyMiddleware(BaseHTTPMiddleware):
+        async def dispatch(self, request: Request, call_next):
+            if MCP_API_KEY:
+                key = request.headers.get("X-API-Key", "")
+                if not key:
+                    auth = request.headers.get("Authorization", "")
+                    if auth.startswith("Bearer "):
+                        key = auth[7:]
+                if key != MCP_API_KEY:
+                    return Response("Unauthorized", status_code=401)
+            return await call_next(request)
+
+    middleware = [Middleware(ApiKeyMiddleware)] if MCP_API_KEY else []
+
+    app = Starlette(
+        middleware=middleware,
+        routes=[
+            Route("/sse", endpoint=handle_sse),
+            Mount("/messages/", app=sse.handle_post_message),
+        ],
+    )
+
+    config = uvicorn.Config(app, host="0.0.0.0", port=MCP_PORT, log_level="info")
+    uv_server = uvicorn.Server(config)
+
+    asyncio.create_task(_background_refresh())
+    logging.info("SSE ready on port %d (api_key=%s)", MCP_PORT, "set" if MCP_API_KEY else "none")
+    await uv_server.serve()
+
+
 async def main():
-    logging.info("Flickr MCP server starting (db=%s, creds=%s)", DB_FILE, CREDENTIALS_FILE)
+    logging.info("Flickr MCP server starting (transport=%s, db=%s)", MCP_TRANSPORT, DB_FILE)
     try:
         _load_env()
         logging.info("Credentials and env loaded OK")
     except Exception as e:
         logging.error("Startup failed: %s", e)
         sys.exit(1)
-    async with stdio_server() as (read_stream, write_stream):
-        asyncio.create_task(_background_refresh())
-        logging.info("stdio ready — waiting for MCP client")
-        await server.run(read_stream, write_stream, server.create_initialization_options())
+
+    if MCP_TRANSPORT == "sse":
+        await main_sse()
+    else:
+        await main_stdio()
 
 
 if __name__ == "__main__":
