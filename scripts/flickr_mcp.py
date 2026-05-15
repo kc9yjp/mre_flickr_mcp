@@ -467,6 +467,7 @@ async def list_tools():
                     "limit":                  {"type": "integer", "description": "Max results (default 20, max 100)"},
                     "min_age_days":           {"type": "integer", "description": "Min days since upload (default 30)"},
                     "require_zero_favorites": {"type": "boolean", "description": "Only include photos with 0 favorites"},
+                    "review_cooldown_days":   {"type": "integer", "description": "Skip photos reviewed within this many days (default 60)"},
                 },
             },
         ),
@@ -625,6 +626,9 @@ async def _get_summary():
     tag_rows = conn.execute(
         "SELECT tags FROM photos WHERE tags != '' AND tags IS NOT NULL"
     ).fetchall()
+    group_count = conn.execute("SELECT COUNT(*) FROM groups").fetchone()[0]
+    album_count = conn.execute("SELECT COUNT(*) FROM albums").fetchone()[0]
+    contact_count = conn.execute("SELECT COUNT(*) FROM contacts").fetchone()[0]
     conn.close()
 
     counts = {}
@@ -638,6 +642,9 @@ async def _get_summary():
         "public_photos":  stats["public_photos"],
         "private_photos": stats["private_photos"],
         "total_views":    stats["total_views"],
+        "total_groups":   group_count,
+        "total_albums":   album_count,
+        "total_contacts": contact_count,
         "date_range":   {"earliest": stats["earliest"], "latest": stats["latest"]},
         "last_synced":  datetime.fromtimestamp(stats["last_synced"]).isoformat() if stats["last_synced"] else None,
         "top_tags":     top_tags,
@@ -718,7 +725,7 @@ async def _fetch_photo_image(args):
     # always fetch the live URL so edits are reflected
     sizes_data = _api_get("flickr.photos.getSizes", {"photo_id": photo_id})
     sizes = sizes_data["sizes"]["size"]
-    preferred = ("Original", "Large 2048", "Large 1600", "Large")
+    preferred = ("Large 2048", "Large 1600", "Large")
     url = next(
         (s["source"] for label in preferred for s in sizes if s["label"] == label),
         sizes[-1]["source"],
@@ -1016,7 +1023,7 @@ async def _find_weak_photos(args):
     limit = min(int(args.get("limit", 20)), 100)
     min_age_days = int(args.get("min_age_days", 30))
     require_zero_faves = 1 if args.get("require_zero_favorites") else 0
-    review_cooldown_days = int(args.get("review_cooldown_days", 21))
+    review_cooldown_days = int(args.get("review_cooldown_days", 60))
 
     sql = """
         WITH scored AS (
