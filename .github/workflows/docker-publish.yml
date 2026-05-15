@@ -22,7 +22,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: kc9yjp/flickr-mcp
+          images: ${{ secrets.DOCKERHUB_USERNAME }}/flickr-mcp
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}

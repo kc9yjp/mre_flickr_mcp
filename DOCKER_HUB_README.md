@@ -54,7 +54,7 @@ Add to your `.mcp.json`:
         "-e", "FLICKR_API_SECRET=your_api_secret",
         "-v", "flickr-creds:/root/.flickr_mcp",
         "-v", "flickr-data:/app/data",
-        "kc9yjp/flickr-mcp"
+        "ejwettstein/flickr-mcp"
       ]
     }
   }
@@ -75,7 +75,7 @@ docker run -d \
   -v flickr-creds:/root/.flickr_mcp \
   -v flickr-data:/app/data \
   -p 8000:8000 \
-  kc9yjp/flickr-mcp
+  ejwettstein/flickr-mcp
 ```
 
 Connect your client to `http://localhost:8000/sse`.
