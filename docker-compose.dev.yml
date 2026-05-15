@@ -1,0 +1,17 @@
+# Development overrides — mounts live scripts and data for editing and debugging.
+# Usage: docker compose -f docker-compose.yml -f docker-compose.dev.yml up mcp
+services:
+  flickr:
+    volumes:
+      - ./scripts:/app/scripts
+      - ./data:/app/data
+
+  mcp:
+    volumes:
+      - ./scripts:/app/scripts
+      - ./data:/app/data
+
+  mcp-web:
+    volumes:
+      - ./scripts:/app/scripts
+      - ./data:/app/data

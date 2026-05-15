@@ -5,8 +5,7 @@ services:
     env_file: .env
     volumes:
       - flickr-creds:/root/.flickr_mcp
-      - ./data:/app/data
-      - ./scripts:/app/scripts
+      - flickr-data:/app/data
     stdin_open: true
     tty: true
 
@@ -15,8 +14,7 @@ services:
     env_file: .env
     volumes:
       - flickr-creds:/root/.flickr_mcp
-      - ./data:/app/data
-      - ./scripts:/app/scripts
+      - flickr-data:/app/data
     stdin_open: true
 
   mcp-web:
@@ -27,10 +25,10 @@ services:
       - MCP_PORT=8000
     volumes:
       - flickr-creds:/root/.flickr_mcp
-      - ./data:/app/data
-      - ./scripts:/app/scripts
+      - flickr-data:/app/data
     ports:
       - "8000:8000"
 
 volumes:
   flickr-creds:
+  flickr-data:

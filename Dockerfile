@@ -9,6 +9,5 @@ RUN pip install --no-cache-dir requests mcp starlette "uvicorn[standard]"
 EXPOSE 8000
 
 COPY scripts/ ./scripts/
-COPY bin/ ./bin/
 
 ENTRYPOINT ["python", "scripts/flickr_mcp.py"]
