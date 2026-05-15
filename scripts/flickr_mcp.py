@@ -206,6 +206,17 @@ async def list_tools():
             },
         ),
         Tool(
+            name="delete_comment",
+            description="Delete a comment posted on a Flickr photo.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "comment_id": {"type": "string", "description": "Flickr comment ID"},
+                },
+                "required": ["comment_id"],
+            },
+        ),
+        Tool(
             name="fave_photo",
             description="Add a photo to the user's Flickr favorites.",
             inputSchema={
@@ -522,6 +533,246 @@ async def list_tools():
                 },
             },
         ),
+        # --- Batch 1: read-only GET tools ---
+        Tool(
+            name="get_exif",
+            description="Fetch EXIF data for a photo (camera, lens, exposure settings, etc.).",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "photo_id": {"type": "string", "description": "Flickr photo ID"},
+                },
+                "required": ["photo_id"],
+            },
+        ),
+        Tool(
+            name="get_upload_status",
+            description="Get the user's upload bandwidth and storage status for the current month.",
+            inputSchema={"type": "object", "properties": {}},
+        ),
+        Tool(
+            name="get_person_info",
+            description="Fetch public profile info for a Flickr user by NSID or username.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "user_id": {"type": "string", "description": "Flickr NSID or username"},
+                },
+                "required": ["user_id"],
+            },
+        ),
+        Tool(
+            name="get_photostream_stats",
+            description="Get total view counts across all photos, sets, and galleries for a given date.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "date": {"type": "string", "description": "Date to query, YYYY-MM-DD (default: yesterday)"},
+                },
+            },
+        ),
+        Tool(
+            name="get_popular_photos",
+            description="List the user's most popular photos sorted by favorites, comments, or views.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "sort":  {"type": "string", "enum": ["favorites", "comments", "views"], "description": "Sort order (default: favorites)"},
+                    "limit": {"type": "integer", "description": "Max results (default 20)"},
+                },
+            },
+        ),
+        Tool(
+            name="get_gallery_photos",
+            description="List photos in a Flickr gallery by gallery ID.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "gallery_id": {"type": "string", "description": "Flickr gallery ID"},
+                    "limit":      {"type": "integer", "description": "Max photos (default 50)"},
+                    "page":       {"type": "integer", "description": "Page number (default 1)"},
+                },
+                "required": ["gallery_id"],
+            },
+        ),
+        Tool(
+            name="get_group_photos",
+            description="List photos in a Flickr group pool.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "group_id": {"type": "string", "description": "Flickr group NSID"},
+                    "limit":    {"type": "integer", "description": "Max photos (default 50)"},
+                    "page":     {"type": "integer", "description": "Page number (default 1)"},
+                },
+                "required": ["group_id"],
+            },
+        ),
+        Tool(
+            name="get_faves",
+            description="List photos the authenticated user has favorited.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "limit": {"type": "integer", "description": "Max results (default 20)"},
+                    "page":  {"type": "integer", "description": "Page number (default 1)"},
+                },
+            },
+        ),
+        Tool(
+            name="get_recent_activity",
+            description="Show recent comments and faves on the user's photos.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "timeframe": {"type": "string", "description": "Time window: 'day' or 'week' (default: day)"},
+                    "limit":     {"type": "integer", "description": "Max items (default 20)"},
+                },
+            },
+        ),
+        # --- Batch 2: simple write POSTs ---
+        Tool(
+            name="remove_fave",
+            description="Remove a photo from the user's Flickr favorites.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "photo_id": {"type": "string", "description": "Flickr photo ID"},
+                },
+                "required": ["photo_id"],
+            },
+        ),
+        Tool(
+            name="remove_location",
+            description="Remove the geolocation from a photo on Flickr.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "id": {"type": "string", "description": "Flickr photo ID"},
+                },
+                "required": ["id"],
+            },
+        ),
+        Tool(
+            name="join_group",
+            description="Join a public Flickr group.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "group_id": {"type": "string", "description": "Flickr group NSID"},
+                },
+                "required": ["group_id"],
+            },
+        ),
+        Tool(
+            name="leave_group",
+            description="Leave a Flickr group you have joined.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "group_id": {"type": "string", "description": "Flickr group NSID"},
+                },
+                "required": ["group_id"],
+            },
+        ),
+        Tool(
+            name="set_safety_level",
+            description="Set the safety level of a photo: safe, moderate, or restricted.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "id":           {"type": "string", "description": "Flickr photo ID"},
+                    "safety_level": {"type": "string", "enum": ["safe", "moderate", "restricted"], "description": "Safety level"},
+                },
+                "required": ["id", "safety_level"],
+            },
+        ),
+        Tool(
+            name="set_content_type",
+            description="Set the content type of a photo: photo, screenshot, or other.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "id":           {"type": "string", "description": "Flickr photo ID"},
+                    "content_type": {"type": "string", "enum": ["photo", "screenshot", "other"], "description": "Content type"},
+                },
+                "required": ["id", "content_type"],
+            },
+        ),
+        # --- Batch 3: writes with DB ---
+        Tool(
+            name="set_dates",
+            description="Set the date taken for a photo (corrects wrong timestamps from camera clock errors).",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "id":          {"type": "string", "description": "Flickr photo ID"},
+                    "date_taken":  {"type": "string", "description": "Date taken, YYYY-MM-DD HH:MM:SS"},
+                    "granularity": {"type": "string", "enum": ["exact", "month", "year"], "description": "Precision of date_taken (default: exact)"},
+                },
+                "required": ["id", "date_taken"],
+            },
+        ),
+        Tool(
+            name="create_gallery",
+            description="Create a new Flickr gallery (curated collection, separate from albums).",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "title":            {"type": "string", "description": "Gallery title"},
+                    "description":      {"type": "string", "description": "Gallery description"},
+                    "primary_photo_id": {"type": "string", "description": "Optional cover photo ID"},
+                },
+                "required": ["title", "description"],
+            },
+        ),
+        Tool(
+            name="add_to_gallery",
+            description="Add a photo to a Flickr gallery.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "gallery_id": {"type": "string", "description": "Flickr gallery ID"},
+                    "photo_id":   {"type": "string", "description": "Flickr photo ID"},
+                    "comment":    {"type": "string", "description": "Optional comment to add alongside the photo"},
+                },
+                "required": ["gallery_id", "photo_id"],
+            },
+        ),
+        # --- Batch 4: account/discovery ---
+        Tool(
+            name="get_galleries",
+            description="List galleries created by the authenticated user.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "limit": {"type": "integer", "description": "Max results (default 20)"},
+                },
+            },
+        ),
+        Tool(
+            name="get_contact_uploads",
+            description="Show recent photo uploads from people you follow.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "limit":        {"type": "integer", "description": "Max photos (default 20)"},
+                    "just_friends": {"type": "boolean", "description": "Only show uploads from people marked as friends"},
+                },
+            },
+        ),
+        Tool(
+            name="search_all_groups",
+            description="Search all Flickr groups (not just ones you've joined) by keyword.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Keyword to search"},
+                    "limit": {"type": "integer", "description": "Max results (default 20)"},
+                },
+                "required": ["query"],
+            },
+        ),
     ]
 
 
@@ -541,6 +792,7 @@ async def call_tool(name: str, arguments: dict):
             case "unfollow_contact":  return await _unfollow_contact(arguments)
             case "get_photo_comments": return await _get_photo_comments(arguments)
             case "add_comment":        return await _add_comment(arguments)
+            case "delete_comment":     return await _delete_comment(arguments)
             case "fave_photo":         return await _fave_photo(arguments)
             case "get_photo_stats":   return await _get_photo_stats(arguments)
             case "find_albums":       return await _find_albums(arguments)
@@ -558,6 +810,27 @@ async def call_tool(name: str, arguments: dict):
             case "set_visibility":    return await _set_visibility(arguments)
             case "set_location":      return await _set_location(arguments)
             case "sync":             return await _sync(arguments)
+            case "get_exif":             return await _get_exif(arguments)
+            case "get_upload_status":    return await _get_upload_status()
+            case "get_person_info":      return await _get_person_info(arguments)
+            case "get_photostream_stats": return await _get_photostream_stats(arguments)
+            case "get_popular_photos":   return await _get_popular_photos(arguments)
+            case "get_gallery_photos":   return await _get_gallery_photos(arguments)
+            case "get_group_photos":     return await _get_group_photos(arguments)
+            case "get_faves":            return await _get_faves(arguments)
+            case "get_recent_activity":  return await _get_recent_activity(arguments)
+            case "remove_fave":          return await _remove_fave(arguments)
+            case "remove_location":      return await _remove_location(arguments)
+            case "join_group":           return await _join_group(arguments)
+            case "leave_group":          return await _leave_group(arguments)
+            case "set_safety_level":     return await _set_safety_level(arguments)
+            case "set_content_type":     return await _set_content_type(arguments)
+            case "set_dates":            return await _set_dates(arguments)
+            case "create_gallery":       return await _create_gallery(arguments)
+            case "add_to_gallery":       return await _add_to_gallery(arguments)
+            case "get_galleries":        return await _get_galleries(arguments)
+            case "get_contact_uploads":  return await _get_contact_uploads(arguments)
+            case "search_all_groups":    return await _search_all_groups(arguments)
             case _: return [TextContent(type="text", text=f"Unknown tool: {name}")]
     except (FileNotFoundError, RuntimeError) as e:
         return [TextContent(type="text", text=str(e))]
@@ -875,6 +1148,11 @@ async def _add_comment(args):
     return [TextContent(type="text", text=f"Comment posted (id: {comment_id}).")]
 
 
+async def _delete_comment(args):
+    _api_post("flickr.photos.comments.deleteComment", {"comment_id": args["comment_id"]})
+    return [TextContent(type="text", text=f"Comment {args['comment_id']} deleted.")]
+
+
 async def _fave_photo(args):
     _api_post("flickr.favorites.add", {"photo_id": args["photo_id"]})
     return [TextContent(type="text", text=f"Photo {args['photo_id']} added to favorites.")]
@@ -1158,6 +1436,316 @@ async def _sync(args):
             results.append(f"{label}: {status}\n{stdout.decode().strip()}")
 
     return [TextContent(type="text", text="\n\n".join(results))]
+
+
+# --- Batch 1: read-only GET handlers ---
+
+async def _get_exif(args):
+    data = _api_get("flickr.photos.getExif", {"photo_id": args["photo_id"]})
+    exif = data.get("photo", {}).get("exif", [])
+    result = [{
+        "tag":   e["tag"],
+        "label": e.get("label", e["tag"]),
+        "value": e.get("clean", {}).get("_content", e.get("raw", {}).get("_content", "")),
+    } for e in exif]
+    return [TextContent(type="text", text=json.dumps(result, indent=2))]
+
+
+async def _get_upload_status():
+    data = _api_get("flickr.people.getUploadStatus")
+    user = data.get("user", {})
+    return [TextContent(type="text", text=json.dumps({
+        "username":  user.get("username", {}).get("_content", ""),
+        "bandwidth": user.get("bandwidth", {}),
+        "filesize":  user.get("filesize", {}),
+        "sets":      user.get("sets", {}),
+        "videos":    user.get("videos", {}),
+        "pro":       user.get("ispro", 0),
+    }, indent=2))]
+
+
+async def _get_person_info(args):
+    data = _api_get("flickr.people.getInfo", {"user_id": args["user_id"]})
+    p = data.get("person", {})
+    return [TextContent(type="text", text=json.dumps({
+        "nsid":        p.get("nsid", ""),
+        "username":    p.get("username", {}).get("_content", ""),
+        "realname":    p.get("realname", {}).get("_content", ""),
+        "location":    p.get("location", {}).get("_content", ""),
+        "description": p.get("description", {}).get("_content", ""),
+        "photos":      p.get("photos", {}).get("count", {}).get("_content", 0),
+        "profile_url": f"https://www.flickr.com/people/{p.get('nsid', '')}/",
+        "ispro":       p.get("ispro", 0),
+    }, indent=2))]
+
+
+async def _get_photostream_stats(args):
+    from datetime import date as date_type, timedelta
+    query_date = args.get("date", (date_type.today() - timedelta(days=1)).isoformat())
+    data = _api_get("flickr.stats.getTotalViews", {"date": query_date})
+    stats = data.get("stats", {})
+    return [TextContent(type="text", text=json.dumps({
+        "date":        query_date,
+        "total":       stats.get("total", {}).get("views", 0),
+        "photos":      stats.get("photos", {}).get("views", 0),
+        "photostream": stats.get("photostream", {}).get("views", 0),
+        "sets":        stats.get("sets", {}).get("views", 0),
+        "collections": stats.get("collections", {}).get("views", 0),
+        "galleries":   stats.get("galleries", {}).get("views", 0),
+    }, indent=2))]
+
+
+async def _get_popular_photos(args):
+    creds = _load_credentials()
+    sort = args.get("sort", "favorites")
+    if sort not in ("favorites", "comments", "views"):
+        sort = "favorites"
+    limit = int(args.get("limit", 20))
+    data = _api_get("flickr.photos.getPopular", {
+        "user_id":  creds["user_nsid"],
+        "sort":     sort,
+        "per_page": str(limit),
+        "extras":   "views,date_taken",
+    })
+    photos = data.get("photos", {}).get("photo", [])
+    return [TextContent(type="text", text=json.dumps([{
+        "id":    p["id"],
+        "title": p.get("title", ""),
+        "views": p.get("views", 0),
+        "url":   f"https://www.flickr.com/photos/{p.get('owner', '')}/{p['id']}/",
+    } for p in photos], indent=2))]
+
+
+async def _get_gallery_photos(args):
+    gallery_id = args["gallery_id"]
+    limit = int(args.get("limit", 50))
+    page = int(args.get("page", 1))
+    data = _api_get("flickr.galleries.getPhotos", {
+        "gallery_id": gallery_id,
+        "per_page":   str(limit),
+        "page":       str(page),
+        "extras":     "views,date_taken",
+    })
+    container = data.get("photos", {})
+    photos = container.get("photo", [])
+    return [TextContent(type="text", text=json.dumps({
+        "total": container.get("total", 0),
+        "page":  page,
+        "photos": [{
+            "id":    p["id"],
+            "title": p.get("title", ""),
+            "owner": p.get("owner", ""),
+            "url":   f"https://www.flickr.com/photos/{p.get('owner', '')}/{p['id']}/",
+        } for p in photos],
+    }, indent=2))]
+
+
+async def _get_group_photos(args):
+    group_id = args["group_id"]
+    limit = int(args.get("limit", 50))
+    page = int(args.get("page", 1))
+    data = _api_get("flickr.groups.pools.getPhotos", {
+        "group_id": group_id,
+        "per_page": str(limit),
+        "page":     str(page),
+        "extras":   "views,date_taken",
+    })
+    container = data.get("photos", {})
+    photos = container.get("photo", [])
+    return [TextContent(type="text", text=json.dumps({
+        "total": container.get("total", 0),
+        "page":  page,
+        "photos": [{
+            "id":    p["id"],
+            "title": p.get("title", ""),
+            "owner": p.get("owner", ""),
+            "url":   f"https://www.flickr.com/photos/{p.get('owner', '')}/{p['id']}/",
+        } for p in photos],
+    }, indent=2))]
+
+
+async def _get_faves(args):
+    creds = _load_credentials()
+    limit = int(args.get("limit", 20))
+    page = int(args.get("page", 1))
+    data = _api_get("flickr.favorites.getList", {
+        "user_id":  creds["user_nsid"],
+        "per_page": str(limit),
+        "page":     str(page),
+        "extras":   "date_faved,date_taken",
+    })
+    container = data.get("photos", {})
+    photos = container.get("photo", [])
+    return [TextContent(type="text", text=json.dumps({
+        "total": container.get("total", 0),
+        "page":  page,
+        "photos": [{
+            "id":         p["id"],
+            "title":      p.get("title", ""),
+            "owner":      p.get("owner", ""),
+            "date_faved": p.get("date_faved", ""),
+            "url":        f"https://www.flickr.com/photos/{p.get('owner', '')}/{p['id']}/",
+        } for p in photos],
+    }, indent=2))]
+
+
+async def _get_recent_activity(args):
+    timeframe = args.get("timeframe", "day")
+    if timeframe not in ("day", "week"):
+        timeframe = "day"
+    limit = int(args.get("limit", 20))
+    data = _api_get("flickr.activity.userPhotos", {
+        "timeframe": timeframe,
+        "per_page":  str(limit),
+    })
+    items = data.get("items", {}).get("item", [])
+    results = []
+    for item in items:
+        activity = item.get("activity", {}).get("event", [])
+        if isinstance(activity, dict):
+            activity = [activity]
+        title = item.get("title", {})
+        title_text = title.get("_content", "") if isinstance(title, dict) else title
+        for event in activity:
+            ts = event.get("dateadded", 0)
+            results.append({
+                "photo_id":    item.get("id", ""),
+                "photo_title": title_text,
+                "type":        event.get("type", ""),
+                "username":    event.get("username", ""),
+                "date":        datetime.fromtimestamp(int(ts)).strftime("%Y-%m-%d %H:%M") if ts else "",
+                "value":       event.get("_content", ""),
+            })
+    return [TextContent(type="text", text=json.dumps(results[:limit], indent=2))]
+
+
+# --- Batch 2: simple write POST handlers ---
+
+async def _remove_fave(args):
+    _api_post("flickr.favorites.remove", {"photo_id": args["photo_id"]})
+    return [TextContent(type="text", text=f"Photo {args['photo_id']} removed from favorites.")]
+
+
+async def _remove_location(args):
+    _api_post("flickr.photos.geo.removeLocation", {"photo_id": args["id"]})
+    return [TextContent(type="text", text=f"Location removed from photo {args['id']}.")]
+
+
+async def _join_group(args):
+    _api_post("flickr.groups.join", {"group_id": args["group_id"]})
+    return [TextContent(type="text", text=f"Joined group {args['group_id']}.")]
+
+
+async def _leave_group(args):
+    _api_post("flickr.groups.leave", {"group_id": args["group_id"]})
+    return [TextContent(type="text", text=f"Left group {args['group_id']}.")]
+
+
+async def _set_safety_level(args):
+    level_map = {"safe": "1", "moderate": "2", "restricted": "3"}
+    level = level_map.get(args["safety_level"], "1")
+    _api_post("flickr.photos.setSafetyLevel", {"photo_id": args["id"], "safety_level": level})
+    return [TextContent(type="text", text=f"Photo {args['id']} safety level set to {args['safety_level']}.")]
+
+
+async def _set_content_type(args):
+    type_map = {"photo": "1", "screenshot": "2", "other": "3"}
+    ct = type_map.get(args["content_type"], "1")
+    _api_post("flickr.photos.setContentType", {"photo_id": args["id"], "content_type": ct})
+    return [TextContent(type="text", text=f"Photo {args['id']} content type set to {args['content_type']}.")]
+
+
+# --- Batch 3: writes with DB ---
+
+async def _set_dates(args):
+    granularity_map = {"exact": "0", "month": "4", "year": "6"}
+    granularity = granularity_map.get(args.get("granularity", "exact"), "0")
+    _api_post("flickr.photos.setDates", {
+        "photo_id":               args["id"],
+        "date_taken":             args["date_taken"],
+        "date_taken_granularity": granularity,
+    })
+    conn = db()
+    conn.execute("UPDATE photos SET date_taken=? WHERE id=?", (args["date_taken"], args["id"]))
+    conn.commit()
+    conn.close()
+    return [TextContent(type="text", text=f"Date taken for photo {args['id']} set to {args['date_taken']}.")]
+
+
+async def _create_gallery(args):
+    params = {"title": args["title"], "description": args["description"]}
+    if "primary_photo_id" in args:
+        params["primary_photo_id"] = args["primary_photo_id"]
+    data = _api_post("flickr.galleries.create", params)
+    gallery = data.get("gallery", {})
+    return [TextContent(type="text", text=json.dumps({
+        "gallery_id": gallery.get("id", ""),
+        "url":        gallery.get("url", ""),
+        "title":      args["title"],
+    }, indent=2))]
+
+
+async def _add_to_gallery(args):
+    params = {"gallery_id": args["gallery_id"], "photo_id": args["photo_id"]}
+    if "comment" in args:
+        params["comment"] = args["comment"]
+    _api_post("flickr.galleries.addPhoto", params)
+    return [TextContent(type="text", text=f"Photo {args['photo_id']} added to gallery {args['gallery_id']}.")]
+
+
+# --- Batch 4: account/discovery ---
+
+async def _get_galleries(args):
+    creds = _load_credentials()
+    limit = int(args.get("limit", 20))
+    data = _api_get("flickr.galleries.getList", {
+        "user_id":  creds["user_nsid"],
+        "per_page": str(limit),
+    })
+    galleries = data.get("galleries", {}).get("gallery", [])
+    return [TextContent(type="text", text=json.dumps([{
+        "id":           g.get("id", ""),
+        "title":        g.get("title", {}).get("_content", "") if isinstance(g.get("title"), dict) else g.get("title", ""),
+        "description":  g.get("description", {}).get("_content", "") if isinstance(g.get("description"), dict) else g.get("description", ""),
+        "count_photos": g.get("count_photos", 0),
+        "url":          g.get("url", ""),
+    } for g in galleries], indent=2))]
+
+
+async def _get_contact_uploads(args):
+    limit = int(args.get("limit", 20))
+    just_friends = "1" if args.get("just_friends") else "0"
+    data = _api_get("flickr.photos.getContactsPhotos", {
+        "count":        str(limit),
+        "just_friends": just_friends,
+        "extras":       "date_upload,owner_name",
+    })
+    photos = data.get("photos", {}).get("photo", [])
+    return [TextContent(type="text", text=json.dumps([{
+        "id":          p["id"],
+        "title":       p.get("title", ""),
+        "owner":       p.get("owner", ""),
+        "owner_name":  p.get("ownername", ""),
+        "date_upload": p.get("dateupload", ""),
+        "url":         f"https://www.flickr.com/photos/{p.get('owner', '')}/{p['id']}/",
+    } for p in photos], indent=2))]
+
+
+async def _search_all_groups(args):
+    query = args["query"]
+    limit = int(args.get("limit", 20))
+    data = _api_get("flickr.groups.search", {
+        "text":     query,
+        "per_page": str(limit),
+    })
+    groups = data.get("groups", {}).get("group", [])
+    return [TextContent(type="text", text=json.dumps([{
+        "nsid":       g.get("nsid", ""),
+        "name":       g.get("name", ""),
+        "members":    g.get("members", 0),
+        "pool_count": g.get("pool_count", 0),
+        "url":        f"https://www.flickr.com/groups/{g.get('nsid', '')}/",
+    } for g in groups], indent=2))]
 
 
 REFRESH_INTERVAL = 86400  # 24 hours
