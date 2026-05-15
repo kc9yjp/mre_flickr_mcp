@@ -19,4 +19,4 @@ jobs:
         run: docker build -t flickr-mcp:ci .
 
       - name: Verify MCP server syntax
-        run: docker run --rm flickr-mcp:ci python -m py_compile scripts/flickr_mcp.py && echo "Syntax OK"
+        run: docker run --rm --entrypoint python flickr-mcp:ci -m py_compile scripts/flickr_mcp.py && echo "Syntax OK"
