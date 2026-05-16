@@ -47,6 +47,8 @@ jobs:
           fetch-depth: 0
 
       - name: Scan for leaked secrets
-        uses: trufflesecurity/trufflehog@v3.95.3
-        with:
-          extra_args: --only-verified
+        run: |
+          docker run --rm \
+            -v "$PWD:/repo" \
+            trufflesecurity/trufflehog:3.95.3 \
+            git file:///repo --only-verified --fail
