@@ -1,2 +1,0 @@
-#!/usr/bin/env sh
-cd "$(dirname "$0")/.." && exec docker compose run --rm --entrypoint python flickr scripts/sync_groups.py "$@"

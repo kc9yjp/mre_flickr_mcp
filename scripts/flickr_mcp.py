@@ -58,7 +58,7 @@ def _load_env():
 
 def _load_credentials():
     if not os.path.exists(CREDENTIALS_FILE):
-        raise RuntimeError("Not logged in. Run: bin/flickr login")
+        raise RuntimeError("Not logged in. Visit http://localhost:8000/login to authenticate.")
     with open(CREDENTIALS_FILE) as f:
         return json.load(f)
 
@@ -154,7 +154,7 @@ _pending_oauth: dict = {}  # oauth_token → oauth_token_secret during login flo
 
 def db():
     if not os.path.exists(DB_FILE):
-        raise FileNotFoundError(f"Database not found. Run: bin/flickr-sync --create")
+        raise FileNotFoundError(f"Database not found. Visit http://localhost:8000/sync to run a sync.")
     conn = sqlite3.connect(DB_FILE)
     conn.row_factory = sqlite3.Row
     return conn
@@ -1049,7 +1049,7 @@ async def _get_contacts_summary():
         "engagement_data": {
             "contacts_with_records": eng_total,
             "contacts_with_any_engagement": eng_nonzero,
-            "note": "Run bin/sync-engagement to populate engagement data (~20 min)." if eng_total == 0 else None,
+            "note": "Visit /sync to run engagement sync (~20 min)." if eng_total == 0 else None,
         },
         "top_engagers": [
             {"username": r["username"], "realname": r["realname"],
@@ -1081,7 +1081,7 @@ async def _find_unfollow_candidates(args):
     conn.close()
 
     if not rows:
-        return [TextContent(type="text", text="No contacts found. Run bin/sync-contacts first.")]
+        return [TextContent(type="text", text="No contacts found. Visit /sync to run a contacts sync first.")]
 
     results = [{
         "contact_id":       r["id"],
@@ -1184,7 +1184,7 @@ async def _find_albums(args):
     ).fetchall()
     conn.close()
     if not rows:
-        return [TextContent(type="text", text=f"No albums found matching '{query}'. Run bin/sync-albums first.")]
+        return [TextContent(type="text", text=f"No albums found matching '{query}'. Visit /sync to run an albums sync first.")]
     return [TextContent(type="text", text=json.dumps([dict(r) for r in rows], indent=2))]
 
 
@@ -1861,6 +1861,7 @@ def _html_page(title: str, body: str) -> str:
   <a href="/stats">Stats</a>
   <a href="/sync">Sync</a>
   <a href="/login">Login</a>
+  <a href="/setup">Setup</a>
 </nav>
 <main>{body}</main>
 </body></html>"""
@@ -2178,6 +2179,46 @@ async def main_sse():
         asyncio.create_task(_run())
         return RedirectResponse("/sync")
 
+    async def route_setup(request: Request):
+        base = str(request.base_url).rstrip("/")
+        sse_url = f"{base}/sse"
+        key_hint = MCP_API_KEY[:4] + "…" if MCP_API_KEY else "(none configured)"
+        auth_line = f'\n      "headers": {{"Authorization": "Bearer {key_hint}"}}' if MCP_API_KEY else ""
+        config_json = (
+            "{\n"
+            '  "mcpServers": {\n'
+            '    "flickr": {\n'
+            '      "type": "sse",\n'
+            f'      "url": "{sse_url}"{("," + auth_line) if MCP_API_KEY else ""}\n'
+            "    }\n"
+            "  }\n"
+            "}"
+        )
+        body = f"""
+        <h1>Setup</h1>
+        <div class="card">
+          <h2 style="margin-top:0">Connect Claude Code</h2>
+          <p style="margin-bottom:12px;color:#555;font-size:.9rem">
+            Add this to your <code>.mcp.json</code> (project root or <code>~/.claude/mcp.json</code>):
+          </p>
+          <pre style="background:#f0f0f0;padding:14px;border-radius:6px;font-size:.85rem;overflow-x:auto">{config_json}</pre>
+          {"<p style='margin-top:10px;color:#555;font-size:.85rem'>Replace the key hint with your full <code>MCP_API_KEY</code> value from <code>.env</code>.</p>" if MCP_API_KEY else ""}
+        </div>
+        <div class="card">
+          <h2 style="margin-top:0">Endpoints</h2>
+          <table>
+            <thead><tr><th>Path</th><th>Purpose</th></tr></thead>
+            <tbody>
+              <tr><td><code>/sse</code></td><td>MCP SSE endpoint (Claude connects here)</td></tr>
+              <tr><td><code>/messages/</code></td><td>MCP POST messages endpoint</td></tr>
+              <tr><td><code>/login</code></td><td>Browser-based Flickr OAuth login</td></tr>
+              <tr><td><code>/stats</code></td><td>Collection statistics dashboard</td></tr>
+              <tr><td><code>/sync</code></td><td>Sync status and trigger page</td></tr>
+            </tbody>
+          </table>
+        </div>"""
+        return HTMLResponse(_html_page("Setup", body))
+
     app = Starlette(
         middleware=middleware,
         routes=[
@@ -2188,6 +2229,7 @@ async def main_sse():
             Route("/stats",              endpoint=route_stats),
             Route("/sync",               endpoint=route_sync_page),
             Route("/sync/{type}",        endpoint=route_sync_trigger, methods=["POST"]),
+            Route("/setup",              endpoint=route_setup),
             Route("/sse",                endpoint=_SSEHandler()),
             Mount("/messages/",          app=sse.handle_post_message),
         ],

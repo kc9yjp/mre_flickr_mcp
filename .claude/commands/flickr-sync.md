@@ -1,12 +1,12 @@
-Run all Flickr syncs in the correct order using background bash commands. Report progress as each completes.
+Trigger all Flickr syncs via the MCP server's web UI and report results.
 
-Run in this order (each must complete before the next):
+Use the `sync` MCP tool to run each sync type in order. Run them sequentially:
 
-1. `bin/flickr-sync` — incremental photo sync (use --full only if the user asks)
-2. `bin/sync-contacts` — sync contacts list
-3. `bin/sync-groups` — sync group membership
-4. `bin/sync-albums` — sync album list
+1. `sync` with type "photos" — incremental photo sync
+2. `sync` with type "contacts" — sync contacts list
+3. `sync` with type "groups" — sync group membership
+4. `sync` with type "albums" — sync album list
 
-After all complete, report how many items were synced in each category.
+After all complete, call `list_recent_syncs` and report how many items were synced in each category.
 
-Note: `bin/sync-engagement` is intentionally excluded — it takes ~20 minutes and should be run manually when needed.
+Note: engagement sync (faves/comments per contact) takes ~20 minutes and should only be triggered if the user explicitly asks for it.
