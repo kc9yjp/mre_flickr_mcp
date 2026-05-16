@@ -1,33 +1,25 @@
 services:
-  flickr:
-    build: .
-    entrypoint: ["python", "scripts/flickr.py"]
-    env_file: .env
-    volumes:
-      - flickr-creds:/root/.flickr_mcp
-      - flickr-data:/app/data
-    stdin_open: true
-    tty: true
-
-  mcp:
-    build: .
-    env_file: .env
-    volumes:
-      - flickr-creds:/root/.flickr_mcp
-      - flickr-data:/app/data
-    stdin_open: true
-
-  mcp-web:
+  flickr-mcp:
     build: .
     env_file: .env
     environment:
-      - MCP_TRANSPORT=sse
       - MCP_PORT=8000
     volumes:
       - flickr-creds:/root/.flickr_mcp
       - flickr-data:/app/data
     ports:
       - "8000:8000"
+
+  flickr-mcp-stdio:
+    build: .
+    env_file: .env
+    environment:
+      - MCP_TRANSPORT=stdio
+    volumes:
+      - flickr-creds:/root/.flickr_mcp
+      - flickr-data:/app/data
+    stdin_open: true
+    profiles: [stdio]
 
 volumes:
   flickr-creds:
