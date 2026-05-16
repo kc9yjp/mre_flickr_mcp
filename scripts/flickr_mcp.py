@@ -1823,11 +1823,10 @@ async def main_sse():
 
     sse = SseServerTransport("/messages/")
 
-    async def handle_sse(request: Request):
-        async with sse.connect_sse(
-            request.scope, request.receive, request._send
-        ) as streams:
-            await server.run(streams[0], streams[1], server.create_initialization_options())
+    class _SSEHandler:
+        async def __call__(self, scope, receive, send):
+            async with sse.connect_sse(scope, receive, send) as streams:
+                await server.run(streams[0], streams[1], server.create_initialization_options())
 
     class ApiKeyMiddleware(BaseHTTPMiddleware):
         async def dispatch(self, request: Request, call_next):
@@ -1846,7 +1845,7 @@ async def main_sse():
     app = Starlette(
         middleware=middleware,
         routes=[
-            Route("/sse", endpoint=handle_sse),
+            Route("/sse", endpoint=_SSEHandler()),
             Mount("/messages/", app=sse.handle_post_message),
         ],
     )

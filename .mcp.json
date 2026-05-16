@@ -3,7 +3,7 @@
     "flickr": {
       "command": "docker",
       "args": ["compose", "run", "--rm", "-i", "mcp"],
-      "cwd": "/Users/ericwettstein/coder/mre_flickr_mcp"
+      "cwd": "/home/ejwettstein/Work/mre_flickr_mcp"
     }
   }
 }

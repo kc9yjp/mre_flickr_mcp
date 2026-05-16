@@ -1,0 +1,8 @@
+requests
+mcp
+starlette
+uvicorn[standard]
+pytest
+pytest-asyncio
+pytest-timeout
+httpx
