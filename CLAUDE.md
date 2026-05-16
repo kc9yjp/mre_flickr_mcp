@@ -4,55 +4,45 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-A Flickr MCP (Model Context Protocol) server with supporting Python CLI scripts. The project is authored by Eric Wettstein (flickr: ejwettstein / Mr. E Photos).
+A Flickr MCP (Model Context Protocol) server. The server always runs in SSE/web mode — it exposes MCP tools to AI clients over SSE, and provides a web dashboard for login, sync, and stats.
 
-**Architecture:** Two-tier design
-1. **CLI scripts** (`scripts/`) — standalone Python tools for Flickr API interaction and data sync
-2. **MCP server** (`scripts/flickr_mcp.py`) — runs inside Docker, exposes tools to AI clients via stdio
+**Architecture:**
+- `scripts/flickr_mcp.py` — MCP server + web UI (Starlette/uvicorn, SSE transport)
+- `scripts/flickr_sync.py` and `scripts/sync_*.py` — sync scripts invoked by the server
+- `scripts/flickr.py` — standalone CLI (legacy, rarely used directly)
 
 ## Docker
 
-`Dockerfile` and `docker-compose.yml` are at the repo root. Two services:
-- `flickr` — CLI and sync scripts
-- `mcp` — MCP server (stdio, used by Claude Code)
-
-Credentials are persisted in a named Docker volume (`flickr-creds` → `/root/.flickr_mcp`).
-Photo/contact/group data is stored in `data/flickr.db` (mounted as a volume).
-
 ```bash
 docker compose build
-bin/flickr login      # OAuth flow — requires interactive TTY
-bin/flickr status     # Verify session
+docker compose up -d
 ```
+
+The single `flickr-mcp` service starts in SSE/web mode on port 8000. No separate services needed.
+
+## Web UI
+
+Visit `http://localhost:8000` after starting the container:
+
+| Page | Purpose |
+|------|---------|
+| `/login` | Browser-based Flickr OAuth login (no terminal paste) |
+| `/stats` | Collection statistics from local SQLite |
+| `/sync` | Sync status and trigger buttons |
+| `/setup` | MCP connection config snippet for Claude Code |
 
 ## MCP Server Setup
 
-Run once to configure Claude Code to use the MCP server:
-```bash
-bin/setup-mcp
-docker compose build
-```
-Then restart Claude Code and run `/mcp` to confirm the `flickr` server is connected.
-
-## Sync Scripts (bin/)
-
-All sync commands run inside the `flickr` Docker service:
-
-```bash
-bin/flickr-sync        # Incremental photo sync (--full for full resync)
-bin/sync-contacts      # Sync contacts list
-bin/sync-groups        # Sync group membership
-bin/sync-albums        # Sync album list
-bin/sync-engagement    # Sync faves/comments per contact (~20 min, run manually or daily)
-```
-
-The MCP server runs a background refresh every 24 hours that runs all syncs including engagement.
+1. Build and start: `docker compose up -d`
+2. Visit `http://localhost:8000/setup` for the `.mcp.json` config snippet
+3. Add it to your project or global `~/.claude/mcp.json`
+4. Restart Claude Code and run `/mcp` to confirm the `flickr` server is connected
 
 ## Configuration
 
-- `.env` — API key and secret (`FLICKR_API_KEY`, `FLICKR_API_SECRET`)
-- OAuth access tokens: `~/.flickr_mcp/credentials.json` (in the Docker volume, outside the repo)
-- SQLite database: `data/flickr.db`
+- `.env` — API key and secret (`FLICKR_API_KEY`, `FLICKR_API_SECRET`, optionally `MCP_API_KEY`)
+- OAuth access tokens: persisted in the `flickr-creds` Docker volume (`/root/.flickr_mcp/credentials.json`)
+- SQLite database: `data/flickr.db` (in the `flickr-data` volume)
 
 ## Database Schema
 
@@ -103,18 +93,18 @@ sync_log          — type, mode, photos_fetched, synced_at
 
 ## Key Implementation Details
 
-- OAuth 1.0a signing is done manually (HMAC-SHA1) via `sign_request()` — no third-party OAuth library
+- OAuth 1.0a signing is done manually (HMAC-SHA1) via `_sign()` — no third-party OAuth library
 - `_api_get()` / `_api_post()` handle OAuth signing for all Flickr API calls
-- `scripts/flickr.py` uses `argparse` subcommands; `load_env()` reads `.env` then falls back to environment variables
+- Web UI routes live inside `main_sse()` alongside the MCP SSE endpoint
+- OAuth login uses a full browser redirect flow: `/login/start` → Flickr → `/oauth/callback`
 - Schema changes must be added to the migrations list in `init_db()` — never use `ALTER TABLE` directly
-- `scripts/flickr_oauth.py` and `scripts/flickr_update.py` are earlier standalone scripts (legacy, credentials hardcoded)
 
 ## Skills (Claude Code slash commands)
 
 - `/flickr-photo` — process a photo from the current Safari tab: suggest metadata, update, add to groups/albums
 - `/flickr-fave` — fave the current Safari photo immediately, then suggest a comment
 - `/flickr-hide` — find weak photos, review visually, make private or update and keep
-- `/flickr-sync` — run all sync scripts in order and report results
+- `/flickr-sync` — trigger syncs via the web UI and report results
 
 ## Resources
 

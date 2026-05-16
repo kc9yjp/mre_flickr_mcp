@@ -133,7 +133,7 @@ def cmd_login(args):
         check=False,
     )
     if result.returncode != 0:
-        print("Warning: initial sync failed. Run: bin/flickr-sync --create --full", file=sys.stderr)
+        print("Warning: initial sync failed. Visit http://localhost:8000/sync to trigger a full sync", file=sys.stderr)
 
 
 def cmd_status(args):
