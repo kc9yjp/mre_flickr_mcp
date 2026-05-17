@@ -23,62 +23,77 @@ Connect this server to an MCP client and you can ask it to:
 
 ---
 
-## Prerequisites: First-time authentication
+## How it works
 
-The image uses OAuth to talk to Flickr. You must complete the OAuth flow once before using the image. Clone the source repo and run:
+One container serves both the MCP SSE endpoint and a web dashboard:
 
-```bash
-git clone https://github.com/kc9yjp/mre_flickr_mcp.git
-cd mre_flickr_mcp
-cp .env.example .env   # add your FLICKR_API_KEY and FLICKR_API_SECRET
-docker compose build
-bin/flickr login       # opens a browser for OAuth approval
-```
-
-This stores credentials in the `flickr-creds` Docker volume. The published image reuses that same volume.
+| URL | Purpose |
+|-----|---------|
+| `http://localhost:8000/` | Home — status overview and navigation |
+| `http://localhost:8000/login` | Browser-based Flickr OAuth login |
+| `http://localhost:8000/sync` | Sync status and trigger buttons |
+| `http://localhost:8000/stats` | Collection statistics |
+| `http://localhost:8000/setup` | Ready-to-paste `.mcp.json` config |
+| `http://localhost:8000/sse` | MCP endpoint (AI clients connect here) |
 
 ---
 
-## Quick start — stdio (Claude Code / MCP clients)
+## Quick start
 
-Add to your `.mcp.json`:
+**1. Create a `.env` file:**
+
+```bash
+FLICKR_API_KEY=your_api_key
+FLICKR_API_SECRET=your_api_secret
+MCP_API_KEY=your_secret_token   # optional but recommended
+```
+
+Get your API key at [flickr.com/services/apps/create](https://www.flickr.com/services/apps/create/).
+
+**2. Start with Docker Compose:**
+
+```yaml
+services:
+  flickr-mcp:
+    image: ejwettstein/flickr-mcp
+    env_file: .env
+    environment:
+      - MCP_PORT=8000
+    volumes:
+      - flickr-creds:/root/.flickr_mcp
+      - flickr-data:/app/data
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+
+volumes:
+  flickr-creds:
+  flickr-data:
+```
+
+```bash
+docker compose up -d
+```
+
+**3. Log in:** Open `http://localhost:8000/login` and click **Login with Flickr**. Credentials are saved to the `flickr-creds` volume — you only need to do this once.
+
+**4. Sync:** Visit `http://localhost:8000/sync` and click **Photos** to populate the local database.
+
+**5. Connect your client:** Visit `http://localhost:8000/setup` for a config snippet, or add this to your `.mcp.json`:
 
 ```json
 {
   "mcpServers": {
     "flickr": {
-      "command": "docker",
-      "args": [
-        "run", "--rm", "-i",
-        "-e", "FLICKR_API_KEY=your_api_key",
-        "-e", "FLICKR_API_SECRET=your_api_secret",
-        "-v", "flickr-creds:/root/.flickr_mcp",
-        "-v", "flickr-data:/app/data",
-        "ejwettstein/flickr-mcp"
-      ]
+      "type": "sse",
+      "url": "http://localhost:8000/sse",
+      "headers": {
+        "Authorization": "Bearer your_secret_token"
+      }
     }
   }
 }
 ```
-
----
-
-## Quick start — SSE (HTTP/web clients)
-
-```bash
-docker run -d \
-  -e FLICKR_API_KEY=your_api_key \
-  -e FLICKR_API_SECRET=your_api_secret \
-  -e MCP_TRANSPORT=sse \
-  -e MCP_PORT=8000 \
-  -e MCP_API_KEY=your_secret_key \
-  -v flickr-creds:/root/.flickr_mcp \
-  -v flickr-data:/app/data \
-  -p 8000:8000 \
-  ejwettstein/flickr-mcp
-```
-
-Connect your client to `http://localhost:8000/sse`.
 
 ---
 
@@ -88,20 +103,16 @@ Connect your client to `http://localhost:8000/sse`.
 |----------|----------|-------------|
 | `FLICKR_API_KEY` | Yes | Your Flickr API key |
 | `FLICKR_API_SECRET` | Yes | Your Flickr API secret |
-| `MCP_TRANSPORT` | No | `stdio` (default) or `sse` |
-| `MCP_PORT` | No | Port for SSE mode (default: `8000`) |
-| `MCP_API_KEY` | No | API key to protect the SSE endpoint |
-
-Get your API key at [flickr.com/services/apps/create](https://www.flickr.com/services/apps/create/).
-
----
+| `MCP_PORT` | No | Port (default: `8000`) |
+| `MCP_API_KEY` | No | Bearer token to protect the SSE endpoint |
+| `MCP_TRANSPORT` | No | `sse` (default) or `stdio` |
 
 ## Volumes
 
 | Mount | Purpose |
 |-------|---------|
-| `flickr-creds:/root/.flickr_mcp` | OAuth credentials (created by `bin/flickr login`) |
-| `flickr-data:/app/data` | SQLite database of your photo metadata |
+| `flickr-creds:/root/.flickr_mcp` | OAuth credentials |
+| `flickr-data:/app/data` | SQLite photo metadata database |
 
 ---
 
