@@ -16,7 +16,7 @@ from tests.conftest import FAKE_CREDS, FAKE_ENV
 
 @pytest.fixture()
 def live_server(mem_db, tmp_path):
-    """Patch all external dependencies and return the flickr_mcp server object."""
+    """Patch all external dependencies and return the mcp_tools server object."""
     import json as _json
 
     creds_file = tmp_path / "credentials.json"
@@ -32,14 +32,14 @@ def live_server(mem_db, tmp_path):
         return c
 
     with (
-        patch("flickr_mcp.CREDENTIALS_FILE", str(creds_file)),
-        patch("flickr_mcp.ENV_FILE", str(env_file)),
-        patch("flickr_mcp.db", side_effect=_make_conn),
-        patch("flickr_mcp._load_credentials", return_value=FAKE_CREDS),
-        patch("flickr_mcp._load_env", return_value=FAKE_ENV),
+        patch("flickr_api.CREDENTIALS_FILE", str(creds_file)),
+        patch("flickr_api.ENV_FILE", str(env_file)),
+        patch("mcp_tools.db", side_effect=_make_conn),
+        patch("mcp_tools._load_credentials", return_value=FAKE_CREDS),
+        patch("mcp_tools._load_env", return_value=FAKE_ENV),
     ):
-        import flickr_mcp
-        yield flickr_mcp.server
+        import mcp_tools
+        yield mcp_tools.server
 
 
 # ---------------------------------------------------------------------------
@@ -154,7 +154,7 @@ class TestStdioToolCalls:
     @pytest.mark.asyncio
     async def test_update_photo_via_stdio(self, live_server):
         """update_photo calls the Flickr API mock and confirms the update."""
-        with patch("flickr_mcp._api_post", return_value={"stat": "ok"}):
+        with patch("mcp_tools._api_post", return_value={"stat": "ok"}):
             async with create_connected_server_and_client_session(live_server) as session:
                 result = await session.call_tool(
                     "update_photo", {"id": "photo1", "title": "Via Stdio"}
