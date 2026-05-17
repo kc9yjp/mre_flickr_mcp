@@ -7,8 +7,6 @@ import json
 import logging
 import os
 import urllib.parse
-from datetime import datetime
-
 import requests
 from starlette.applications import Starlette
 from starlette.middleware import Middleware
@@ -113,6 +111,15 @@ function showTab(name) {
   document.getElementById('tab-' + name).classList.add('active');
   document.querySelector('[data-tab="' + name + '"]').classList.add('active');
 }
+document.addEventListener('DOMContentLoaded', () => {
+  document.querySelectorAll('time[data-ts]').forEach(el => {
+    const ms = parseInt(el.dataset.ts) * 1000;
+    el.textContent = new Date(ms).toLocaleString(undefined, {
+      month: 'short', day: 'numeric', year: 'numeric',
+      hour: 'numeric', minute: '2-digit'
+    });
+  });
+});
 </script>
 """
 
@@ -175,7 +182,7 @@ async def route_root(request: Request):
             "SELECT MAX(synced_at) FROM sync_log WHERE type = 'photos'"
         ).fetchone()
         if sync_row and sync_row[0]:
-            last_sync = datetime.fromtimestamp(sync_row[0]).strftime("%Y-%m-%d %H:%M")
+            last_sync = f'<time data-ts="{sync_row[0]}">—</time>'
         conn.close()
         db_ok = True
     except Exception:
@@ -212,6 +219,7 @@ async def route_root(request: Request):
           <div style="font-size:2rem">&#128260;</div>
           <div style="font-weight:600;margin:8px 0 4px">Sync</div>
           <div style="color:#555;font-size:.85rem">{"Last: " + last_sync if last_sync else "Never synced"}</div>
+
         </div>
       </a>
       <a href="/setup" style="text-decoration:none">
@@ -427,7 +435,7 @@ async def route_stats(request: Request):
     top_tags = sorted(counts.items(), key=lambda x: -x[1])[:20]
 
     def _ts(ts):
-        return datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M") if ts else "—"
+        return f'<time data-ts="{ts}">—</time>' if ts else "—"
 
     sync_map = {r["type"]: r["last"] for r in sync_rows}
 
@@ -479,7 +487,7 @@ async def route_sync_page(request: Request):
         pass
 
     def _ts(ts):
-        return datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M") if ts else "—"
+        return f'<time data-ts="{ts}">—</time>' if ts else "—"
 
     sync_html = "".join(
         f"<tr><td>{r['type']}</td><td>{_ts(r['last'])}</td></tr>"
