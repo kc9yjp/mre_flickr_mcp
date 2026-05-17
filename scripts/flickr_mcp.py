@@ -1752,10 +1752,10 @@ async def _search_all_groups(args):
 REFRESH_INTERVAL = 86400  # 24 hours
 
 
-async def _run_sync_script(path: str, label: str) -> int:
+async def _run_sync_script(path: str, label: str, extra_args: list[str] | None = None) -> int:
     logging.info("Sync starting: %s", label)
     p = await asyncio.create_subprocess_exec(
-        sys.executable, path,
+        sys.executable, path, *(extra_args or []),
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.STDOUT,
     )
@@ -1856,20 +1856,29 @@ _SITE_TITLE = "Mr E Flickr MCP"
 _GITHUB_URL = "https://github.com/kc9yjp/mre_flickr_mcp"
 
 
-def _html_page(title: str, body: str) -> str:
+def _html_page(title: str, body: str, logged_in: bool | None = None) -> str:
     import datetime as _dt
     year = _dt.date.today().year
+    if logged_in is True:
+        nav_links = """
+  <a href="/stats">Stats</a>
+  <a href="/sync">Sync</a>
+  <a href="/setup">Setup</a>
+  <form method="POST" action="/logout" style="margin:0"><button type="submit" style="background:none;border:none;color:#fff;font-weight:500;cursor:pointer;padding:0;font-size:1rem">Logout</button></form>"""
+    elif logged_in is False:
+        nav_links = ""
+    else:
+        nav_links = """
+  <a href="/stats">Stats</a>
+  <a href="/sync">Sync</a>
+  <a href="/setup">Setup</a>"""
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{title} — {_SITE_TITLE}</title>{_WEB_CSS}</head>
 <body>
 <nav>
-  <a href="/" class="title">{_SITE_TITLE}</a>
-  <a href="/stats">Stats</a>
-  <a href="/sync">Sync</a>
-  <a href="/login">Login</a>
-  <a href="/setup">Setup</a>
+  <a href="/" class="title">{_SITE_TITLE}</a>{nav_links}
 </nav>
 <main>{body}</main>
 <footer>
@@ -1916,6 +1925,7 @@ async def main_sse():
     # --- Web UI handlers ---
 
     async def route_root(request: Request):
+        msg = request.query_params.get("msg", "")
         logged_in = os.path.exists(CREDENTIALS_FILE)
         username = ""
         if logged_in:
@@ -1943,7 +1953,19 @@ async def main_sse():
             pass
 
         if not logged_in:
-            status_html = '<div class="alert alert-err" style="margin-bottom:20px">Not logged in. <a href="/login">Login with Flickr →</a></div>'
+            body = f"""<h1>{_SITE_TITLE}</h1>
+            <div class="card" style="text-align:center;max-width:400px;margin:40px auto">
+              <div style="font-size:3rem">🔑</div>
+              <h2 style="margin:12px 0 8px">Connect to Flickr</h2>
+              <p style="color:#555;margin-bottom:20px">Login with your Flickr account to get started.</p>
+              <a href="/login" class="btn">Login with Flickr →</a>
+            </div>"""
+            return HTMLResponse(_html_page("Home", body, logged_in=False))
+
+        syncing = _sync_lock.locked()
+        if msg == "ok":
+            sync_note = ' Syncing your library in the background — check the <a href="/sync">Sync</a> page for progress.' if syncing else ""
+            status_html = f'<div class="alert alert-ok" style="margin-bottom:20px">Welcome, <strong>{username}</strong>! You\'re connected to Flickr.{sync_note}</div>'
         else:
             status_html = f'<div class="alert alert-ok" style="margin-bottom:20px">Logged in as <strong>{username}</strong></div>'
 
@@ -1963,13 +1985,6 @@ async def main_sse():
               <div style="color:#555;font-size:.85rem">{"Last: " + last_sync if last_sync else "Never synced"}</div>
             </div>
           </a>
-          <a href="/login" style="text-decoration:none">
-            <div class="card" style="text-align:center;cursor:pointer">
-              <div style="font-size:2rem">🔑</div>
-              <div style="font-weight:600;margin:8px 0 4px">Login</div>
-              <div style="color:#555;font-size:.85rem">{"Connected" if logged_in else "Not connected"}</div>
-            </div>
-          </a>
           <a href="/setup" style="text-decoration:none">
             <div class="card" style="text-align:center;cursor:pointer">
               <div style="font-size:2rem">⚙️</div>
@@ -1980,20 +1995,14 @@ async def main_sse():
         </div>"""
 
         body = f"<h1>{_SITE_TITLE}</h1>{status_html}{cards}"
-        return HTMLResponse(_html_page("Home", body))
+        return HTMLResponse(_html_page("Home", body, logged_in=True))
 
     async def route_login(request: Request):
         msg = request.query_params.get("msg", "")
         logged_in = os.path.exists(CREDENTIALS_FILE)
 
-        if logged_in:
-            try:
-                creds = _load_credentials()
-                user_html = f"<p>Logged in as <strong>{creds.get('username', creds.get('user_nsid', '?'))}</strong>.</p>"
-            except Exception:
-                user_html = "<p>Credentials file found but could not be read.</p>"
-        else:
-            user_html = "<p>Not logged in.</p>"
+        if logged_in and msg not in ("ok", "err"):
+            return RedirectResponse("/", status_code=303)
 
         alert = ""
         if msg == "ok":
@@ -2001,20 +2010,15 @@ async def main_sse():
         elif msg == "err":
             alert = '<div class="alert alert-err">Login failed. Please try again.</div>'
 
-        button = ""
-        if not logged_in or msg == "err":
-            button = '<a href="/login/start" class="btn" style="margin-top:14px">Login with Flickr</a>'
-        else:
-            button = '<a href="/login/start" class="btn btn-secondary" style="margin-top:14px">Re-authenticate</a>'
-
         body = f"""
-        <h1>Flickr Account</h1>
+        <h1>Connect to Flickr</h1>
         {alert}
-        <div class="card">
-          {user_html}
-          {button}
+        <div class="card" style="text-align:center;max-width:400px;margin:40px auto">
+          <div style="font-size:3rem">🔑</div>
+          <p style="color:#555;margin:12px 0 20px">Authorize this app to access your Flickr account.</p>
+          <a href="/login/start" class="btn">Login with Flickr →</a>
         </div>"""
-        return HTMLResponse(_html_page("Login", body))
+        return HTMLResponse(_html_page("Login", body, logged_in=False))
 
     async def route_login_start(request: Request):
         try:
@@ -2100,7 +2104,17 @@ async def main_sse():
             json.dump(creds, f, indent=2)
 
         logging.info("OAuth login complete for user %s (%s)", username, user_nsid)
-        return RedirectResponse("/login?msg=ok")
+
+        scripts_dir = os.path.dirname(SYNC_SCRIPT)
+        async def _post_login_sync():
+            async with _sync_lock:
+                await _run_sync_script(SYNC_SCRIPT, "photos", extra_args=["--create"])
+                await _run_sync_script(os.path.join(scripts_dir, "sync_contacts.py"), "contacts")
+                await _run_sync_script(os.path.join(scripts_dir, "sync_groups.py"),   "groups")
+                await _run_sync_script(os.path.join(scripts_dir, "sync_albums.py"),   "albums")
+        asyncio.create_task(_post_login_sync())
+
+        return RedirectResponse("/?msg=ok", status_code=303)
 
     async def route_stats(request: Request):
         try:
@@ -2238,10 +2252,10 @@ async def main_sse():
         }
 
         if sync_type not in script_map and sync_type != "all":
-            return RedirectResponse("/sync")
+            return RedirectResponse("/sync", status_code=303)
 
         if _sync_lock.locked():
-            return RedirectResponse("/sync")
+            return RedirectResponse("/sync", status_code=303)
 
         async def _run():
             async with _sync_lock:
@@ -2252,7 +2266,7 @@ async def main_sse():
                     await _run_sync_script(script_map[sync_type], sync_type)
 
         asyncio.create_task(_run())
-        return RedirectResponse("/sync")
+        return RedirectResponse("/sync", status_code=303)
 
     async def route_setup(request: Request):
         base = str(request.base_url).rstrip("/")
@@ -2294,6 +2308,11 @@ async def main_sse():
         </div>"""
         return HTMLResponse(_html_page("Setup", body))
 
+    async def route_logout(request: Request):
+        if os.path.exists(CREDENTIALS_FILE):
+            os.remove(CREDENTIALS_FILE)
+        return RedirectResponse("/", status_code=303)
+
     app = Starlette(
         middleware=middleware,
         routes=[
@@ -2301,6 +2320,7 @@ async def main_sse():
             Route("/login",              endpoint=route_login),
             Route("/login/start",        endpoint=route_login_start),
             Route("/oauth/callback",     endpoint=route_oauth_callback),
+            Route("/logout",             endpoint=route_logout, methods=["POST"]),
             Route("/stats",              endpoint=route_stats),
             Route("/sync",               endpoint=route_sync_page),
             Route("/sync/{type}",        endpoint=route_sync_trigger, methods=["POST"]),
