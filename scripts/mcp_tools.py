@@ -24,9 +24,10 @@ from flickr_api import (
 
 server = Server("flickr")
 _sync_lock = asyncio.Lock()
+_active_syncs: dict[str, float] = {}  # label -> start timestamp
 
 SYNC_SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "flickr_sync.py")
-REFRESH_INTERVAL = 86400  # 24 hours
+REFRESH_INTERVAL = 43200  # 12 hours
 
 
 @server.list_tools()
@@ -1533,21 +1534,38 @@ async def _search_all_groups(args):
 # --- Sync helpers ---
 
 async def _run_sync_script(path: str, label: str, extra_args: list[str] | None = None) -> int:
+    started = time.time()
+    _active_syncs[label] = started
     logging.info("Sync starting: %s", label)
-    p = await asyncio.create_subprocess_exec(
-        sys.executable, path, *(extra_args or []),
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.STDOUT,
-    )
-    stdout, _ = await p.communicate()
-    for line in stdout.decode().splitlines():
-        if line.strip():
-            logging.info("[%s] %s", label, line)
-    if p.returncode != 0:
-        logging.error("Sync failed: %s (exit %s)", label, p.returncode)
-    else:
-        logging.info("Sync completed: %s", label)
-    return p.returncode
+    try:
+        p = await asyncio.create_subprocess_exec(
+            sys.executable, path, *(extra_args or []),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+        stdout, _ = await p.communicate()
+        for line in stdout.decode().splitlines():
+            if line.strip():
+                logging.info("[%s] %s", label, line)
+        duration = int(time.time() - started)
+        if p.returncode != 0:
+            logging.error("Sync failed: %s (exit %s, %ds)", label, p.returncode, duration)
+        else:
+            logging.info("Sync completed: %s (%ds)", label, duration)
+        try:
+            conn = sqlite3.connect(DB_FILE)
+            conn.execute(
+                "UPDATE sync_log SET duration_seconds=? WHERE id=("
+                "SELECT id FROM sync_log WHERE type=? ORDER BY synced_at DESC LIMIT 1)",
+                (duration, label),
+            )
+            conn.commit()
+            conn.close()
+        except Exception:
+            pass
+        return p.returncode
+    finally:
+        _active_syncs.pop(label, None)
 
 
 async def _background_refresh():
@@ -1563,11 +1581,12 @@ async def _background_refresh():
                 if age >= REFRESH_INTERVAL:
                     logging.info("Background refresh triggered (last photos sync %.1fh ago)", age / 3600)
                     async with _sync_lock:
-                        await _run_sync_script(SYNC_SCRIPT, "photos")
                         scripts_dir = os.path.dirname(SYNC_SCRIPT)
+                        await _run_sync_script(SYNC_SCRIPT, "photos")
                         await asyncio.gather(
                             _run_sync_script(os.path.join(scripts_dir, "sync_contacts.py"), "contacts"),
                             _run_sync_script(os.path.join(scripts_dir, "sync_groups.py"),   "groups"),
+                            _run_sync_script(os.path.join(scripts_dir, "sync_albums.py"),   "albums"),
                         )
                         await _run_sync_script(os.path.join(scripts_dir, "sync_engagement.py"), "engagement")
                     sleep_for = REFRESH_INTERVAL

@@ -17,7 +17,7 @@ from starlette.routing import Mount, Route
 
 from db import DB_FILE, db
 from flickr_api import CREDENTIALS_FILE, _load_credentials, _load_env, _oauth_params, _sign
-from mcp_tools import SYNC_SCRIPT, _background_refresh, _run_sync_script, _sync_lock, server
+from mcp_tools import SYNC_SCRIPT, _active_syncs, _background_refresh, _run_sync_script, _sync_lock, server
 
 MCP_API_KEY = os.environ.get("MCP_API_KEY", "")
 MCP_PORT = int(os.environ.get("MCP_PORT", "8000"))
@@ -111,6 +111,11 @@ function showTab(name) {
   document.getElementById('tab-' + name).classList.add('active');
   document.querySelector('[data-tab="' + name + '"]').classList.add('active');
 }
+function fmtElapsed(startSec) {
+  const s = Math.floor(Date.now() / 1000) - startSec;
+  if (s < 60) return s + 's';
+  return Math.floor(s / 60) + 'm ' + (s % 60) + 's';
+}
 document.addEventListener('DOMContentLoaded', () => {
   document.querySelectorAll('time[data-ts]').forEach(el => {
     const ms = parseInt(el.dataset.ts) * 1000;
@@ -119,6 +124,14 @@ document.addEventListener('DOMContentLoaded', () => {
       hour: 'numeric', minute: '2-digit'
     });
   });
+  const elapsed = document.querySelectorAll('[data-elapsed]');
+  if (elapsed.length) {
+    function tick() {
+      elapsed.forEach(el => { el.textContent = fmtElapsed(parseInt(el.dataset.elapsed)); });
+    }
+    tick();
+    setInterval(tick, 1000);
+  }
 });
 </script>
 """
@@ -422,9 +435,6 @@ async def route_stats(request: Request):
         album_count   = conn.execute("SELECT COUNT(*) FROM albums").fetchone()[0]
         contact_count = conn.execute("SELECT COUNT(*) FROM contacts").fetchone()[0]
 
-        sync_rows = conn.execute(
-            "SELECT type, MAX(synced_at) AS last FROM sync_log GROUP BY type"
-        ).fetchall()
     finally:
         conn.close()
 
@@ -433,11 +443,6 @@ async def route_stats(request: Request):
         for tag in (row[0] or "").split():
             counts[tag] = counts.get(tag, 0) + 1
     top_tags = sorted(counts.items(), key=lambda x: -x[1])[:20]
-
-    def _ts(ts):
-        return f'<time data-ts="{ts}">—</time>' if ts else "—"
-
-    sync_map = {r["type"]: r["last"] for r in sync_rows}
 
     stat_grid = f"""
     <div class="stat-grid">
@@ -452,10 +457,6 @@ async def route_stats(request: Request):
 
     date_range = f"{stats['earliest'] or '?'} &rarr; {stats['latest'] or '?'}"
     tag_html = " ".join(f'<span class="tag">{t} ({c})</span>' for t, c in top_tags)
-    sync_html = "".join(
-        f"<tr><td>{stype}</td><td>{_ts(stime)}</td></tr>"
-        for stype, stime in sync_map.items()
-    ) or "<tr><td colspan=2>No syncs recorded</td></tr>"
 
     body = f"""
     <h1>Collection Stats</h1>
@@ -463,24 +464,22 @@ async def route_stats(request: Request):
       <p style="margin-top:14px;color:#555;font-size:.9rem">Date range: {date_range}</p>
     </div>
     <h2>Top Tags</h2>
-    <div class="card">{tag_html or '<em>No tags</em>'}</div>
-    <h2>Last Sync</h2>
-    <div class="card">
-      <table><thead><tr><th>Type</th><th>Last run</th></tr></thead>
-      <tbody>{sync_html}</tbody></table>
-      <p style="margin-top:14px"><a href="/sync" class="btn btn-secondary">Go to Sync</a></p>
-    </div>"""
+    <div class="card">{tag_html or '<em>No tags</em>'}</div>"""
     return HTMLResponse(_html_page("Stats", body))
 
 
 async def route_sync_page(request: Request):
+    import time as _time
     running = _sync_lock.locked()
 
     sync_rows = []
     try:
         conn = db()
         sync_rows = conn.execute(
-            "SELECT type, MAX(synced_at) AS last FROM sync_log GROUP BY type"
+            "SELECT s.type, s.synced_at AS last, s.duration_seconds"
+            " FROM sync_log s"
+            " JOIN (SELECT type, MAX(synced_at) AS ts FROM sync_log GROUP BY type) m"
+            " ON s.type = m.type AND s.synced_at = m.ts"
         ).fetchall()
         conn.close()
     except Exception:
@@ -489,12 +488,30 @@ async def route_sync_page(request: Request):
     def _ts(ts):
         return f'<time data-ts="{ts}">—</time>' if ts else "—"
 
+    def _dur(secs):
+        if not secs:
+            return ""
+        mins = round(secs / 60, 1)
+        label = f"{mins:.0f} min" if mins >= 1 else f"{secs}s"
+        return f'<span style="color:#888;font-size:.8rem"> &nbsp;{label}</span>'
+
     sync_html = "".join(
-        f"<tr><td>{r['type']}</td><td>{_ts(r['last'])}</td></tr>"
+        f"<tr><td>{r['type']}</td><td>{_ts(r['last'])}{_dur(r['duration_seconds'])}</td></tr>"
         for r in sync_rows
     ) or "<tr><td colspan=2>No syncs recorded yet</td></tr>"
 
-    running_badge = '<div class="alert alert-info">A sync is currently running&hellip;</div>' if running else ""
+    if running and _active_syncs:
+        now = _time.time()
+        items = "".join(
+            f'<li><strong>{label}</strong> &mdash; started <time data-ts="{int(started)}">—</time>'
+            f' &nbsp;(<span data-elapsed="{int(started)}"></span>)</li>'
+            for label, started in sorted(_active_syncs.items(), key=lambda x: x[1])
+        )
+        running_badge = f'<div class="alert alert-info"><strong>Sync in progress:</strong><ul style="margin:6px 0 0 18px;line-height:1.8">{items}</ul></div>'
+    elif running:
+        running_badge = '<div class="alert alert-info">A sync is currently running&hellip;</div>'
+    else:
+        running_badge = ""
 
     buttons = ""
     for stype in ("photos", "contacts", "groups", "albums", "all"):
@@ -507,7 +524,7 @@ async def route_sync_page(request: Request):
     {running_badge}
     <div class="card">
       <h2 style="margin-top:0">Last sync times</h2>
-      <table><thead><tr><th>Type</th><th>Last run</th></tr></thead>
+      <table><thead><tr><th>Type</th><th>Completed</th></tr></thead>
       <tbody>{sync_html}</tbody></table>
     </div>
     <div class="card">
