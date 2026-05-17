@@ -32,6 +32,7 @@ _FLICKR_AUTHORIZE_URL     = "https://www.flickr.com/services/oauth/authorize"
 
 _SITE_TITLE = "Mr E Flickr MCP"
 _GITHUB_URL = "https://github.com/kc9yjp/mre_flickr_mcp"
+_FLICKR_URL = "https://www.flickr.com/photos/ejwettstein/"
 _LOG_DIR = os.environ.get("FLICKR_LOG_DIR", os.path.join(os.getcwd(), "logs"))
 _LOG_FILE = os.path.join(_LOG_DIR, "flickr_mcp.log")
 
@@ -100,7 +101,7 @@ def _html_page(title: str, body: str, logged_in: bool | None = None) -> str:
 </nav>
 <main>{body}</main>
 <footer>
-  &copy; {year} Eric Wettstein &mdash; <a href="{_GITHUB_URL}" target="_blank">GitHub</a>
+    &copy; {year} Eric Wettstein &mdash; <a href="{_GITHUB_URL}" target="_blank">GitHub</a> &mdash; <a href="{_FLICKR_URL}" target="_blank">Flickr</a>
 </footer>
 </body></html>"""
 
