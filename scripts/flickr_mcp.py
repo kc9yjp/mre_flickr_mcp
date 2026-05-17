@@ -1842,6 +1842,8 @@ td { padding: 6px 10px; border-bottom: 1px solid #eee; }
 .alert-ok  { background: #d4edda; color: #155724; }
 .alert-err { background: #f8d7da; color: #721c24; }
 .alert-info { background: #d1ecf1; color: #0c5460; }
+footer { text-align: center; padding: 24px 16px; color: #888; font-size: .8rem; border-top: 1px solid #e0e0e0; margin-top: 40px; }
+footer a { color: #888; }
 </style>
 """
 
@@ -1850,20 +1852,29 @@ _FLICKR_ACCESS_TOKEN_URL  = "https://www.flickr.com/services/oauth/access_token"
 _FLICKR_AUTHORIZE_URL     = "https://www.flickr.com/services/oauth/authorize"
 
 
+_SITE_TITLE = "Mr E Flickr MCP"
+_GITHUB_URL = "https://github.com/kc9yjp/mre_flickr_mcp"
+
+
 def _html_page(title: str, body: str) -> str:
+    import datetime as _dt
+    year = _dt.date.today().year
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>{title} — Flickr MCP</title>{_WEB_CSS}</head>
+<title>{title} — {_SITE_TITLE}</title>{_WEB_CSS}</head>
 <body>
 <nav>
-  <span class="title">Flickr MCP</span>
+  <a href="/" class="title">{_SITE_TITLE}</a>
   <a href="/stats">Stats</a>
   <a href="/sync">Sync</a>
   <a href="/login">Login</a>
   <a href="/setup">Setup</a>
 </nav>
 <main>{body}</main>
+<footer>
+  &copy; {year} Eric Wettstein &mdash; <a href="{_GITHUB_URL}" target="_blank">GitHub</a>
+</footer>
 </body></html>"""
 
 
@@ -1905,7 +1916,71 @@ async def main_sse():
     # --- Web UI handlers ---
 
     async def route_root(request: Request):
-        return RedirectResponse("/stats")
+        logged_in = os.path.exists(CREDENTIALS_FILE)
+        username = ""
+        if logged_in:
+            try:
+                creds = _load_credentials()
+                username = creds.get("username") or creds.get("user_nsid", "")
+            except Exception:
+                logged_in = False
+
+        total_photos = 0
+        last_sync = None
+        db_ok = False
+        try:
+            conn = db()
+            row = conn.execute("SELECT COUNT(*) FROM photos").fetchone()
+            total_photos = row[0] if row else 0
+            sync_row = conn.execute(
+                "SELECT MAX(synced_at) FROM sync_log WHERE type = 'photos'"
+            ).fetchone()
+            if sync_row and sync_row[0]:
+                last_sync = datetime.fromtimestamp(sync_row[0]).strftime("%Y-%m-%d %H:%M")
+            conn.close()
+            db_ok = True
+        except Exception:
+            pass
+
+        if not logged_in:
+            status_html = '<div class="alert alert-err" style="margin-bottom:20px">Not logged in. <a href="/login">Login with Flickr →</a></div>'
+        else:
+            status_html = f'<div class="alert alert-ok" style="margin-bottom:20px">Logged in as <strong>{username}</strong></div>'
+
+        cards = f"""
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px;margin-bottom:24px">
+          <a href="/stats" style="text-decoration:none">
+            <div class="card" style="text-align:center;cursor:pointer">
+              <div style="font-size:2rem">📊</div>
+              <div style="font-weight:600;margin:8px 0 4px">Stats</div>
+              <div style="color:#555;font-size:.85rem">{"Photos: " + f"{total_photos:,}" if db_ok else "No database yet"}</div>
+            </div>
+          </a>
+          <a href="/sync" style="text-decoration:none">
+            <div class="card" style="text-align:center;cursor:pointer">
+              <div style="font-size:2rem">🔄</div>
+              <div style="font-weight:600;margin:8px 0 4px">Sync</div>
+              <div style="color:#555;font-size:.85rem">{"Last: " + last_sync if last_sync else "Never synced"}</div>
+            </div>
+          </a>
+          <a href="/login" style="text-decoration:none">
+            <div class="card" style="text-align:center;cursor:pointer">
+              <div style="font-size:2rem">🔑</div>
+              <div style="font-weight:600;margin:8px 0 4px">Login</div>
+              <div style="color:#555;font-size:.85rem">{"Connected" if logged_in else "Not connected"}</div>
+            </div>
+          </a>
+          <a href="/setup" style="text-decoration:none">
+            <div class="card" style="text-align:center;cursor:pointer">
+              <div style="font-size:2rem">⚙️</div>
+              <div style="font-weight:600;margin:8px 0 4px">Setup</div>
+              <div style="color:#555;font-size:.85rem">MCP client config</div>
+            </div>
+          </a>
+        </div>"""
+
+        body = f"<h1>{_SITE_TITLE}</h1>{status_html}{cards}"
+        return HTMLResponse(_html_page("Home", body))
 
     async def route_login(request: Request):
         msg = request.query_params.get("msg", "")
