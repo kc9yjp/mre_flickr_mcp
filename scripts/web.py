@@ -81,6 +81,15 @@ footer a { color: #888; }
 .cmd-desc { font-size: .83rem; color: #444; margin-bottom: 4px; }
 .cmd-hint { font-size: .75rem; color: #888; margin-top: 4px; }
 .cmd-hint code { font-size: .75rem; background: #f0f0f0; padding: 1px 4px; border-radius: 3px; }
+.tab-nav { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 16px; }
+.tab-btn { padding: 6px 14px; border: 1px solid #ccc; border-radius: 5px; background: #f5f5f5;
+           cursor: pointer; font-size: .85rem; }
+.tab-btn:hover { background: #e8f0ff; border-color: #99b8f8; }
+.tab-btn.active { background: #0063dc; color: #fff; border-color: #0063dc; }
+.tab-pane { display: none; }
+.tab-pane.active { display: block; }
+.tab-pane p { color: #555; font-size: .9rem; margin-bottom: 10px; }
+.tab-pane .file-hint { font-size: .8rem; color: #888; margin-top: 8px; }
 </style>
 <script>
 function copyCmd(btn, text) {
@@ -89,6 +98,20 @@ function copyCmd(btn, text) {
     btn.classList.add('copied');
     setTimeout(() => { btn.textContent = 'Copy'; btn.classList.remove('copied'); }, 1500);
   });
+}
+function copyEl(btn, id) {
+  const text = document.getElementById(id).textContent;
+  navigator.clipboard.writeText(text).then(() => {
+    btn.textContent = 'Copied!';
+    btn.classList.add('copied');
+    setTimeout(() => { btn.textContent = 'Copy'; btn.classList.remove('copied'); }, 1500);
+  });
+}
+function showTab(name) {
+  document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById('tab-' + name).classList.add('active');
+  document.querySelector('[data-tab="' + name + '"]').classList.add('active');
 }
 </script>
 """
@@ -519,41 +542,109 @@ async def route_sync_trigger(request: Request):
 async def route_setup(request: Request):
     base = str(request.base_url).rstrip("/")
     sse_url = f"{base}/sse"
-    key_hint = MCP_API_KEY[:4] + "…" if MCP_API_KEY else "(none configured)"
-    auth_line = f'\n      "headers": {{"Authorization": "Bearer {key_hint}"}}' if MCP_API_KEY else ""
-    config_json = (
+    auth = f'"Authorization": "Bearer {MCP_API_KEY}"' if MCP_API_KEY else ""
+    headers_block = f',\n      "headers": {{{auth}}}' if auth else ""
+
+    def _pre(snippet_id, text):
+        return (
+            f'<div style="position:relative">'
+            f'<pre id="{snippet_id}" style="background:#f0f0f0;padding:14px;border-radius:6px;'
+            f'font-size:.82rem;overflow-x:auto;margin-bottom:6px">{text}</pre>'
+            f'<button class="copy-btn" style="position:absolute;top:8px;right:8px" '
+            f'onclick="copyEl(this,\'{snippet_id}\')">Copy</button></div>'
+        )
+
+    # --- per-client snippets ---
+    claude_code_json = (
         "{\n"
         '  "mcpServers": {\n'
         '    "flickr": {\n'
         '      "type": "sse",\n'
-        f'      "url": "{sse_url}"{("," + auth_line) if MCP_API_KEY else ""}\n'
+        f'      "url": "{sse_url}"{headers_block}\n'
         "    }\n"
         "  }\n"
         "}"
     )
+
+    claude_desktop_json = claude_code_json  # identical format
+
+    cursor_json = (
+        "{\n"
+        '  "mcpServers": {\n'
+        '    "flickr": {\n'
+        f'      "url": "{sse_url}"{headers_block}\n'
+        "    }\n"
+        "  }\n"
+        "}"
+    )
+
+    opencode_json = (
+        "{\n"
+        '  "mcp": {\n'
+        '    "flickr": {\n'
+        '      "type": "remote",\n'
+        f'      "url": "{sse_url}"'
+        + (f',\n      "headers": {{{auth}}}' if auth else "")
+        + "\n    }\n  }\n}"
+    )
+
     body = f"""
     <h1>Setup</h1>
     <div class="card">
-      <h2 style="margin-top:0">Connect Claude Code</h2>
-      <p style="margin-bottom:12px;color:#555;font-size:.9rem">
-        Add this to your <code>.mcp.json</code> (project root or <code>~/.claude/mcp.json</code>):
+      <p style="color:#555;font-size:.9rem;margin-bottom:16px">
+        The MCP server speaks SSE at <code>{sse_url}</code>.
+        Pick your client below for the exact config snippet.
       </p>
-      <pre style="background:#f0f0f0;padding:14px;border-radius:6px;font-size:.85rem;overflow-x:auto">{config_json}</pre>
-      {"<p style='margin-top:10px;color:#555;font-size:.85rem'>Replace the key hint with your full <code>MCP_API_KEY</code> value from <code>.env</code>.</p>" if MCP_API_KEY else ""}
-    </div>
-    <div class="card">
-      <h2 style="margin-top:0">Endpoints</h2>
-      <table>
-        <thead><tr><th>Path</th><th>Purpose</th></tr></thead>
-        <tbody>
-          <tr><td><code>/sse</code></td><td>MCP SSE endpoint (Claude connects here)</td></tr>
-          <tr><td><code>/messages/</code></td><td>MCP POST messages endpoint</td></tr>
-            <tr><td><code>/login</code></td><td>Browser-based Flickr OAuth login</td></tr>
-          <tr><td><code>/stats</code></td><td>Collection statistics dashboard</td></tr>
-          <tr><td><code>/sync</code></td><td>Sync status and trigger page</td></tr>
-          <tr><td><code>/logs</code></td><td>View server logs</td></tr>
-        </tbody>
-      </table>
+
+      <div class="tab-nav">
+        <button class="tab-btn active" data-tab="claude-code"   onclick="showTab('claude-code')">Claude Code</button>
+        <button class="tab-btn"        data-tab="claude-desktop" onclick="showTab('claude-desktop')">Claude Desktop</button>
+        <button class="tab-btn"        data-tab="cursor"         onclick="showTab('cursor')">Cursor</button>
+        <button class="tab-btn"        data-tab="windsurf"       onclick="showTab('windsurf')">Windsurf</button>
+        <button class="tab-btn"        data-tab="opencode"       onclick="showTab('opencode')">OpenCode</button>
+        <button class="tab-btn"        data-tab="open-webui"     onclick="showTab('open-webui')">Open WebUI</button>
+      </div>
+
+      <div id="tab-claude-code" class="tab-pane active">
+        <p>Add to <code>.mcp.json</code> in your project root, or <code>~/.claude/mcp.json</code> for all projects.</p>
+        {_pre("snip-cc", claude_code_json)}
+      </div>
+
+      <div id="tab-claude-desktop" class="tab-pane">
+        <p>Edit <code>~/Library/Application Support/Claude/claude_desktop_config.json</code> (macOS) or
+           <code>%APPDATA%\\Claude\\claude_desktop_config.json</code> (Windows).</p>
+        {_pre("snip-cd", claude_desktop_json)}
+        <p class="file-hint">Restart Claude Desktop after saving.</p>
+      </div>
+
+      <div id="tab-cursor" class="tab-pane">
+        <p>Add to <code>~/.cursor/mcp.json</code> (global) or <code>.cursor/mcp.json</code> in your project.</p>
+        {_pre("snip-cursor", cursor_json)}
+        <p class="file-hint">Cursor detects SSE servers from the <code>url</code> field automatically &mdash; no <code>type</code> needed.</p>
+      </div>
+
+      <div id="tab-windsurf" class="tab-pane">
+        <p>Add to <code>~/.codeium/windsurf/mcp_config.json</code>.</p>
+        {_pre("snip-windsurf", cursor_json)}
+        <p class="file-hint">Same format as Cursor. Reload the Windsurf window after saving.</p>
+      </div>
+
+      <div id="tab-opencode" class="tab-pane">
+        <p>Add to <code>~/.config/opencode/config.json</code>.</p>
+        {_pre("snip-opencode", opencode_json)}
+      </div>
+
+      <div id="tab-open-webui" class="tab-pane">
+        <p>Open WebUI connects to MCP servers through its admin panel &mdash; no config file needed.</p>
+        <ol style="color:#555;font-size:.9rem;line-height:2;padding-left:20px">
+          <li>Go to <strong>Admin &rarr; Settings &rarr; Tools</strong></li>
+          <li>Click <strong>Add Tool Server</strong></li>
+          <li>Enter the server URL:</li>
+        </ol>
+        {_pre("snip-webui", sse_url)}
+        {"<p style='font-size:.85rem;color:#555;margin-top:8px'>Also enter your API key in the Authorization field if prompted: <code>" + MCP_API_KEY + "</code></p>" if MCP_API_KEY else ""}
+        <p class="file-hint">Ollama does not support MCP natively &mdash; use Open WebUI as the agent layer on top of Ollama.</p>
+      </div>
     </div>"""
     return HTMLResponse(_html_page("Setup", body))
 
