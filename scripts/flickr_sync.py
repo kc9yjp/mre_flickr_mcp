@@ -59,7 +59,7 @@ def sign_request(method, url, params, api_secret, token_secret=""):
 
 def load_credentials():
     if not os.path.exists(CREDENTIALS_FILE):
-        print("Not logged in. Run: bin/flickr login", file=sys.stderr)
+        print("Not logged in. Visit http://localhost:8000/login to authenticate", file=sys.stderr)
         sys.exit(1)
     with open(CREDENTIALS_FILE) as f:
         return json.load(f)

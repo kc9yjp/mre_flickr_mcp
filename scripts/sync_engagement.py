@@ -14,7 +14,7 @@ import requests
 from requests.exceptions import SSLError, ConnectionError
 
 if not os.path.exists(DB_FILE):
-    print(f"Database not found: {DB_FILE}\nRun: bin/flickr-sync --create", file=sys.stderr)
+    print(f"Database not found: {DB_FILE}\nVisit http://localhost:8000/sync to run a sync", file=sys.stderr)
     sys.exit(1)
 
 conn = sqlite3.connect(DB_FILE)
