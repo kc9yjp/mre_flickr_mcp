@@ -66,19 +66,14 @@ td { padding: 6px 10px; border-bottom: 1px solid #eee; }
 .alert-info { background: #d1ecf1; color: #0c5460; }
 footer { text-align: center; padding: 24px 16px; color: #888; font-size: .8rem; border-top: 1px solid #e0e0e0; margin-top: 40px; }
 footer a { color: #888; }
-.cmd-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; margin-bottom: 8px; }
-.cmd-card { background: #fff; border-radius: 8px; box-shadow: 0 1px 4px rgba(0,0,0,.1); padding: 14px 16px; }
-.cmd-card.needs-url { border-left: 3px solid #f0ad4e; }
-.cmd-card.autonomous { border-left: 3px solid #5cb85c; }
-.cmd-row { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
-.cmd-text { font-family: monospace; font-size: .9rem; font-weight: 600; color: #0040a0; flex: 1; }
+.prompt-list { display: flex; flex-direction: column; gap: 10px; margin-bottom: 8px; }
+.prompt-card { background: #fff; border-radius: 8px; box-shadow: 0 1px 4px rgba(0,0,0,.1); padding: 14px 16px; display: flex; align-items: flex-start; gap: 12px; }
+.prompt-text { font-size: .9rem; color: #222; line-height: 1.45; flex: 1; }
+.prompt-text em { font-style: normal; color: #888; }
 .copy-btn { padding: 3px 10px; font-size: .75rem; background: #e8f0ff; color: #0040a0; border: 1px solid #b8cff8;
-            border-radius: 4px; cursor: pointer; white-space: nowrap; }
+            border-radius: 4px; cursor: pointer; white-space: nowrap; flex-shrink: 0; margin-top: 2px; }
 .copy-btn:hover { background: #d0e2ff; }
 .copy-btn.copied { background: #d4edda; color: #155724; border-color: #c3e6cb; }
-.cmd-desc { font-size: .83rem; color: #444; margin-bottom: 4px; }
-.cmd-hint { font-size: .75rem; color: #888; margin-top: 4px; }
-.cmd-hint code { font-size: .75rem; background: #f0f0f0; padding: 1px 4px; border-radius: 3px; }
 .tab-nav { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 16px; }
 .tab-btn { padding: 6px 14px; border: 1px solid #ccc; border-radius: 5px; background: #f5f5f5;
            cursor: pointer; font-size: .85rem; }
@@ -240,37 +235,38 @@ async def route_root(request: Request):
       </a>
     </div>"""
 
-    def _cmd(slug, desc, hint=None, needs_url=False, autonomous=False):
-        cls = "cmd-card needs-url" if needs_url else ("cmd-card autonomous" if autonomous else "cmd-card")
-        hint_html = f'<div class="cmd-hint">{hint}</div>' if hint else ""
-        return f"""<div class="{cls}">
-          <div class="cmd-row">
-            <span class="cmd-text">/{slug}</span>
-            <button class="copy-btn" onclick="copyCmd(this, '/{slug}')">Copy</button>
-          </div>
-          <div class="cmd-desc">{desc}</div>
-          {hint_html}
+    def _prompt(text, copy_text=None):
+        if copy_text is None:
+            copy_text = text
+        safe = html.escape(copy_text).replace("'", "&#39;")
+        return f"""<div class="prompt-card">
+          <span class="prompt-text">{text}</span>
+          <button class="copy-btn" onclick="copyCmd(this, '{safe}')">Copy</button>
         </div>"""
 
-    commands = (
-        _cmd("flickr-photo",    "Suggest title, description, tags &amp; groups for a photo",
-             hint='Reads current Safari tab &mdash; or paste a URL: <code>/flickr-photo &lt;url&gt;</code>', needs_url=True),
-        _cmd("flickr-fave",     "Fave a photo immediately, then suggest a comment to post",
-             hint='Reads current Safari tab &mdash; or paste a URL: <code>/flickr-fave &lt;url&gt;</code>', needs_url=True),
-        _cmd("flickr-boost",    "Add qualifying photos to threshold groups (views &amp; faves)",
-             hint='Works from Safari tab &mdash; or paste a URL: <code>/flickr-boost &lt;url&gt;</code>', needs_url=True),
-        _cmd("flickr-album",    "Add the current photo to an album",
-             hint='Reads current Safari tab &mdash; or paste a URL: <code>/flickr-album &lt;url&gt;</code>', needs_url=True),
-        _cmd("flickr-hide",     "Find weak photos, review visually, make private or update &amp; keep",
-             autonomous=True),
-        _cmd("flickr-contacts", "Review contacts as unfollow candidates one at a time",
-             autonomous=True),
-        _cmd("flickr-sync",     "Run all syncs: photos, contacts, groups, albums",
-             autonomous=True),
+    prompts = (
+        _prompt(
+            "Review my photo at <em>[PHOTO URL]</em> — suggest a better title, description, and tags, then add it to relevant groups.",
+            "Review my photo at [PHOTO URL] — suggest a better title, description, and tags, then add it to relevant groups.",
+        ),
+        _prompt(
+            "Fave my photo at <em>[PHOTO URL]</em> and suggest a comment to post on it.",
+            "Fave my photo at [PHOTO URL] and suggest a comment to post on it.",
+        ),
+        _prompt(
+            "Check if my photo at <em>[PHOTO URL]</em> qualifies for any threshold groups based on its view and fave counts, and add it.",
+            "Check if my photo at [PHOTO URL] qualifies for any threshold groups based on its view and fave counts, and add it.",
+        ),
+        _prompt(
+            "Add my photo at <em>[PHOTO URL]</em> to an appropriate album.",
+            "Add my photo at [PHOTO URL] to an appropriate album.",
+        ),
+        _prompt("Find my weakest photos — low views, zero faves — and help me decide which to make private or improve."),
+        _prompt("Review my contacts and identify unfollow candidates based on engagement — walk me through them one at a time."),
+        _prompt("Sync my Flickr data — photos, contacts, groups, and albums."),
     )
 
-    cmd_legend = '<p style="font-size:.75rem;color:#888;margin-bottom:10px"><span style="display:inline-block;width:10px;height:10px;background:#f0ad4e;border-radius:2px;margin-right:4px"></span>needs a photo &nbsp; <span style="display:inline-block;width:10px;height:10px;background:#5cb85c;border-radius:2px;margin-right:4px"></span>runs on its own</p>'
-    cmd_section = f'<h2>Quick Commands</h2>{cmd_legend}<div class="cmd-grid">{"".join(commands)}</div>'
+    cmd_section = f'<h2>Suggested Prompts</h2><div class="prompt-list">{"".join(prompts)}</div>'
 
     body = f"<h1>{_SITE_TITLE}</h1>{status_html}{cards}{cmd_section}"
     return HTMLResponse(_html_page("Home", body, logged_in=True))
