@@ -140,22 +140,18 @@ document.addEventListener('DOMContentLoaded', () => {
 def _html_page(title: str, body: str, logged_in: bool | None = None) -> str:
     import datetime as _dt
     year = _dt.date.today().year
-    if logged_in is True:
+    if logged_in is None:
+        logged_in = os.path.exists(CREDENTIALS_FILE)
+    if logged_in:
         nav_links = """
   <a href="/stats">Stats</a>
   <a href="/sync">Sync</a>
   <a href="/logs">Logs</a>
   <a href="/setup">Setup</a>
-  <form method="POST" action="/logout" style="margin:0"><button type="submit" style="background:none;border:none;color:#fff;font-weight:500;cursor:pointer;padding:0;font-size:1rem">Logout</button></form>"""
-    elif logged_in is False:
-        nav_links = """
-  <a href="/logs">Logs</a>"""
+  <form method="POST" action="/logout" style="margin:0" onsubmit="return confirm('Log out of Flickr?')"><button type="submit" style="background:none;border:none;color:#fff;font-weight:500;cursor:pointer;padding:0;font-size:1rem">Logout</button></form>"""
     else:
         nav_links = """
-  <a href="/stats">Stats</a>
-  <a href="/sync">Sync</a>
-  <a href="/logs">Logs</a>
-  <a href="/setup">Setup</a>"""
+  <a href="/logs">Logs</a>"""
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
