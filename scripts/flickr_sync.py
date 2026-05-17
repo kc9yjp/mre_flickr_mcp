@@ -191,6 +191,7 @@ def init_db(conn):
         "ALTER TABLE sync_log ADD COLUMN type       TEXT DEFAULT 'photos'",
         "ALTER TABLE groups ADD COLUMN description  TEXT",
         "ALTER TABLE groups ADD COLUMN keywords     TEXT",
+        "ALTER TABLE sync_log ADD COLUMN duration_seconds INTEGER",
     ]
     for sql in migrations:
         try:
