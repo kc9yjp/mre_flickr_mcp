@@ -436,7 +436,7 @@ async def route_stats(request: Request):
       <div class="stat"><div class="num">{stats['total_photos'] or 0:,}</div><div class="lbl">Photos</div></div>
       <div class="stat"><div class="num">{stats['public_photos'] or 0:,}</div><div class="lbl">Public</div></div>
       <div class="stat"><div class="num">{stats['private_photos'] or 0:,}</div><div class="lbl">Private</div></div>
-      <div class="stat"><div class="num">{stats['total_views'] or 0:,}</div><div class="lbl">Total Views</div></div>
+      <div class="stat"><div class="num">{f"{(stats['total_views'] or 0) / 1_000_000:.2f}M" if (stats['total_views'] or 0) >= 1_000_000 else f"{stats['total_views'] or 0:,}"}</div><div class="lbl">Total Views</div></div>
       <div class="stat"><div class="num">{album_count:,}</div><div class="lbl">Albums</div></div>
       <div class="stat"><div class="num">{group_count:,}</div><div class="lbl">Groups</div></div>
       <div class="stat"><div class="num">{contact_count:,}</div><div class="lbl">Contacts</div></div>
