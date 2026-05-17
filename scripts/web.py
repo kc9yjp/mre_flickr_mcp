@@ -68,7 +68,29 @@ td { padding: 6px 10px; border-bottom: 1px solid #eee; }
 .alert-info { background: #d1ecf1; color: #0c5460; }
 footer { text-align: center; padding: 24px 16px; color: #888; font-size: .8rem; border-top: 1px solid #e0e0e0; margin-top: 40px; }
 footer a { color: #888; }
+.cmd-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; margin-bottom: 8px; }
+.cmd-card { background: #fff; border-radius: 8px; box-shadow: 0 1px 4px rgba(0,0,0,.1); padding: 14px 16px; }
+.cmd-card.needs-url { border-left: 3px solid #f0ad4e; }
+.cmd-card.autonomous { border-left: 3px solid #5cb85c; }
+.cmd-row { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.cmd-text { font-family: monospace; font-size: .9rem; font-weight: 600; color: #0040a0; flex: 1; }
+.copy-btn { padding: 3px 10px; font-size: .75rem; background: #e8f0ff; color: #0040a0; border: 1px solid #b8cff8;
+            border-radius: 4px; cursor: pointer; white-space: nowrap; }
+.copy-btn:hover { background: #d0e2ff; }
+.copy-btn.copied { background: #d4edda; color: #155724; border-color: #c3e6cb; }
+.cmd-desc { font-size: .83rem; color: #444; margin-bottom: 4px; }
+.cmd-hint { font-size: .75rem; color: #888; margin-top: 4px; }
+.cmd-hint code { font-size: .75rem; background: #f0f0f0; padding: 1px 4px; border-radius: 3px; }
 </style>
+<script>
+function copyCmd(btn, text) {
+  navigator.clipboard.writeText(text).then(() => {
+    btn.textContent = 'Copied!';
+    btn.classList.add('copied');
+    setTimeout(() => { btn.textContent = 'Copy'; btn.classList.remove('copied'); }, 1500);
+  });
+}
+</script>
 """
 
 
@@ -178,7 +200,39 @@ async def route_root(request: Request):
       </a>
     </div>"""
 
-    body = f"<h1>{_SITE_TITLE}</h1>{status_html}{cards}"
+    def _cmd(slug, desc, hint=None, needs_url=False, autonomous=False):
+        cls = "cmd-card needs-url" if needs_url else ("cmd-card autonomous" if autonomous else "cmd-card")
+        hint_html = f'<div class="cmd-hint">{hint}</div>' if hint else ""
+        return f"""<div class="{cls}">
+          <div class="cmd-row">
+            <span class="cmd-text">/{slug}</span>
+            <button class="copy-btn" onclick="copyCmd(this, '/{slug}')">Copy</button>
+          </div>
+          <div class="cmd-desc">{desc}</div>
+          {hint_html}
+        </div>"""
+
+    commands = (
+        _cmd("flickr-photo",    "Suggest title, description, tags &amp; groups for a photo",
+             hint='Reads current Safari tab &mdash; or paste a URL: <code>/flickr-photo &lt;url&gt;</code>', needs_url=True),
+        _cmd("flickr-fave",     "Fave a photo immediately, then suggest a comment to post",
+             hint='Reads current Safari tab &mdash; or paste a URL: <code>/flickr-fave &lt;url&gt;</code>', needs_url=True),
+        _cmd("flickr-boost",    "Add qualifying photos to threshold groups (views &amp; faves)",
+             hint='Works from Safari tab &mdash; or paste a URL: <code>/flickr-boost &lt;url&gt;</code>', needs_url=True),
+        _cmd("flickr-album",    "Add the current photo to an album",
+             hint='Reads current Safari tab &mdash; or paste a URL: <code>/flickr-album &lt;url&gt;</code>', needs_url=True),
+        _cmd("flickr-hide",     "Find weak photos, review visually, make private or update &amp; keep",
+             autonomous=True),
+        _cmd("flickr-contacts", "Review contacts as unfollow candidates one at a time",
+             autonomous=True),
+        _cmd("flickr-sync",     "Run all syncs: photos, contacts, groups, albums",
+             autonomous=True),
+    )
+
+    cmd_legend = '<p style="font-size:.75rem;color:#888;margin-bottom:10px"><span style="display:inline-block;width:10px;height:10px;background:#f0ad4e;border-radius:2px;margin-right:4px"></span>needs a photo &nbsp; <span style="display:inline-block;width:10px;height:10px;background:#5cb85c;border-radius:2px;margin-right:4px"></span>runs on its own</p>'
+    cmd_section = f'<h2>Quick Commands</h2>{cmd_legend}<div class="cmd-grid">{"".join(commands)}</div>'
+
+    body = f"<h1>{_SITE_TITLE}</h1>{status_html}{cards}{cmd_section}"
     return HTMLResponse(_html_page("Home", body, logged_in=True))
 
 
