@@ -420,6 +420,7 @@ async def route_oauth_callback(request: Request):
 async def route_logout(request: Request):
     if os.path.exists(CREDENTIALS_FILE):
         os.remove(CREDENTIALS_FILE)
+    request.session.clear()
     return RedirectResponse("/", status_code=303)
 
 
