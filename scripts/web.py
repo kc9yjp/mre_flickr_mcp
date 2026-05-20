@@ -6,6 +6,7 @@ import html
 import json
 import logging
 import os
+import time
 import urllib.parse
 import requests
 from starlette.applications import Starlette
@@ -26,7 +27,8 @@ MCP_API_KEY = os.environ.get("MCP_API_KEY", "")
 SESSION_SECRET_KEY = os.environ.get("SESSION_SECRET_KEY", secrets.token_hex(32))
 MCP_PORT = int(os.environ.get("MCP_PORT", "8000"))
 
-_pending_oauth: dict = {}
+_pending_oauth: dict[str, tuple[str, float]] = {}  # token -> (secret, created_at)
+_PENDING_OAUTH_TTL = 600  # seconds
 
 _FLICKR_REQUEST_TOKEN_URL = "https://www.flickr.com/services/oauth/request_token"
 _FLICKR_ACCESS_TOKEN_URL  = "https://www.flickr.com/services/oauth/access_token"
@@ -337,7 +339,12 @@ async def route_login_start(request: Request):
         body = f'<h1>Login</h1><div class="alert alert-err">Flickr returned no token: {resp.text[:200]}</div>'
         return HTMLResponse(_html_page("Login", body, request), status_code=500)
 
-    _pending_oauth[oauth_token] = oauth_token_secret
+    cutoff = time.time() - _PENDING_OAUTH_TTL
+    stale = [t for t, (_, ts) in _pending_oauth.items() if ts < cutoff]
+    for t in stale:
+        del _pending_oauth[t]
+
+    _pending_oauth[oauth_token] = (oauth_token_secret, time.time())
     authorize_url = f"{_FLICKR_AUTHORIZE_URL}?oauth_token={oauth_token}&perms=write"
     return RedirectResponse(authorize_url)
 
@@ -349,7 +356,8 @@ async def route_oauth_callback(request: Request):
     if not oauth_token or not oauth_verifier:
         return RedirectResponse("/login?msg=err")
 
-    token_secret = _pending_oauth.pop(oauth_token, None)
+    entry = _pending_oauth.pop(oauth_token, None)
+    token_secret = entry[0] if entry is not None else None
     if token_secret is None:
         return RedirectResponse("/login?msg=err")
 
