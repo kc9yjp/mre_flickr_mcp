@@ -24,8 +24,24 @@ import secrets
 from starlette.middleware.sessions import SessionMiddleware
 
 MCP_API_KEY = os.environ.get("MCP_API_KEY", "")
-SESSION_SECRET_KEY = os.environ.get("SESSION_SECRET_KEY", secrets.token_hex(32))
 MCP_PORT = int(os.environ.get("MCP_PORT", "8000"))
+
+_CREDS_DIR = os.path.dirname(CREDENTIALS_FILE)
+_SESSION_KEY_FILE = os.path.join(_CREDS_DIR, "session_secret.key")
+
+def _load_or_create_session_key() -> str:
+    if key := os.environ.get("SESSION_SECRET_KEY"):
+        return key
+    if os.path.exists(_SESSION_KEY_FILE):
+        with open(_SESSION_KEY_FILE) as f:
+            return f.read().strip()
+    key = secrets.token_hex(32)
+    os.makedirs(_CREDS_DIR, exist_ok=True)
+    with os.fdopen(os.open(_SESSION_KEY_FILE, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w") as f:
+        f.write(key)
+    return key
+
+SESSION_SECRET_KEY = _load_or_create_session_key()
 
 _pending_oauth: dict[str, tuple[str, float]] = {}  # token -> (secret, created_at)
 _PENDING_OAUTH_TTL = 600  # seconds
