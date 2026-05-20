@@ -37,6 +37,7 @@ jobs:
           severity: CRITICAL,HIGH
           exit-code: '1'
           ignore-unfixed: true
+          trivyignores: .trivyignore
 
   secrets:
     name: Secret scanning
