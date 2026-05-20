@@ -4,7 +4,8 @@ WORKDIR /app
 
 ENV PYTHONUNBUFFERED=1
 
-RUN pip install --no-cache-dir requests mcp starlette "uvicorn[standard]"
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
 EXPOSE 8000
 

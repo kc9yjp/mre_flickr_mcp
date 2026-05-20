@@ -35,9 +35,10 @@ def live_server(mem_db, tmp_path):
         patch("flickr_api.CREDENTIALS_FILE", str(creds_file)),
         patch("flickr_api.ENV_FILE", str(env_file)),
         patch("mcp_tools.db", side_effect=_make_conn),
-        patch("mcp_tools._load_credentials", return_value=FAKE_CREDS),
-        patch("mcp_tools._load_env", return_value=FAKE_ENV),
+        patch("flickr_api._load_credentials", return_value=FAKE_CREDS),
+        patch("flickr_api._load_env", return_value=FAKE_ENV),
     ):
+
         import mcp_tools
         yield mcp_tools.server
 

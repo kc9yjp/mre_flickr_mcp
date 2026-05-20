@@ -19,7 +19,11 @@ from db import DB_FILE, db
 from flickr_api import CREDENTIALS_FILE, _load_credentials, _load_env, _oauth_params, _sign
 from mcp_tools import SYNC_SCRIPT, _active_syncs, _background_refresh, _run_sync_script, _sync_lock, server
 
+import secrets
+from starlette.middleware.sessions import SessionMiddleware
+
 MCP_API_KEY = os.environ.get("MCP_API_KEY", "")
+SESSION_SECRET_KEY = os.environ.get("SESSION_SECRET_KEY", secrets.token_hex(32))
 MCP_PORT = int(os.environ.get("MCP_PORT", "8000"))
 
 _pending_oauth: dict = {}
@@ -132,18 +136,22 @@ document.addEventListener('DOMContentLoaded', () => {
 """
 
 
-def _html_page(title: str, body: str, logged_in: bool | None = None) -> str:
+def _html_page(title: str, body: str, request: Request, logged_in: bool | None = None) -> str:
     import datetime as _dt
     year = _dt.date.today().year
     if logged_in is None:
         logged_in = os.path.exists(CREDENTIALS_FILE)
+
+    csrf_token = request.session.get("csrf_token", "")
+    csrf_input = f'<input type="hidden" name="csrf_token" value="{csrf_token}">'
+
     if logged_in:
-        nav_links = """
+        nav_links = f"""
   <a href="/stats">Stats</a>
   <a href="/sync">Sync</a>
   <a href="/logs">Logs</a>
   <a href="/setup">Setup</a>
-  <form method="POST" action="/logout" style="margin:0" onsubmit="return confirm('Log out of Flickr?')"><button type="submit" style="background:none;border:none;color:#fff;font-weight:500;cursor:pointer;padding:0;font-size:1rem">Logout</button></form>"""
+  <form method="POST" action="/logout" style="margin:0" onsubmit="return confirm(\'Log out of Flickr?\')">{csrf_input}<button type="submit" style="background:none;border:none;color:#fff;font-weight:500;cursor:pointer;padding:0;font-size:1rem">Logout</button></form>"""
     else:
         nav_links = """
   <a href="/logs">Logs</a>"""
@@ -165,6 +173,9 @@ def _html_page(title: str, body: str, logged_in: bool | None = None) -> str:
 # --- Route handlers ---
 
 async def route_root(request: Request):
+    if "csrf_token" not in request.session:
+        request.session["csrf_token"] = secrets.token_hex(32)
+
     msg = request.query_params.get("msg", "")
     logged_in = os.path.exists(CREDENTIALS_FILE)
     username = ""
@@ -200,7 +211,7 @@ async def route_root(request: Request):
           <p style="color:#555;margin-bottom:20px">Login with your Flickr account to get started.</p>
           <a href="/login" class="btn">Login with Flickr &rarr;</a>
         </div>"""
-        return HTMLResponse(_html_page("Home", body, logged_in=False))
+        return HTMLResponse(_html_page("Home", body, request, logged_in=False))
 
     syncing = _sync_lock.locked()
     if msg == "ok":
@@ -269,10 +280,13 @@ async def route_root(request: Request):
     cmd_section = f'<h2>Suggested Prompts</h2><div class="prompt-list">{"".join(prompts)}</div>'
 
     body = f"<h1>{_SITE_TITLE}</h1>{status_html}{cards}{cmd_section}"
-    return HTMLResponse(_html_page("Home", body, logged_in=True))
+    return HTMLResponse(_html_page("Home", body, request, logged_in=True))
 
 
 async def route_login(request: Request):
+    if "csrf_token" not in request.session:
+        request.session["csrf_token"] = secrets.token_hex(32)
+
     msg = request.query_params.get("msg", "")
     logged_in = os.path.exists(CREDENTIALS_FILE)
 
@@ -293,7 +307,8 @@ async def route_login(request: Request):
       <p style="color:#555;margin:12px 0 20px">Authorize this app to access your Flickr account.</p>
       <a href="/login/start" class="btn">Login with Flickr &rarr;</a>
     </div>"""
-    return HTMLResponse(_html_page("Login", body, logged_in=False))
+    return HTMLResponse(_html_page("Login", body, request, logged_in=False))
+
 
 
 async def route_login_start(request: Request):
@@ -301,7 +316,7 @@ async def route_login_start(request: Request):
         api_key, api_secret = _load_env()
     except Exception as e:
         body = f'<h1>Login</h1><div class="alert alert-err">Config error: {e}</div>'
-        return HTMLResponse(_html_page("Login", body), status_code=500)
+        return HTMLResponse(_html_page("Login", body, request), status_code=500)
 
     callback_url = str(request.base_url).rstrip("/") + "/oauth/callback"
     params = _oauth_params(api_key, {"oauth_callback": callback_url})
@@ -312,7 +327,7 @@ async def route_login_start(request: Request):
         resp.raise_for_status()
     except Exception as e:
         body = f'<h1>Login</h1><div class="alert alert-err">Failed to get request token: {e}</div>'
-        return HTMLResponse(_html_page("Login", body), status_code=500)
+        return HTMLResponse(_html_page("Login", body, request), status_code=500)
 
     token_data = dict(urllib.parse.parse_qsl(resp.text))
     oauth_token = token_data.get("oauth_token")
@@ -320,7 +335,7 @@ async def route_login_start(request: Request):
 
     if not oauth_token:
         body = f'<h1>Login</h1><div class="alert alert-err">Flickr returned no token: {resp.text[:200]}</div>'
-        return HTMLResponse(_html_page("Login", body), status_code=500)
+        return HTMLResponse(_html_page("Login", body, request), status_code=500)
 
     _pending_oauth[oauth_token] = oauth_token_secret
     authorize_url = f"{_FLICKR_AUTHORIZE_URL}?oauth_token={oauth_token}&perms=write"
@@ -376,7 +391,7 @@ async def route_oauth_callback(request: Request):
     }
 
     os.makedirs(os.path.dirname(CREDENTIALS_FILE), exist_ok=True)
-    with open(CREDENTIALS_FILE, "w") as f:
+    with os.fdopen(os.open(CREDENTIALS_FILE, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w") as f:
         json.dump(creds, f, indent=2)
 
     logging.info("OAuth login complete for user %s (%s)", username, user_nsid)
@@ -407,7 +422,7 @@ async def route_stats(request: Request):
         body = """<h1>Stats</h1>
         <div class="alert alert-info">No database yet. Run a sync first.</div>
         <p><a href="/sync" class="btn">Go to Sync</a></p>"""
-        return HTMLResponse(_html_page("Stats", body))
+        return HTMLResponse(_html_page("Stats", body, request))
 
     try:
         stats = conn.execute("""
@@ -457,12 +472,13 @@ async def route_stats(request: Request):
     </div>
     <h2>Top Tags</h2>
     <div class="card">{tag_html or '<em>No tags</em>'}</div>"""
-    return HTMLResponse(_html_page("Stats", body))
+    return HTMLResponse(_html_page("Stats", body, request))
 
 
 async def route_sync_page(request: Request):
     import time as _time
     running = _sync_lock.locked()
+    csrf_token = request.session.get("csrf_token", "")
 
     sync_rows = []
     try:
@@ -508,6 +524,7 @@ async def route_sync_page(request: Request):
     buttons = ""
     for stype in ("photos", "contacts", "groups", "albums", "all"):
         buttons += f"""<form method="POST" action="/sync/{stype}" style="display:inline">
+          <input type="hidden" name="csrf_token" value="{csrf_token}">
           <button class="btn" style="margin:4px" {"disabled" if running else ""} type="submit">{stype.title()}</button>
         </form>"""
 
@@ -524,7 +541,7 @@ async def route_sync_page(request: Request):
       <p style="margin-bottom:12px;color:#555;font-size:.9rem">Syncs run in the background. Refresh this page to see updated times.</p>
       {buttons}
     </div>"""
-    return HTMLResponse(_html_page("Sync", body))
+    return HTMLResponse(_html_page("Sync", body, request))
 
 
 async def route_sync_trigger(request: Request):
@@ -663,7 +680,7 @@ async def route_setup(request: Request):
         <p class="file-hint">Ollama does not support MCP natively &mdash; use Open WebUI as the agent layer on top of Ollama.</p>
       </div>
     </div>"""
-    return HTMLResponse(_html_page("Setup", body))
+    return HTMLResponse(_html_page("Setup", body, request))
 
 
 async def route_logs(request: Request):
@@ -679,7 +696,7 @@ async def route_logs(request: Request):
           <p>No log file found yet.</p>
           <p>Run the server and reload this page to view logs.</p>
         </div>"""
-        return HTMLResponse(_html_page("Logs", body))
+        return HTMLResponse(_html_page("Logs", body, request))
 
     log_content = html.escape("".join(tail_lines))
     body = f"""
@@ -688,7 +705,8 @@ async def route_logs(request: Request):
       <p style=\"margin-bottom:14px;color:#555;font-size:.9rem\">Showing the last {len(tail_lines)} log lines from <code>{_LOG_FILE}</code>.</p>
       <pre style=\"background:#f0f0f0;padding:14px;border-radius:6px;font-size:.8rem;overflow-x:auto;white-space:pre-wrap;word-break:break-word;\">{log_content}</pre>
     </div>"""
-    return HTMLResponse(_html_page("Logs", body))
+    return HTMLResponse(_html_page("Logs", body, request))
+
 
 
 # --- SSE handler and API key middleware ---
@@ -717,12 +735,35 @@ class ApiKeyMiddleware(BaseHTTPMiddleware):
         return await call_next(request)
 
 
+class CSRFMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        if request.method == "POST":
+            path = request.url.path
+            if path.startswith("/sse") or path.startswith("/messages"):
+                return await call_next(request)
+
+            form_data = await request.form()
+            token_in_form = form_data.get("csrf_token")
+            token_in_session = request.session.get("csrf_token")
+
+            if not token_in_session or token_in_form != token_in_session:
+                logging.warning("CSRF validation failed for path %s", path)
+                return Response("CSRF validation failed", status_code=403)
+
+        return await call_next(request)
+
+
 async def main_sse():
     from mcp.server.sse import SseServerTransport
     import uvicorn
 
     sse = SseServerTransport("/messages/")
-    middleware = [Middleware(ApiKeyMiddleware)] if MCP_API_KEY else []
+    middleware = [
+        Middleware(SessionMiddleware, secret_key=SESSION_SECRET_KEY),
+        Middleware(CSRFMiddleware),
+    ]
+    if MCP_API_KEY:
+        middleware.append(Middleware(ApiKeyMiddleware))
 
     app = Starlette(
         middleware=middleware,
@@ -741,6 +782,7 @@ async def main_sse():
             Mount("/messages/",      app=sse.handle_post_message),
         ],
     )
+
 
     config = uvicorn.Config(app, host="0.0.0.0", port=MCP_PORT, log_level="info")
     uv_server = uvicorn.Server(config)
