@@ -4,6 +4,7 @@ nav { background: #0063dc; color: #fff; padding: 12px 24px; display: flex; gap: 
 nav a { color: #fff; text-decoration: none; font-weight: 500; }
 nav a:hover { text-decoration: underline; }
 nav .title { font-weight: 700; margin-right: auto; }
+.nav-logo { vertical-align: middle; margin-right: 6px; }
 .nav-logout { margin: 0; }
 .nav-logout-btn { background: none; border: none; color: #fff; font-weight: 500; cursor: pointer; padding: 0; font-size: 1rem; }
 main { max-width: 860px; margin: 32px auto; padding: 0 16px; }
