@@ -5,7 +5,7 @@ import json
 from mcp.types import TextContent, Tool
 
 import flickr_api
-from db import db
+from db import get_db
 
 TOOLS = [
     Tool(
@@ -108,15 +108,14 @@ TOOLS = [
 async def _find_groups(args):
     query = args.get("query", "")
     limit = int(args.get("limit", 10))
-    conn = db()
     pat = f"%{query}%"
-    rows = conn.execute(
-        "SELECT id, name, members, pool_count FROM groups "
-        "WHERE name LIKE ? OR description LIKE ? OR keywords LIKE ? "
-        "ORDER BY members DESC LIMIT ?",
-        (pat, pat, pat, limit),
-    ).fetchall()
-    conn.close()
+    with get_db() as conn:
+        rows = conn.execute(
+            "SELECT id, name, members, pool_count FROM groups "
+            "WHERE name LIKE ? OR description LIKE ? OR keywords LIKE ? "
+            "ORDER BY members DESC LIMIT ?",
+            (pat, pat, pat, limit),
+        ).fetchall()
     if not rows:
         return [TextContent(type="text", text=f"No groups found matching '{query}'. Run sync to populate groups.")]
     return [TextContent(type="text", text=json.dumps([dict(r) for r in rows], indent=2))]
@@ -125,10 +124,8 @@ async def _find_groups(args):
 async def _set_group_keywords(args):
     group_id = args["group_id"]
     keywords = args["keywords"]
-    conn = db()
-    updated = conn.execute("UPDATE groups SET keywords=? WHERE id=?", (keywords, group_id)).rowcount
-    conn.commit()
-    conn.close()
+    with get_db() as conn:
+        updated = conn.execute("UPDATE groups SET keywords=? WHERE id=?", (keywords, group_id)).rowcount
     if not updated:
         return [TextContent(type="text", text=f"Group {group_id} not found in local database.")]
     return [TextContent(type="text", text=f"Keywords updated for group {group_id}.")]

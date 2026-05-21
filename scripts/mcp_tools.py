@@ -6,7 +6,7 @@ from mcp.server import Server
 from mcp.types import TextContent
 
 import flickr_api
-from db import db  # noqa: F401 — imported so tests can patch mcp_tools.db
+from db import get_db  # noqa: F401 — imported so tests can patch db.get_db
 from flickr_api import _api_get, _api_post, _load_credentials, _load_env  # noqa: F401
 from tools import albums, contacts, galleries, groups, photos
 from tools import sync as sync_tools

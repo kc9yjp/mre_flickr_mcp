@@ -6,7 +6,7 @@ import time
 from mcp.types import TextContent, Tool
 
 import flickr_api
-from db import db
+from db import get_db
 
 TOOLS = [
     Tool(
@@ -100,13 +100,12 @@ TOOLS = [
 async def _find_albums(args):
     query = args.get("query", "")
     limit = int(args.get("limit", 10))
-    conn = db()
-    rows = conn.execute(
-        "SELECT id, title, description, count_photos, count_views FROM albums "
-        "WHERE title LIKE ? ORDER BY title LIMIT ?",
-        (f"%{query}%", limit),
-    ).fetchall()
-    conn.close()
+    with get_db() as conn:
+        rows = conn.execute(
+            "SELECT id, title, description, count_photos, count_views FROM albums "
+            "WHERE title LIKE ? ORDER BY title LIMIT ?",
+            (f"%{query}%", limit),
+        ).fetchall()
     if not rows:
         return [TextContent(type="text", text=f"No albums found matching '{query}'. Visit /sync to run an albums sync first.")]
     return [TextContent(type="text", text=json.dumps([dict(r) for r in rows], indent=2))]
@@ -147,38 +146,32 @@ async def _create_album(args):
         "description": args.get("description", ""),
     })
     album = data["photoset"]
-    conn = db()
-    conn.execute("""
-        INSERT INTO albums (id, title, description, primary_photo_id, count_photos, count_views, synced_at)
-        VALUES (?, ?, ?, ?, 1, 0, ?)
-        ON CONFLICT(id) DO UPDATE SET title=excluded.title, description=excluded.description,
-            primary_photo_id=excluded.primary_photo_id, synced_at=excluded.synced_at
-    """, (album["id"], args["title"], args.get("description", ""), args["primary_photo_id"], int(time.time())))
-    conn.commit()
-    conn.close()
+    with get_db() as conn:
+        conn.execute("""
+            INSERT INTO albums (id, title, description, primary_photo_id, count_photos, count_views, synced_at)
+            VALUES (?, ?, ?, ?, 1, 0, ?)
+            ON CONFLICT(id) DO UPDATE SET title=excluded.title, description=excluded.description,
+                primary_photo_id=excluded.primary_photo_id, synced_at=excluded.synced_at
+        """, (album["id"], args["title"], args.get("description", ""), args["primary_photo_id"], int(time.time())))
     return [TextContent(type="text", text=f"Album created: {args['title']} (ID: {album['id']})\n{album.get('url', '')}")]
 
 
 async def _edit_album(args):
     album_id = args["album_id"]
-    conn = db()
-    row = conn.execute("SELECT title, description FROM albums WHERE id = ?", (album_id,)).fetchone()
-    title = args.get("title", row["title"] if row else "")
-    description = args.get("description", row["description"] if row else "")
-    flickr_api._api_post("flickr.photosets.editMeta", {"photoset_id": album_id, "title": title, "description": description})
-    conn.execute("UPDATE albums SET title=?, description=? WHERE id=?", (title, description, album_id))
-    conn.commit()
-    conn.close()
+    with get_db() as conn:
+        row = conn.execute("SELECT title, description FROM albums WHERE id = ?", (album_id,)).fetchone()
+        title = args.get("title", row["title"] if row else "")
+        description = args.get("description", row["description"] if row else "")
+        flickr_api._api_post("flickr.photosets.editMeta", {"photoset_id": album_id, "title": title, "description": description})
+        conn.execute("UPDATE albums SET title=?, description=? WHERE id=?", (title, description, album_id))
     return [TextContent(type="text", text=f"Album {album_id} updated.")]
 
 
 async def _delete_album(args):
     album_id = args["album_id"]
     flickr_api._api_post("flickr.photosets.delete", {"photoset_id": album_id})
-    conn = db()
-    conn.execute("DELETE FROM albums WHERE id = ?", (album_id,))
-    conn.commit()
-    conn.close()
+    with get_db() as conn:
+        conn.execute("DELETE FROM albums WHERE id = ?", (album_id,))
     return [TextContent(type="text", text=f"Album {album_id} deleted.")]
 
 

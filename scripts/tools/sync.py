@@ -3,13 +3,12 @@
 import asyncio
 import logging
 import os
-import sqlite3
 import sys
 import time
 
 from mcp.types import TextContent, Tool
 
-from db import DB_FILE
+from db import DB_FILE, get_db
 
 SYNC_SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "flickr_sync.py")
 REFRESH_INTERVAL = 43200  # 12 hours
@@ -90,14 +89,12 @@ async def _run_sync_script(path: str, label: str, extra_args: list[str] | None =
         else:
             logging.info("Sync completed: %s (%ds)", label, duration)
         try:
-            conn = sqlite3.connect(DB_FILE)
-            conn.execute(
-                "UPDATE sync_log SET duration_seconds=? WHERE id=("
-                "SELECT id FROM sync_log WHERE type=? ORDER BY synced_at DESC LIMIT 1)",
-                (duration, label),
-            )
-            conn.commit()
-            conn.close()
+            with get_db() as conn:
+                conn.execute(
+                    "UPDATE sync_log SET duration_seconds=? WHERE id=("
+                    "SELECT id FROM sync_log WHERE type=? ORDER BY synced_at DESC LIMIT 1)",
+                    (duration, label),
+                )
         except Exception:
             pass
         return p.returncode
@@ -110,9 +107,8 @@ async def _background_refresh():
     while True:
         try:
             if os.path.exists(DB_FILE):
-                conn = sqlite3.connect(DB_FILE)
-                row = conn.execute("SELECT MAX(synced_at) FROM sync_log WHERE type = 'photos'").fetchone()
-                conn.close()
+                with get_db() as conn:
+                    row = conn.execute("SELECT MAX(synced_at) FROM sync_log WHERE type = 'photos'").fetchone()
                 last_sync = row[0] if row and row[0] else 0
                 age = time.time() - last_sync
                 if age >= REFRESH_INTERVAL:

@@ -6,7 +6,7 @@ import time
 from mcp.types import TextContent, Tool
 
 import flickr_api
-from db import db
+from db import get_db
 
 TOOLS = [
     Tool(
@@ -69,21 +69,20 @@ TOOLS = [
 
 
 async def _get_contacts_summary():
-    conn = db()
-    total       = conn.execute("SELECT COUNT(*) FROM contacts").fetchone()[0]
-    friends     = conn.execute("SELECT COUNT(*) FROM contacts WHERE is_friend = 1").fetchone()[0]
-    family      = conn.execute("SELECT COUNT(*) FROM contacts WHERE is_family = 1").fetchone()[0]
-    protected   = conn.execute("SELECT COUNT(*) FROM do_not_unfollow").fetchone()[0]
-    eng_total   = conn.execute("SELECT COUNT(*) FROM contact_engagement").fetchone()[0]
-    eng_nonzero = conn.execute("SELECT COUNT(*) FROM contact_engagement WHERE faves > 0 OR comments > 0").fetchone()[0]
-    top_rows    = conn.execute("""
-        SELECT c.username, c.realname, e.faves, e.comments, e.faves + e.comments AS total
-        FROM contact_engagement e
-        JOIN contacts c ON c.id = e.contact_id
-        WHERE e.faves > 0 OR e.comments > 0
-        ORDER BY total DESC LIMIT 10
-    """).fetchall()
-    conn.close()
+    with get_db() as conn:
+        total       = conn.execute("SELECT COUNT(*) FROM contacts").fetchone()[0]
+        friends     = conn.execute("SELECT COUNT(*) FROM contacts WHERE is_friend = 1").fetchone()[0]
+        family      = conn.execute("SELECT COUNT(*) FROM contacts WHERE is_family = 1").fetchone()[0]
+        protected   = conn.execute("SELECT COUNT(*) FROM do_not_unfollow").fetchone()[0]
+        eng_total   = conn.execute("SELECT COUNT(*) FROM contact_engagement").fetchone()[0]
+        eng_nonzero = conn.execute("SELECT COUNT(*) FROM contact_engagement WHERE faves > 0 OR comments > 0").fetchone()[0]
+        top_rows    = conn.execute("""
+            SELECT c.username, c.realname, e.faves, e.comments, e.faves + e.comments AS total
+            FROM contact_engagement e
+            JOIN contacts c ON c.id = e.contact_id
+            WHERE e.faves > 0 OR e.comments > 0
+            ORDER BY total DESC LIMIT 10
+        """).fetchall()
     summary = {
         "total_following": total,
         "friends": friends,
@@ -117,9 +116,8 @@ async def _find_unfollow_candidates(args):
           AND (? = 0 OR COALESCE(e.faves, 0) + COALESCE(e.comments, 0) = 0)
         ORDER BY total_engagement ASC, c.username ASC LIMIT ?
     """
-    conn = db()
-    rows = conn.execute(sql, (require_zero, limit)).fetchall()
-    conn.close()
+    with get_db() as conn:
+        rows = conn.execute(sql, (require_zero, limit)).fetchall()
     if not rows:
         return [TextContent(type="text", text="No contacts found. Visit /sync to run a contacts sync first.")]
     results = [{
@@ -137,14 +135,12 @@ async def _find_unfollow_candidates(args):
 async def _protect_contact(args):
     contact_id = args["contact_id"]
     reason = args.get("reason", "")
-    conn = db()
-    conn.execute(
-        "INSERT INTO do_not_unfollow (contact_id, reason, added_at) VALUES (?, ?, ?) "
-        "ON CONFLICT(contact_id) DO UPDATE SET reason=excluded.reason",
-        (contact_id, reason, int(time.time())),
-    )
-    conn.commit()
-    conn.close()
+    with get_db() as conn:
+        conn.execute(
+            "INSERT INTO do_not_unfollow (contact_id, reason, added_at) VALUES (?, ?, ?) "
+            "ON CONFLICT(contact_id) DO UPDATE SET reason=excluded.reason",
+            (contact_id, reason, int(time.time())),
+        )
     return [TextContent(type="text", text=f"Contact {contact_id} added to do-not-unfollow list.")]
 
 
@@ -153,10 +149,8 @@ async def _unfollow_contact(args):
     profile_url = f"https://www.flickr.com/people/{contact_id}/"
     try:
         flickr_api._api_post("flickr.contacts.remove", {"user_nsid": contact_id})
-        conn = db()
-        conn.execute("DELETE FROM contacts WHERE id = ?", (contact_id,))
-        conn.commit()
-        conn.close()
+        with get_db() as conn:
+            conn.execute("DELETE FROM contacts WHERE id = ?", (contact_id,))
         api_result = "Unfollowed via API. "
     except RuntimeError as e:
         api_result = f"API unfollow failed ({e}) — use profile URL to unfollow manually. "

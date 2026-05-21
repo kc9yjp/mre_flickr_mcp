@@ -16,7 +16,7 @@ from starlette.requests import Request
 from starlette.responses import HTMLResponse, RedirectResponse, Response
 from starlette.routing import Mount, Route
 
-from db import DB_FILE, db
+from db import DB_FILE, get_db
 from flickr_api import CREDENTIALS_FILE, _load_credentials, _load_env, _oauth_params, _sign
 from mcp_tools import SYNC_SCRIPT, _active_syncs, _background_refresh, _run_sync_script, _sync_lock, server
 
@@ -208,15 +208,14 @@ async def route_root(request: Request):
     last_sync = None
     db_ok = False
     try:
-        conn = db()
-        row = conn.execute("SELECT COUNT(*) FROM photos").fetchone()
-        total_photos = row[0] if row else 0
-        sync_row = conn.execute(
-            "SELECT MAX(synced_at) FROM sync_log WHERE type = 'photos'"
-        ).fetchone()
-        if sync_row and sync_row[0]:
-            last_sync = f'<time data-ts="{sync_row[0]}">—</time>'
-        conn.close()
+        with get_db() as conn:
+            row = conn.execute("SELECT COUNT(*) FROM photos").fetchone()
+            total_photos = row[0] if row else 0
+            sync_row = conn.execute(
+                "SELECT MAX(synced_at) FROM sync_log WHERE type = 'photos'"
+            ).fetchone()
+            if sync_row and sync_row[0]:
+                last_sync = f'<time data-ts="{sync_row[0]}">—</time>'
         db_ok = True
     except Exception:
         pass
@@ -442,33 +441,27 @@ async def route_logout(request: Request):
 
 async def route_stats(request: Request):
     try:
-        conn = db()
+        with get_db() as conn:
+            stats = conn.execute("""
+                SELECT COUNT(*) AS total_photos,
+                       SUM(CASE WHEN is_public = 1 THEN 1 ELSE 0 END) AS public_photos,
+                       SUM(CASE WHEN is_public = 0 THEN 1 ELSE 0 END) AS private_photos,
+                       SUM(views) AS total_views,
+                       MIN(date_taken) AS earliest,
+                       MAX(date_taken) AS latest
+                FROM photos
+            """).fetchone()
+            tag_rows = conn.execute(
+                "SELECT tags FROM photos WHERE tags != '' AND tags IS NOT NULL"
+            ).fetchall()
+            group_count   = conn.execute("SELECT COUNT(*) FROM groups").fetchone()[0]
+            album_count   = conn.execute("SELECT COUNT(*) FROM albums").fetchone()[0]
+            contact_count = conn.execute("SELECT COUNT(*) FROM contacts").fetchone()[0]
     except FileNotFoundError:
         body = """<h1>Stats</h1>
         <div class="alert alert-info">No database yet. Run a sync first.</div>
         <p><a href="/sync" class="btn">Go to Sync</a></p>"""
         return HTMLResponse(_html_page("Stats", body, request))
-
-    try:
-        stats = conn.execute("""
-            SELECT COUNT(*) AS total_photos,
-                   SUM(CASE WHEN is_public = 1 THEN 1 ELSE 0 END) AS public_photos,
-                   SUM(CASE WHEN is_public = 0 THEN 1 ELSE 0 END) AS private_photos,
-                   SUM(views) AS total_views,
-                   MIN(date_taken) AS earliest,
-                   MAX(date_taken) AS latest
-            FROM photos
-        """).fetchone()
-
-        tag_rows = conn.execute(
-            "SELECT tags FROM photos WHERE tags != '' AND tags IS NOT NULL"
-        ).fetchall()
-        group_count   = conn.execute("SELECT COUNT(*) FROM groups").fetchone()[0]
-        album_count   = conn.execute("SELECT COUNT(*) FROM albums").fetchone()[0]
-        contact_count = conn.execute("SELECT COUNT(*) FROM contacts").fetchone()[0]
-
-    finally:
-        conn.close()
 
     counts = {}
     for row in tag_rows:
@@ -507,14 +500,13 @@ async def route_sync_page(request: Request):
 
     sync_rows = []
     try:
-        conn = db()
-        sync_rows = conn.execute(
-            "SELECT s.type, s.synced_at AS last, s.duration_seconds"
-            " FROM sync_log s"
-            " JOIN (SELECT type, MAX(synced_at) AS ts FROM sync_log GROUP BY type) m"
-            " ON s.type = m.type AND s.synced_at = m.ts"
-        ).fetchall()
-        conn.close()
+        with get_db() as conn:
+            sync_rows = conn.execute(
+                "SELECT s.type, s.synced_at AS last, s.duration_seconds"
+                " FROM sync_log s"
+                " JOIN (SELECT type, MAX(synced_at) AS ts FROM sync_log GROUP BY type) m"
+                " ON s.type = m.type AND s.synced_at = m.ts"
+            ).fetchall()
     except Exception:
         pass
 

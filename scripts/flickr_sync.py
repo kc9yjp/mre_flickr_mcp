@@ -14,8 +14,7 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import flickr_api
-
-DB_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "flickr.db")
+from db import DB_FILE
 API_URL = flickr_api.API_URL
 HTTP_TIMEOUT = flickr_api.HTTP_TIMEOUT
 PER_PAGE = 500

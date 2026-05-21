@@ -10,7 +10,7 @@ import requests
 from mcp.types import ImageContent, TextContent, Tool
 
 import flickr_api
-from db import db
+from db import get_db
 
 TOOLS = [
     Tool(
@@ -325,7 +325,6 @@ TOOLS = [
 
 
 async def _search_photos(args):
-    conn = db()
     conditions, params = [], []
     if args.get("query"):
         conditions.append("title LIKE ?")
@@ -351,40 +350,38 @@ async def _search_photos(args):
         sort_by = "date_taken"
     order = "ASC" if args.get("order", "desc") == "asc" else "DESC"
     limit = min(int(args.get("limit", 50)), 200)
-    rows = conn.execute(
-        f"SELECT * FROM photos {where} ORDER BY {sort_by} {order} LIMIT ?",
-        params + [limit],
-    ).fetchall()
-    conn.close()
+    with get_db() as conn:
+        rows = conn.execute(
+            f"SELECT * FROM photos {where} ORDER BY {sort_by} {order} LIMIT ?",
+            params + [limit],
+        ).fetchall()
     return [TextContent(type="text", text=json.dumps([dict(r) for r in rows], indent=2))]
 
 
 async def _get_photo(args):
-    conn = db()
-    row = conn.execute("SELECT * FROM photos WHERE id = ?", (args["id"],)).fetchone()
-    conn.close()
+    with get_db() as conn:
+        row = conn.execute("SELECT * FROM photos WHERE id = ?", (args["id"],)).fetchone()
     if not row:
         return [TextContent(type="text", text=f"Photo {args['id']} not found.")]
     return [TextContent(type="text", text=json.dumps(dict(row), indent=2))]
 
 
 async def _get_summary():
-    conn = db()
-    stats = conn.execute("""
-        SELECT COUNT(*) AS total_photos,
-               SUM(CASE WHEN is_public = 1 THEN 1 ELSE 0 END) AS public_photos,
-               SUM(CASE WHEN is_public = 0 THEN 1 ELSE 0 END) AS private_photos,
-               SUM(views) AS total_views,
-               MIN(date_taken) AS earliest,
-               MAX(date_taken) AS latest,
-               MAX(synced_at) AS last_synced
-        FROM photos
-    """).fetchone()
-    tag_rows = conn.execute("SELECT tags FROM photos WHERE tags != '' AND tags IS NOT NULL").fetchall()
-    group_count   = conn.execute("SELECT COUNT(*) FROM groups").fetchone()[0]
-    album_count   = conn.execute("SELECT COUNT(*) FROM albums").fetchone()[0]
-    contact_count = conn.execute("SELECT COUNT(*) FROM contacts").fetchone()[0]
-    conn.close()
+    with get_db() as conn:
+        stats = conn.execute("""
+            SELECT COUNT(*) AS total_photos,
+                   SUM(CASE WHEN is_public = 1 THEN 1 ELSE 0 END) AS public_photos,
+                   SUM(CASE WHEN is_public = 0 THEN 1 ELSE 0 END) AS private_photos,
+                   SUM(views) AS total_views,
+                   MIN(date_taken) AS earliest,
+                   MAX(date_taken) AS latest,
+                   MAX(synced_at) AS last_synced
+            FROM photos
+        """).fetchone()
+        tag_rows = conn.execute("SELECT tags FROM photos WHERE tags != '' AND tags IS NOT NULL").fetchall()
+        group_count   = conn.execute("SELECT COUNT(*) FROM groups").fetchone()[0]
+        album_count   = conn.execute("SELECT COUNT(*) FROM albums").fetchone()[0]
+        contact_count = conn.execute("SELECT COUNT(*) FROM contacts").fetchone()[0]
     counts = {}
     for row in tag_rows:
         for tag in row[0].split():
@@ -406,12 +403,11 @@ async def _get_summary():
 
 
 async def _list_recent_syncs(args):
-    conn = db()
-    rows = conn.execute(
-        "SELECT * FROM sync_log ORDER BY synced_at DESC LIMIT ?",
-        (int(args.get("limit", 5)),),
-    ).fetchall()
-    conn.close()
+    with get_db() as conn:
+        rows = conn.execute(
+            "SELECT * FROM sync_log ORDER BY synced_at DESC LIMIT ?",
+            (int(args.get("limit", 5)),),
+        ).fetchall()
     syncs = [{
         "id": r["id"],
         "synced_at": datetime.fromtimestamp(r["synced_at"]).isoformat() if r["synced_at"] else None,
@@ -424,34 +420,29 @@ async def _list_recent_syncs(args):
 async def _update_photo(args):
     photo_id = args["id"]
     updated = []
-    if "title" in args or "description" in args:
-        conn = db()
-        row = conn.execute("SELECT title, description FROM photos WHERE id = ?", (photo_id,)).fetchone()
-        conn.close()
-        title = args.get("title", row["title"] if row else "")
-        description = args.get("description", row["description"] if row else "")
-        flickr_api._api_post("flickr.photos.setMeta", {"photo_id": photo_id, "title": title, "description": description})
-        updated.append("title/description")
-    if "tags" in args:
-        flickr_api._api_post("flickr.photos.setTags", {"photo_id": photo_id, "tags": args["tags"]})
-        updated.append("tags")
-    conn = db()
-    if "title" in args:
-        conn.execute("UPDATE photos SET title=? WHERE id=?", (args["title"], photo_id))
-    if "description" in args:
-        conn.execute("UPDATE photos SET description=? WHERE id=?", (args["description"], photo_id))
-    if "tags" in args:
-        conn.execute("UPDATE photos SET tags=? WHERE id=?", (args["tags"], photo_id))
-    conn.commit()
-    conn.close()
+    with get_db() as conn:
+        if "title" in args or "description" in args:
+            row = conn.execute("SELECT title, description FROM photos WHERE id = ?", (photo_id,)).fetchone()
+            title = args.get("title", row["title"] if row else "")
+            description = args.get("description", row["description"] if row else "")
+            flickr_api._api_post("flickr.photos.setMeta", {"photo_id": photo_id, "title": title, "description": description})
+            updated.append("title/description")
+        if "tags" in args:
+            flickr_api._api_post("flickr.photos.setTags", {"photo_id": photo_id, "tags": args["tags"]})
+            updated.append("tags")
+        if "title" in args:
+            conn.execute("UPDATE photos SET title=? WHERE id=?", (args["title"], photo_id))
+        if "description" in args:
+            conn.execute("UPDATE photos SET description=? WHERE id=?", (args["description"], photo_id))
+        if "tags" in args:
+            conn.execute("UPDATE photos SET tags=? WHERE id=?", (args["tags"], photo_id))
     return [TextContent(type="text", text=f"Updated {', '.join(updated)} for photo {photo_id}.")]
 
 
 async def _fetch_photo_image(args):
     photo_id = args["id"]
-    conn = db()
-    row = conn.execute("SELECT url_original, url_photopage FROM photos WHERE id = ?", (photo_id,)).fetchone()
-    conn.close()
+    with get_db() as conn:
+        row = conn.execute("SELECT url_original, url_photopage FROM photos WHERE id = ?", (photo_id,)).fetchone()
     if row:
         photopage = row["url_photopage"]
     else:
@@ -559,16 +550,14 @@ async def _find_weak_photos(args):
         )
         SELECT * FROM scored ORDER BY weakness_score DESC LIMIT ?
     """
-    conn = db()
-    rows = conn.execute(sql, (min_age_days, review_cooldown_days, require_zero_faves, limit)).fetchall()
-    ids = [r["id"] for r in rows]
-    if ids:
-        conn.execute(
-            f"UPDATE photos SET reviewed_at = strftime('%s','now') WHERE id IN ({','.join('?'*len(ids))})",
-            ids,
-        )
-        conn.commit()
-    conn.close()
+    with get_db() as conn:
+        rows = conn.execute(sql, (min_age_days, review_cooldown_days, require_zero_faves, limit)).fetchall()
+        ids = [r["id"] for r in rows]
+        if ids:
+            conn.execute(
+                f"UPDATE photos SET reviewed_at = strftime('%s','now') WHERE id IN ({','.join('?'*len(ids))})",
+                ids,
+            )
     results = [{
         "id":               r["id"],
         "title":            r["title"],
@@ -598,10 +587,8 @@ async def _set_visibility(args):
         "perm_comment": "3" if is_public else "0",
         "perm_addmeta": "2" if is_public else "0",
     })
-    conn = db()
-    conn.execute("UPDATE photos SET is_public = ? WHERE id = ?", (is_public, photo_id))
-    conn.commit()
-    conn.close()
+    with get_db() as conn:
+        conn.execute("UPDATE photos SET is_public = ? WHERE id = ?", (is_public, photo_id))
     visibility = "public" if is_public else "private"
     return [TextContent(type="text", text=f"Photo {photo_id} is now {visibility} on Flickr.")]
 
@@ -644,10 +631,8 @@ async def _set_dates(args):
         "date_taken":             args["date_taken"],
         "date_taken_granularity": granularity,
     })
-    conn = db()
-    conn.execute("UPDATE photos SET date_taken=? WHERE id=?", (args["date_taken"], args["id"]))
-    conn.commit()
-    conn.close()
+    with get_db() as conn:
+        conn.execute("UPDATE photos SET date_taken=? WHERE id=?", (args["date_taken"], args["id"]))
     return [TextContent(type="text", text=f"Date taken for photo {args['id']} set to {args['date_taken']}.")]
 
 
