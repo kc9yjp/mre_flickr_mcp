@@ -76,9 +76,12 @@ def _load_api_key_registry() -> None:
 
     Called once at startup and again after each successful OAuth login so that
     newly-registered users are immediately usable without a restart.
+    Builds into a temporary dict and swaps atomically to avoid a window where
+    concurrent SSE connections see an empty registry.
     """
-    _api_key_registry.clear()
+    new_registry: dict[str, str] = {}
     if not os.path.isdir(_CREDS_BASE):
+        _api_key_registry.clear()
         return
     for entry in os.scandir(_CREDS_BASE):
         if not entry.is_dir():
@@ -92,9 +95,11 @@ def _load_api_key_registry() -> None:
             key = creds.get("mcp_api_key")
             nsid = creds.get("user_nsid")
             if key and nsid:
-                _api_key_registry[key] = nsid
+                new_registry[key] = nsid
         except Exception as e:
             logging.warning("Failed to load API key from %s: %s", cpath, e)
+    _api_key_registry.clear()
+    _api_key_registry.update(new_registry)
     logging.debug("API key registry: %d user(s) loaded", len(_api_key_registry))
 
 

@@ -221,8 +221,6 @@ def _api_call(verb: str, method: str, params_factory) -> dict:
             raise RuntimeError(f"Flickr API error: {data.get('message', 'unknown')}")
         return data
 
-    raise RuntimeError(f"Flickr API failed after {_API_MAX_RETRIES} attempts ({method})")  # unreachable
-
 
 def _api_get(method, extra=None):
     """Perform a signed OAuth GET against the Flickr REST API.

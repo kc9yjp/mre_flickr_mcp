@@ -60,8 +60,10 @@ async def _sync(args):
     """MCP tool handler: trigger a sync for the current user."""
     from db import _current_user
     user = _current_user.get()
-    user_args = ["--nsid", user["nsid"], "--username", user["username"]] if user else []
-    username = user["username"] if user else "_single_user"
+    if not user:
+        return [TextContent(type="text", text="Not authenticated. Connect via MCP with a valid API key.")]
+    user_args = ["--nsid", user["nsid"], "--username", user["username"]]
+    username = user["username"]
 
     lock = _get_user_lock(username)
     if lock.locked():
