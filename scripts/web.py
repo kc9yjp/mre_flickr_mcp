@@ -32,7 +32,7 @@ from starlette.applications import Starlette
 from starlette.middleware import Middleware
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
-from starlette.responses import RedirectResponse, Response
+from starlette.responses import JSONResponse, RedirectResponse, Response
 from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 from starlette.templating import Jinja2Templates
@@ -517,9 +517,7 @@ async def route_sync_status(request: Request):
     """JSON endpoint polled by the sync page every 30 s."""
     redir = _require_login(request)
     if redir:
-        from starlette.responses import JSONResponse
         return JSONResponse({"error": "unauthenticated"}, status_code=401)
-    from starlette.responses import JSONResponse
     db_username = request.session.get("username", "")
     running = _get_user_lock(db_username).locked()
     rows = _build_sync_rows(db_username)
@@ -778,6 +776,7 @@ async def main_sse():
             Route("/logout",         endpoint=route_logout, methods=["POST"]),
             Route("/stats",          endpoint=route_stats),
             Route("/sync",           endpoint=route_sync_page),
+            # status.json MUST precede the {type} catch-all — Starlette matches top-to-bottom
             Route("/sync/status.json", endpoint=route_sync_status),
             Route("/sync/{type}",    endpoint=route_sync_trigger, methods=["POST"]),
             Route("/reset",          endpoint=route_reset_db, methods=["POST"]),
