@@ -647,19 +647,41 @@ async def route_setup(request: Request):
     if headers:
         opencode_cfg["mcp"]["flickr"]["headers"] = headers
 
+    try:
+        flickr_api_key, flickr_api_secret = _load_env()
+    except Exception:
+        flickr_api_key, flickr_api_secret = "", ""
+
+    stdio_args = [
+        "run", "-i", "--rm",
+        "-e", f"FLICKR_API_KEY={flickr_api_key}",
+        "-e", f"FLICKR_API_SECRET={flickr_api_secret}",
+        "-e", "MCP_TRANSPORT=stdio",
+    ]
+    if mcp_api_key:
+        stdio_args += ["-e", f"MCP_API_KEY={mcp_api_key}"]
+    stdio_args += [
+        "-v", "flickr-creds:/home/app/.flickr_mcp",
+        "-v", "flickr-data:/app/data",
+        "ejwettstein/flickr-mcp",
+    ]
+    stdio_cfg = {"mcpServers": {"flickr": {"command": "docker", "args": stdio_args}}}
+
     snippets = {
         "claude_code":    json.dumps(claude_code_cfg, indent=2),
         "claude_desktop": json.dumps(claude_code_cfg, indent=2),
         "cursor":         json.dumps(cursor_cfg, indent=2),
         "windsurf":       json.dumps(cursor_cfg, indent=2),
         "opencode":       json.dumps(opencode_cfg, indent=2),
+        "stdio":          json.dumps(stdio_cfg, indent=2),
     }
 
     ctx = _base_ctx(request, "Setup")
     ctx.update({
-        "sse_url": sse_url,
+        "sse_url":   sse_url,
+        "base_url":  base,
         "mcp_api_key": mcp_api_key,
-        "snippets": snippets,
+        "snippets":  snippets,
     })
     return templates.TemplateResponse(request, "setup.html", ctx)
 

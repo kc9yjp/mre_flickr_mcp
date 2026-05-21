@@ -23,6 +23,7 @@
     <button class="tab-btn"         data-tab="windsurf"       onclick="showTab('windsurf')">Windsurf</button>
     <button class="tab-btn"         data-tab="opencode"       onclick="showTab('opencode')">OpenCode</button>
     <button class="tab-btn"         data-tab="open-webui"     onclick="showTab('open-webui')">Open WebUI</button>
+    <button class="tab-btn"         data-tab="stdio"          onclick="showTab('stdio')">Stdio</button>
   </div>
 
   <div id="tab-claude-code" class="tab-pane active">
@@ -70,6 +71,28 @@
     {% if mcp_api_key %}<p class="api-key-note">Enter your personal API key in the Authorization field.</p>{% endif %}
     <p class="file-hint">Ollama does not support MCP natively &mdash; use Open WebUI as the agent layer on top of Ollama.</p>
   </div>
+
+  <div id="tab-stdio" class="tab-pane">
+    <p>For MCP clients that require stdio transport. The container shares the same credential volumes as the SSE server, so no separate login is needed.</p>
+    {{ pre_snippet("snip-stdio", snippets.stdio) }}
+    {% if mcp_api_key %}<p class="api-key-note">This snippet includes your Flickr API credentials and personal MCP API key. Keep it private.</p>{% endif %}
+    <p class="file-hint">Stdio mode has no web UI &mdash; use <a href="/login">login</a> and <a href="/sync">sync</a> via the SSE server.</p>
+  </div>
+</div>
+
+<div class="card card-spaced">
+  <h2 class="card-title">Starting the server</h2>
+  <p class="card-hint">
+    Run these commands in the directory containing <code>docker-compose.yml</code>.
+    A <code>.env</code> file with <code>FLICKR_API_KEY</code> and <code>FLICKR_API_SECRET</code> must exist first.
+  </p>
+  {{ pre_snippet("snip-docker-start", "docker compose build\ndocker compose up -d") }}
+  <ol class="setup-steps">
+    <li>Log in at <a href="/login">{{ base_url }}/login</a> via Flickr OAuth.</li>
+    <li>Run an initial sync at <a href="/sync">{{ base_url }}/sync</a>.</li>
+    <li>Return here for your client config snippet.</li>
+  </ol>
+  <p class="file-hint">View logs: <code>docker compose logs -f flickr-mcp</code> &nbsp;&middot;&nbsp; Stop: <code>docker compose down</code></p>
 </div>
 
 <div class="card card-spaced">
