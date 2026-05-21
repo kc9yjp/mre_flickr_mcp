@@ -116,9 +116,21 @@ function initSyncPolling() {
   const table = document.getElementById('sync-table');
   if (!table) return;
   updateSyncNext();
-  setInterval(() => {
-    fetch('/sync/status.json').then(r => r.json()).then(applySyncData).catch(() => {});
-  }, 30000);
+
+  let isRunning = false;
+
+  function poll() {
+    fetch('/sync/status.json')
+      .then(r => r.json())
+      .then(data => {
+        applySyncData(data);
+        isRunning = data.running;
+        setTimeout(poll, data.running ? 5000 : 30000);
+      })
+      .catch(() => { setTimeout(poll, 30000); });
+  }
+
+  setTimeout(poll, isRunning ? 5000 : 30000);
 }
 
 document.addEventListener('DOMContentLoaded', () => {
