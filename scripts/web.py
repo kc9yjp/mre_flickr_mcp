@@ -593,8 +593,9 @@ async def route_sync_trigger(request: Request):
 async def route_setup(request: Request):
     base = str(request.base_url).rstrip("/")
     sse_url = f"{base}/sse"
-    auth = f'"Authorization": "Bearer {MCP_API_KEY}"' if MCP_API_KEY else ""
-    headers_block = f',\n      "headers": {{{auth}}}' if auth else ""
+    auth_placeholder = '"Authorization": "Bearer MCP_API_KEY"'
+    headers_block = f',\n      "headers": {{{auth_placeholder}}}' if MCP_API_KEY else ""
+    auth_note = '<p style="font-size:.85rem;color:#555;margin-top:4px">Replace <code>MCP_API_KEY</code> with the value from your <code>.env</code>.</p>' if MCP_API_KEY else ""
 
     def _pre(snippet_id, text):
         return (
@@ -635,7 +636,7 @@ async def route_setup(request: Request):
         '    "flickr": {\n'
         '      "type": "remote",\n'
         f'      "url": "{sse_url}"'
-        + (f',\n      "headers": {{{auth}}}' if auth else "")
+        + (f',\n      "headers": {{{auth_placeholder}}}' if MCP_API_KEY else "")
         + "\n    }\n  }\n}"
     )
 
@@ -659,30 +660,35 @@ async def route_setup(request: Request):
       <div id="tab-claude-code" class="tab-pane active">
         <p>Add to <code>.mcp.json</code> in your project root, or <code>~/.claude/mcp.json</code> for all projects.</p>
         {_pre("snip-cc", claude_code_json)}
+        {auth_note}
       </div>
 
       <div id="tab-claude-desktop" class="tab-pane">
         <p>Edit <code>~/Library/Application Support/Claude/claude_desktop_config.json</code> (macOS) or
            <code>%APPDATA%\\Claude\\claude_desktop_config.json</code> (Windows).</p>
         {_pre("snip-cd", claude_desktop_json)}
+        {auth_note}
         <p class="file-hint">Restart Claude Desktop after saving.</p>
       </div>
 
       <div id="tab-cursor" class="tab-pane">
         <p>Add to <code>~/.cursor/mcp.json</code> (global) or <code>.cursor/mcp.json</code> in your project.</p>
         {_pre("snip-cursor", cursor_json)}
+        {auth_note}
         <p class="file-hint">Cursor detects SSE servers from the <code>url</code> field automatically &mdash; no <code>type</code> needed.</p>
       </div>
 
       <div id="tab-windsurf" class="tab-pane">
         <p>Add to <code>~/.codeium/windsurf/mcp_config.json</code>.</p>
         {_pre("snip-windsurf", cursor_json)}
+        {auth_note}
         <p class="file-hint">Same format as Cursor. Reload the Windsurf window after saving.</p>
       </div>
 
       <div id="tab-opencode" class="tab-pane">
         <p>Add to <code>~/.config/opencode/config.json</code>.</p>
         {_pre("snip-opencode", opencode_json)}
+        {auth_note}
       </div>
 
       <div id="tab-open-webui" class="tab-pane">
