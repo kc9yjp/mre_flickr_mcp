@@ -701,7 +701,7 @@ async def route_setup(request: Request):
           <li>Enter the server URL:</li>
         </ol>
         {_pre("snip-webui", sse_url)}
-        {"<p style='font-size:.85rem;color:#555;margin-top:8px'>Also enter your API key in the Authorization field if prompted: <code>" + MCP_API_KEY + "</code></p>" if MCP_API_KEY else ""}
+        {"<p style='font-size:.85rem;color:#555;margin-top:8px'>Also enter your API key (<code>MCP_API_KEY</code> from your <code>.env</code>) in the Authorization field if prompted.</p>" if MCP_API_KEY else ""}
         <p class="file-hint">Ollama does not support MCP natively &mdash; use Open WebUI as the agent layer on top of Ollama.</p>
       </div>
     </div>"""
