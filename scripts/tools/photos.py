@@ -661,17 +661,37 @@ async def _get_upload_status():
 
 
 async def _get_person_info(args):
+    import datetime
     data = flickr_api._api_get("flickr.people.getInfo", {"user_id": args["user_id"]})
     p = data.get("person", {})
+    nsid = p.get("nsid", "")
+
+    last_upload = None
+    try:
+        recent = flickr_api._api_get("flickr.people.getPhotos", {
+            "user_id": nsid, "per_page": "1", "extras": "date_upload",
+        })
+        photos = recent.get("photos", {}).get("photo", [])
+        if photos:
+            ts = int(photos[0].get("dateupload", 0))
+            last_upload = datetime.datetime.utcfromtimestamp(ts).strftime("%Y-%m-%d") if ts else None
+    except Exception:
+        pass
+
     return [TextContent(type="text", text=json.dumps({
-        "nsid":        p.get("nsid", ""),
-        "username":    p.get("username", {}).get("_content", ""),
-        "realname":    p.get("realname", {}).get("_content", ""),
-        "location":    p.get("location", {}).get("_content", ""),
-        "description": p.get("description", {}).get("_content", ""),
-        "photos":      p.get("photos", {}).get("count", {}).get("_content", 0),
-        "profile_url": f"https://www.flickr.com/people/{p.get('nsid', '')}/",
-        "ispro":       p.get("ispro", 0),
+        "nsid":           nsid,
+        "username":       p.get("username", {}).get("_content", ""),
+        "realname":       p.get("realname", {}).get("_content", ""),
+        "location":       p.get("location", {}).get("_content", ""),
+        "description":    p.get("description", {}).get("_content", ""),
+        "photos":         p.get("photos", {}).get("count", {}).get("_content", 0),
+        "profile_url":    f"https://www.flickr.com/people/{nsid}/",
+        "ispro":          p.get("ispro", 0),
+        "you_follow":     bool(p.get("contact")),
+        "follows_you":    bool(p.get("revcontact")),
+        "is_friend":      bool(p.get("friend")),
+        "is_family":      bool(p.get("family")),
+        "last_upload":    last_upload,
     }, indent=2))]
 
 
