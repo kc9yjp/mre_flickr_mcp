@@ -7,7 +7,7 @@ A Flickr [MCP (Model Context Protocol)](https://modelcontextprotocol.io/) server
 - Fetch stats, set geolocation, post comments, fave photos
 
 > **Experimental** — built with [Claude Code](https://claude.ai/code). Functional, use at your own risk.  
-> Source: [github.com/kc9yjp/mre_flickr_mcp](https://github.com/kc9yjp/mre_flickr_mcp) · Author: [Mr. E Photos](https://www.flickr.com/photos/ejwettstein/)
+> Source: [github.com/kc9yjp/mre_flickr_mcp](https://github.com/kc9yjp/mre_flickr_mcp) · Docker: [hub.docker.com/repositories/ejwettstein](https://hub.docker.com/repositories/ejwettstein) · Author: [Mr. E Photos](https://www.flickr.com/photos/ejwettstein/)
 
 ---
 
@@ -169,5 +169,6 @@ Note: stdio mode has no web UI — login and sync must be done via the SSE conta
 ## Resources
 
 - [Full tool list and local development](https://github.com/kc9yjp/mre_flickr_mcp)
+- [Docker Hub](https://hub.docker.com/repositories/ejwettstein)
 - [Flickr API docs](https://www.flickr.com/services/api/)
 - [Model Context Protocol](https://modelcontextprotocol.io/)

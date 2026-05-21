@@ -148,7 +148,7 @@ async def _unfollow_contact(args):
     contact_id = args["contact_id"]
     profile_url = f"https://www.flickr.com/people/{contact_id}/"
     try:
-        flickr_api._api_post("flickr.contacts.remove", {"user_nsid": contact_id})
+        flickr_api._api_post("flickr.contacts.remove", {"user_id": contact_id})
         with get_db() as conn:
             conn.execute("DELETE FROM contacts WHERE id = ?", (contact_id,))
         api_result = "Unfollowed via API. "

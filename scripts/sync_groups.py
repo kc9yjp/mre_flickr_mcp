@@ -33,6 +33,10 @@ def main():
         print(f"Database not found: {target_db}\nVisit http://localhost:8000/sync to run a sync", file=sys.stderr)
         sys.exit(1)
 
+    if args.nsid:
+        from db import _current_user
+        _current_user.set({"nsid": args.nsid, "username": args.username or ""})
+
     with sqlite3.connect(target_db) as conn:
         init_db(conn)
 

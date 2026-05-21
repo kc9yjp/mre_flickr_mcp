@@ -30,6 +30,10 @@ def main():
     target_db = _db_file(args.username) if args.username else DB_FILE
     nsid_arg = args.nsid if args.nsid else None
 
+    if nsid_arg:
+        from db import _current_user
+        _current_user.set({"nsid": nsid_arg, "username": args.username or ""})
+
     if not os.path.exists(target_db):
         print(f"Database not found: {target_db}\nVisit http://localhost:8000/sync to run a sync", file=sys.stderr)
         sys.exit(1)

@@ -10,7 +10,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 RUN useradd -m -u 1000 app && \
     chown -R app /app && \
     mkdir -p /home/app/.flickr_mcp && \
-    chown app /home/app/.flickr_mcp
+    chown app /home/app/.flickr_mcp && \
+    mkdir -p /app/data && \
+    chown app /app/data
 
 COPY --chown=app scripts/ ./scripts/
 

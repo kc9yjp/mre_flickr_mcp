@@ -319,6 +319,10 @@ def cmd_sync(args):
     target_db = _db_file(args.username) if args.username else DB_FILE
     nsid_arg = args.nsid if args.nsid else None
 
+    if nsid_arg:
+        from db import _current_user
+        _current_user.set({"nsid": nsid_arg, "username": args.username or ""})
+
     try:
         flickr_api._load_env()
         creds = flickr_api._load_credentials(nsid=nsid_arg)
