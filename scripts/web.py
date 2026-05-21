@@ -94,8 +94,8 @@ def _load_api_key_registry() -> None:
             nsid = creds.get("user_nsid")
             if key and nsid:
                 _api_key_registry[key] = nsid
-        except Exception:
-            pass
+        except Exception as e:
+            logging.warning("Failed to load API key from %s: %s", cpath, e)
     logging.debug("API key registry: %d user(s) loaded", len(_api_key_registry))
 
 
