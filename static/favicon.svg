@@ -44,12 +44,16 @@
   <!-- Glint: small highlight ellipse in upper-left, like light on glass -->
   <ellipse cx="26" cy="26" rx="5" ry="3" fill="white" fill-opacity="0.14" transform="rotate(-30 26 26)"/>
 
-  <!-- Bold E: shifted right 2 units -->
+  <!-- Bold E: outer edges curve ~1 unit to echo the lens circle -->
   <g fill="white" filter="url(#e-shadow)">
-    <rect x="21" y="20" width="5"  height="24" rx="2.5"/>  <!-- left vertical -->
-    <rect x="21" y="20" width="22" height="5"  rx="2.5"/>  <!-- top bar -->
-    <rect x="21" y="29" width="19" height="4"  rx="2"/>    <!-- middle bar -->
-    <rect x="21" y="39" width="22" height="5"  rx="2.5"/>  <!-- bottom bar -->
+    <!-- Left vertical: outer left edge bows left 1 unit at mid-height -->
+    <path d="M 23.5,20 A 2.5,2.5 0 0 0 21,22.5 Q 19,32 21,41.5 A 2.5,2.5 0 0 0 23.5,44 H 26 V 20 Z"/>
+    <!-- Top bar: outer top edge bows up 1 unit at centre; left end hidden under vertical bar -->
+    <path d="M 21,20 Q 32,18 40.5,20 A 2.5,2.5 0 0 1 43,22.5 L 43,25 L 21,25 Z"/>
+    <!-- Middle bar: interior element, no outer edge to curve -->
+    <rect x="21" y="29" width="19" height="4" rx="2"/>
+    <!-- Bottom bar: outer bottom edge bows down 1 unit at centre -->
+    <path d="M 21,39 L 43,39 L 43,41.5 A 2.5,2.5 0 0 1 40.5,44 Q 32,46 23.5,44 A 2.5,2.5 0 0 0 21,41.5 Z"/>
   </g>
 
   <!-- Curved reflection below the E — suggests the lens curves away underneath -->
