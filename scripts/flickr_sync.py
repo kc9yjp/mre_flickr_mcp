@@ -66,8 +66,11 @@ def _apply_migrations(conn):
     stored user_version are executed. The version is incremented after each
     migration so partial failures leave the DB in a consistent state.
     Existing databases with user_version=0 (pre-versioning) run all migrations;
-    try/except handles columns that already exist from the old approach.
+    duplicate-column errors are silently skipped (columns already exist from the
+    old try/except approach). Any other error propagates so the DB is not
+    silently left in a partially-migrated state.
     """
+    import sqlite3 as _sqlite3
     cur = conn.execute("PRAGMA user_version").fetchone()[0]
     for i, sql in enumerate(_MIGRATIONS, 1):
         if i <= cur:
@@ -75,8 +78,9 @@ def _apply_migrations(conn):
         try:
             conn.execute(sql)
             conn.commit()
-        except Exception:
-            pass  # column already exists (old DB upgraded via try/except)
+        except _sqlite3.OperationalError as e:
+            if "duplicate column name" not in str(e).lower():
+                raise
         conn.execute(f"PRAGMA user_version = {i}")
         conn.commit()
 
