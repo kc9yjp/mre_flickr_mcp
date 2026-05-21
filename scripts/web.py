@@ -41,7 +41,7 @@ from flickr_api import (
     credentials_file, _load_credentials, _save_credentials,
     _load_env, _oauth_params, _sign,
 )
-from mcp_tools import SYNC_SCRIPT, _active_syncs, _background_refresh, _run_sync_script, _sync_lock, server
+from mcp_tools import SYNC_SCRIPT, _active_syncs, _background_refresh, _get_user_lock, _run_sync_script, server
 
 import secrets
 from starlette.middleware.sessions import SessionMiddleware
@@ -293,7 +293,7 @@ async def route_root(request: Request):
         </div>"""
         return HTMLResponse(_html_page("Home", body, request, logged_in=False))
 
-    syncing = _sync_lock.locked()
+    syncing = _get_user_lock(db_username).locked()
     if msg == "ok":
         sync_note = ' Syncing your library in the background &mdash; check the <a href="/sync">Sync</a> page for progress.' if syncing else ""
         status_html = f'<div class="alert alert-ok" style="margin-bottom:20px">Welcome, <strong>{username}</strong>! You\'re connected to Flickr.{sync_note}</div>'
@@ -504,7 +504,7 @@ async def route_oauth_callback(request: Request):
     user_args   = ["--nsid", user_nsid, "--username", username]
 
     async def _post_login_sync():
-        async with _sync_lock:
+        async with _get_user_lock(username):
             await _run_sync_script(SYNC_SCRIPT, "photos",
                                    extra_args=["--create"] + user_args,
                                    username=username)
@@ -592,7 +592,7 @@ async def route_sync_page(request: Request):
         return redir
     import time as _time
     from db import get_db_for_user
-    running = _sync_lock.locked()
+    running = _get_user_lock(db_username).locked()
     csrf_token = request.session.get("csrf_token", "")
     db_username = request.session.get("username", "")
 
@@ -689,11 +689,12 @@ async def route_sync_trigger(request: Request):
     if sync_type not in script_map and sync_type != "all":
         return RedirectResponse("/sync", status_code=303)
 
-    if _sync_lock.locked():
+    lock = _get_user_lock(username or "_single_user")
+    if lock.locked():
         return RedirectResponse("/sync", status_code=303)
 
     async def _run():
-        async with _sync_lock:
+        async with lock:
             if sync_type == "all":
                 for label, path in script_map.items():
                     await _run_sync_script(path, label, extra_args=user_args or None, username=username or None)

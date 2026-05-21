@@ -4,6 +4,11 @@ In multi-user mode, ``_run_sync_script`` forwards ``--nsid`` / ``--username``
 to the subprocess so each sync script operates on the correct per-user database
 and credentials.  ``_background_refresh`` iterates over all registered users
 (via ``flickr_api._all_known_users``) and triggers per-user syncs.
+
+Concurrency model: each user has an independent ``asyncio.Lock`` (see
+``_get_user_lock``).  A long-running sync for one user never blocks another
+user's sync.  Within a single user, syncs are serialized so the same database
+is not written by two concurrent processes.
 """
 
 import asyncio
@@ -20,8 +25,19 @@ from flickr_api import _all_known_users
 SYNC_SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "flickr_sync.py")
 REFRESH_INTERVAL = 43200  # 12 hours
 
-_sync_lock = asyncio.Lock()
-_active_syncs: dict[str, float] = {}  # label -> start timestamp
+_user_locks: dict[str, asyncio.Lock] = {}  # username -> per-user sync lock
+_active_syncs: dict[str, float] = {}       # label -> start timestamp
+
+
+def _get_user_lock(username: str) -> asyncio.Lock:
+    """Return the per-user sync lock, creating it on first access.
+
+    Using a per-user lock means a long sync for one user (e.g. engagement)
+    never blocks another user's sync from running concurrently.
+    """
+    if username not in _user_locks:
+        _user_locks[username] = asyncio.Lock()
+    return _user_locks[username]
 
 TOOLS = [
     Tool(
@@ -47,8 +63,10 @@ async def _sync(args):
     from db import _current_user
     user = _current_user.get()
     user_args = ["--nsid", user["nsid"], "--username", user["username"]] if user else []
+    username = user["username"] if user else "_single_user"
 
-    if _sync_lock.locked():
+    lock = _get_user_lock(username)
+    if lock.locked():
         return [TextContent(type="text", text="Sync already in progress.")]
     scripts_dir = os.path.dirname(SYNC_SCRIPT)
     sync_type = args.get("type", "photos")
@@ -65,12 +83,11 @@ async def _sync(args):
     else:
         return [TextContent(type="text", text=f"Unknown sync type '{sync_type}'. Use: photos, groups, contacts, albums, all.")]
     results = []
-    async with _sync_lock:
+    async with lock:
         for label, path in targets:
             extra = list(user_args)
             if label == "photos" and args.get("full"):
                 extra.append("--full")
-            username = user["username"] if user else None
             rc = await _run_sync_script(path, label, extra_args=extra or None, username=username)
             status = "completed" if rc == 0 else "failed"
             results.append(f"{label}: {status}")
@@ -162,7 +179,7 @@ async def _background_refresh():
                         "Background refresh for %s (last photos sync %.1fh ago)", username, age / 3600
                     )
                     user_args = ["--nsid", nsid, "--username", username]
-                    async with _sync_lock:
+                    async with _get_user_lock(username):
                         await _run_sync_script(
                             SYNC_SCRIPT,
                             f"photos/{username}",

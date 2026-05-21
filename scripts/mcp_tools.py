@@ -15,7 +15,8 @@ server = Server("flickr")
 
 # Re-export sync infrastructure so web.py can import from here without change.
 SYNC_SCRIPT = sync_tools.SYNC_SCRIPT
-_sync_lock = sync_tools._sync_lock
+_user_locks = sync_tools._user_locks
+_get_user_lock = sync_tools._get_user_lock
 _active_syncs = sync_tools._active_syncs
 _run_sync_script = sync_tools._run_sync_script
 _background_refresh = sync_tools._background_refresh
