@@ -45,6 +45,42 @@ def api_get(method, extra=None):
 
 # --- Database ---
 
+_MIGRATIONS = [
+    "ALTER TABLE photos ADD COLUMN favorites    INTEGER DEFAULT 0",
+    "ALTER TABLE photos ADD COLUMN comments     INTEGER DEFAULT 0",
+    "ALTER TABLE photos ADD COLUMN reviewed_at  INTEGER DEFAULT NULL",
+    "ALTER TABLE photos ADD COLUMN is_public    INTEGER DEFAULT 1",
+    "ALTER TABLE sync_log ADD COLUMN type       TEXT DEFAULT 'photos'",
+    "ALTER TABLE groups ADD COLUMN description  TEXT",
+    "ALTER TABLE groups ADD COLUMN keywords     TEXT",
+    "ALTER TABLE sync_log ADD COLUMN duration_seconds INTEGER",
+]
+
+SCHEMA_VERSION = len(_MIGRATIONS)
+
+
+def _apply_migrations(conn):
+    """Run pending schema migrations using PRAGMA user_version as a cursor.
+
+    Each migration has a 1-based index. Only migrations whose index exceeds the
+    stored user_version are executed. The version is incremented after each
+    migration so partial failures leave the DB in a consistent state.
+    Existing databases with user_version=0 (pre-versioning) run all migrations;
+    try/except handles columns that already exist from the old approach.
+    """
+    cur = conn.execute("PRAGMA user_version").fetchone()[0]
+    for i, sql in enumerate(_MIGRATIONS, 1):
+        if i <= cur:
+            continue
+        try:
+            conn.execute(sql)
+            conn.commit()
+        except Exception:
+            pass  # column already exists (old DB upgraded via try/except)
+        conn.execute(f"PRAGMA user_version = {i}")
+        conn.commit()
+
+
 def init_db(conn):
     conn.executescript("""
         PRAGMA journal_mode=WAL;
@@ -115,24 +151,7 @@ def init_db(conn):
         );
     """)
     conn.commit()
-
-    # Migrations: safely add columns that may be missing from older databases
-    migrations = [
-        "ALTER TABLE photos ADD COLUMN favorites    INTEGER DEFAULT 0",
-        "ALTER TABLE photos ADD COLUMN comments     INTEGER DEFAULT 0",
-        "ALTER TABLE photos ADD COLUMN reviewed_at  INTEGER DEFAULT NULL",
-        "ALTER TABLE photos ADD COLUMN is_public    INTEGER DEFAULT 1",
-        "ALTER TABLE sync_log ADD COLUMN type       TEXT DEFAULT 'photos'",
-        "ALTER TABLE groups ADD COLUMN description  TEXT",
-        "ALTER TABLE groups ADD COLUMN keywords     TEXT",
-        "ALTER TABLE sync_log ADD COLUMN duration_seconds INTEGER",
-    ]
-    for sql in migrations:
-        try:
-            conn.execute(sql)
-            conn.commit()
-        except Exception:
-            pass  # column already exists
+    _apply_migrations(conn)
 
 
 def last_sync_time(conn):

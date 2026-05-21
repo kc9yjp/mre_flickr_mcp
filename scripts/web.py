@@ -718,6 +718,32 @@ async def route_reset_db(request: Request):
     return RedirectResponse("/sync", status_code=303)
 
 
+async def route_regen_key(request: Request):
+    """Regenerate the user's MCP API key and update the in-memory registry.
+
+    Generates a new UUID4, removes the old key from ``_api_key_registry``,
+    persists the updated credentials, and redirects to /setup.
+    Requires login; CSRF is enforced by CSRFMiddleware before this handler runs.
+    """
+    redir = _require_login(request)
+    if redir:
+        return redir
+
+    user_nsid = request.session.get("user_nsid", "")
+    creds = _load_credentials(nsid=user_nsid)
+    old_key = creds.get("mcp_api_key", "")
+    new_key = str(uuid.uuid4())
+
+    creds["mcp_api_key"] = new_key
+    _save_credentials(creds, user_nsid)
+
+    if old_key in _api_key_registry:
+        del _api_key_registry[old_key]
+    _api_key_registry[new_key] = user_nsid
+
+    return RedirectResponse("/setup", status_code=303)
+
+
 async def route_setup(request: Request):
     """Render the MCP client setup page with the user's personal API key."""
     redir = _require_login(request)
@@ -726,6 +752,7 @@ async def route_setup(request: Request):
 
     base = str(request.base_url).rstrip("/")
     sse_url = f"{base}/sse"
+    csrf_token = request.session.get("csrf_token", "")
 
     # Load the user's personal MCP API key.
     user_nsid   = request.session.get("user_nsid", "")
@@ -848,6 +875,18 @@ async def route_setup(request: Request):
         {"<p style='font-size:.85rem;color:#555;margin-top:8px'>Enter your personal API key in the Authorization field.</p>" if mcp_api_key else ""}
         <p class="file-hint">Ollama does not support MCP natively &mdash; use Open WebUI as the agent layer on top of Ollama.</p>
       </div>
+    </div>
+    <div class="card" style="margin-top:16px">
+      <h2 style="margin-top:0">API Key</h2>
+      <p style="color:#555;font-size:.9rem;margin-bottom:12px">
+        Your current key is shown in the snippets above. Regenerating invalidates
+        the old key &mdash; update any MCP client configs afterwards.
+      </p>
+      <form method="POST" action="/regen-key"
+            onsubmit="return confirm('Regenerate your MCP API key? Existing MCP client connections will break until you update their config.')">
+        <input type="hidden" name="csrf_token" value="{csrf_token}">
+        <button class="btn btn-secondary" type="submit">Regenerate API Key</button>
+      </form>
     </div>"""
     return HTMLResponse(_html_page("Setup", body, request))
 
@@ -991,6 +1030,7 @@ async def main_sse():
             Route("/sync",           endpoint=route_sync_page),
             Route("/sync/{type}",    endpoint=route_sync_trigger, methods=["POST"]),
             Route("/reset",          endpoint=route_reset_db, methods=["POST"]),
+            Route("/regen-key",      endpoint=route_regen_key, methods=["POST"]),
             Route("/logs",           endpoint=route_logs),
             Route("/setup",          endpoint=route_setup),
             Route("/sse",            endpoint=_SSEHandler(sse)),
