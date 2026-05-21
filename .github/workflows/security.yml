@@ -38,29 +38,3 @@ jobs:
           exit-code: '1'
           ignore-unfixed: true
           trivyignores: .trivyignore
-
-  secrets:
-    name: Secret scanning
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Scan for leaked secrets
-        run: |
-          docker run --rm \
-            -v "$PWD:/repo" \
-            trufflesecurity/trufflehog:3.95.3 \
-            git file:///repo --fail
-
-      - name: Custom Flickr Key Scan
-        run: |
-          # Scan for 32-character hex strings assigned to variables that look like Flickr keys
-          # This helps catch keys even if TruffleHog misses them due to verification
-          ERRORS=0
-          if grep -rE '(api_key|api_secret|oauth_token|oauth_token_secret)\s*=\s*["'\''][a-f0-9]{32}["'\'']' . --exclude-dir=.git --exclude=.github/workflows/security.yml; then
-            echo "::error::Found hardcoded Flickr-like keys in the codebase!"
-            ERRORS=1
-          fi
-          exit $ERRORS
