@@ -154,6 +154,10 @@ async def route_root(request: Request):
     msg = request.query_params.get("msg", "")
     user_nsid = request.session.get("user_nsid", "")
     logged_in = bool(user_nsid)
+
+    if not logged_in:
+        from starlette.responses import RedirectResponse
+        return RedirectResponse(url="/login", status_code=302)
     username = request.session.get("fullname") or request.session.get("username") or user_nsid
     db_username = request.session.get("username", "")
 
