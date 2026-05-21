@@ -35,9 +35,7 @@ def _get_user_lock(username: str) -> asyncio.Lock:
     Using a per-user lock means a long sync for one user (e.g. engagement)
     never blocks another user's sync from running concurrently.
     """
-    if username not in _user_locks:
-        _user_locks[username] = asyncio.Lock()
-    return _user_locks[username]
+    return _user_locks.setdefault(username, asyncio.Lock())
 
 TOOLS = [
     Tool(
