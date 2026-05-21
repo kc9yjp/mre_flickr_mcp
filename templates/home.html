@@ -1,18 +1,6 @@
 {% extends "base.html" %}
 {% block content %}
 
-{% if not logged_in %}
-
-<h1>{{ site_title }}</h1>
-<div class="card card-hero">
-  <div class="hero-icon">&#128273;</div>
-  <h2 class="hero-title">Connect to Flickr</h2>
-  <p class="hero-text">Login with your Flickr account to get started.</p>
-  <a href="/login" class="btn">Login with Flickr &rarr;</a>
-</div>
-
-{% else %}
-
 <h1>{{ site_title }}</h1>
 
 {% if msg == "ok" %}
@@ -66,5 +54,4 @@
   {% endfor %}
 </div>
 
-{% endif %}
 {% endblock %}
