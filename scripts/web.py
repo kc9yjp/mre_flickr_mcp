@@ -938,7 +938,11 @@ class _SSEHandler:
         self._sse = sse_transport
 
     async def __call__(self, scope, receive, send):
-        user_nsid = getattr(scope.get("state"), "user_nsid", None)
+        state = scope.get("state") or {}
+        if isinstance(state, dict):
+            user_nsid = state.get("user_nsid")
+        else:
+            user_nsid = getattr(state, "user_nsid", None)
         token = None
         if user_nsid:
             try:
