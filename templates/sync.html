@@ -22,20 +22,18 @@
 <div class="card">
   <h2 class="card-title">Last sync times</h2>
   <table>
-    <thead><tr><th>Type</th><th>Completed</th></tr></thead>
+    <thead><tr><th>Type</th><th>Completed</th><th>Duration</th></tr></thead>
     <tbody>
       {% if sync_rows %}
         {% for row in sync_rows %}
         <tr>
-          <td>{{ row.type }}</td>
-          <td>
-            {% if row.last %}<time data-ts="{{ row.last }}">—</time>{% else %}—{% endif %}
-            {% if row.duration %}<span class="sync-duration">&nbsp;{{ row.duration }}</span>{% endif %}
-          </td>
+          <td>{{ row.type | title }}</td>
+          <td>{% if row.last %}<time data-ts="{{ row.last }}">—</time>{% else %}—{% endif %}</td>
+          <td>{% if row.duration %}{{ row.duration }}{% else %}—{% endif %}</td>
         </tr>
         {% endfor %}
       {% else %}
-      <tr><td colspan="2">No syncs recorded yet</td></tr>
+      <tr><td colspan="3">No syncs recorded yet</td></tr>
       {% endif %}
     </tbody>
   </table>
