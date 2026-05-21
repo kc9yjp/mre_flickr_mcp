@@ -449,14 +449,16 @@ async def _trigger_full_sync(username: str, user_nsid: str, user_args: list[str]
         await _run_sync_script(os.path.join(scripts_dir, "sync_engagement.py"), f"engagement/{username}", extra_args=user_args, username=username)
 
 
-async def route_sync_page(request: Request):
-    """Render the sync status page with trigger buttons and reset option."""
-    redir = _require_login(request)
-    if redir:
-        return redir
+def _build_sync_rows(db_username: str) -> list[dict]:
+    """Query sync_log and return rows enriched with active-sync status."""
     from db import get_db_for_user
-    db_username = request.session.get("username", "")
-    running = _get_user_lock(db_username).locked()
+    from tools.sync import REFRESH_INTERVAL
+
+    def _fmt_dur(secs):
+        if not secs:
+            return None
+        mins = round(secs / 60, 1)
+        return f"{mins:.0f} min" if mins >= 1 else f"{secs}s"
 
     raw_rows = []
     try:
@@ -470,25 +472,51 @@ async def route_sync_page(request: Request):
     except Exception as e:
         logging.warning("Could not load sync log for %s: %s", db_username, e)
 
-    def _fmt_dur(secs):
-        if not secs:
-            return None
-        mins = round(secs / 60, 1)
-        return f"{mins:.0f} min" if mins >= 1 else f"{secs}s"
+    active_types = {label.split("/")[0] for label in _active_syncs}
 
-    sync_rows = [
-        {"type": r["type"], "last": r["last"], "duration": _fmt_dur(r["duration_seconds"])}
-        for r in raw_rows
-    ]
-    active_syncs = sorted(_active_syncs.items(), key=lambda x: x[1]) if running else []
+    rows = []
+    for r in raw_rows:
+        stype = r["type"]
+        last_ts = r["last"]
+        next_ts = (last_ts + REFRESH_INTERVAL) if last_ts else None
+        rows.append({
+            "type": stype,
+            "last": last_ts,
+            "duration": _fmt_dur(r["duration_seconds"]),
+            "next": next_ts,
+            "running": stype in active_types,
+        })
+    return rows
+
+
+async def route_sync_page(request: Request):
+    """Render the sync status page with trigger buttons and reset option."""
+    redir = _require_login(request)
+    if redir:
+        return redir
+    db_username = request.session.get("username", "")
+    running = _get_user_lock(db_username).locked()
+    sync_rows = _build_sync_rows(db_username)
 
     ctx = _base_ctx(request, "Sync")
     ctx.update({
         "running": running,
         "sync_rows": sync_rows,
-        "active_syncs": active_syncs,
     })
     return templates.TemplateResponse(request, "sync.html", ctx)
+
+
+async def route_sync_status(request: Request):
+    """JSON endpoint polled by the sync page every 30 s."""
+    redir = _require_login(request)
+    if redir:
+        from starlette.responses import JSONResponse
+        return JSONResponse({"error": "unauthenticated"}, status_code=401)
+    from starlette.responses import JSONResponse
+    db_username = request.session.get("username", "")
+    running = _get_user_lock(db_username).locked()
+    rows = _build_sync_rows(db_username)
+    return JSONResponse({"running": running, "rows": rows})
 
 
 async def route_sync_trigger(request: Request):
@@ -743,6 +771,7 @@ async def main_sse():
             Route("/logout",         endpoint=route_logout, methods=["POST"]),
             Route("/stats",          endpoint=route_stats),
             Route("/sync",           endpoint=route_sync_page),
+            Route("/sync/status.json", endpoint=route_sync_status),
             Route("/sync/{type}",    endpoint=route_sync_trigger, methods=["POST"]),
             Route("/reset",          endpoint=route_reset_db, methods=["POST"]),
             Route("/regen-key",      endpoint=route_regen_key, methods=["POST"]),

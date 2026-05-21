@@ -65,10 +65,17 @@ footer a { color: #888; }
 .stat-date-range { margin-top: 14px; color: #555; font-size: .9rem; }
 
 /* Sync */
-.sync-progress-list { margin: 6px 0 0 18px; line-height: 1.8; }
-.sync-duration { color: #888; font-size: .8rem; }
 .sync-form { display: inline; }
 .sync-form .btn { margin: 4px; }
+.sync-btn-row { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
+.sync-btn-group { display: flex; flex-wrap: wrap; gap: 0; }
+.btn-lg { padding: 10px 28px; font-size: 1rem; }
+.sync-running-badge { display: inline-block; background: #fff3cd; color: #856404;
+                      border: 1px solid #ffc107; border-radius: 4px;
+                      padding: 1px 8px; font-size: .8rem; font-weight: 600; }
+.sync-refresh-note { margin-top: 10px; font-size: .8rem; color: #999; }
+#sync-table td.sync-duration-cell { text-align: right; }
+#sync-table th:nth-child(3) { text-align: right; }
 
 /* Setup snippets */
 .snippet-wrap { position: relative; }

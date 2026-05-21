@@ -60,6 +60,72 @@ function showConfirm(message, onOk) {
   document.addEventListener('keydown', handleKey);
 }
 
+function fmtRelative(epochSecs) {
+  const diffSecs = epochSecs - Math.floor(Date.now() / 1000);
+  if (diffSecs <= 0) return 'now';
+  const h = Math.floor(diffSecs / 3600);
+  const m = Math.floor((diffSecs % 3600) / 60);
+  if (h > 0) return `in ${h}h ${m}m`;
+  return `in ${m}m`;
+}
+
+function updateSyncNext() {
+  document.querySelectorAll('[data-next]').forEach(el => {
+    el.textContent = fmtRelative(parseInt(el.dataset.next));
+  });
+}
+
+function applySyncData(data) {
+  data.rows.forEach(row => {
+    const tr = document.querySelector(`tr[data-sync-type="${row.type}"]`);
+    if (!tr) return;
+
+    const lastCell = tr.querySelector('.sync-last');
+    if (lastCell) {
+      if (row.last) {
+        const ms = row.last * 1000;
+        const fmt = new Date(ms).toLocaleString(undefined, {
+          month: 'short', day: 'numeric', year: 'numeric',
+          hour: 'numeric', minute: '2-digit'
+        });
+        lastCell.innerHTML = `<time data-ts="${row.last}">${fmt}</time>`;
+      } else {
+        lastCell.textContent = '—';
+      }
+    }
+
+    const durCell = tr.querySelector('.sync-duration-cell');
+    if (durCell) durCell.textContent = row.duration || '—';
+
+    const nextCell = tr.querySelector('.sync-next');
+    if (nextCell) {
+      nextCell.innerHTML = row.next
+        ? `<span data-next="${row.next}"></span>`
+        : '—';
+    }
+
+    const statusCell = tr.querySelector('.sync-status');
+    if (statusCell) {
+      statusCell.innerHTML = row.running
+        ? '<span class="sync-running-badge">Syncing…</span>'
+        : '—';
+    }
+  });
+  updateSyncNext();
+
+  const buttons = document.querySelectorAll('.sync-form .btn');
+  buttons.forEach(btn => { btn.disabled = data.running; });
+}
+
+function initSyncPolling() {
+  const table = document.getElementById('sync-table');
+  if (!table) return;
+  updateSyncNext();
+  setInterval(() => {
+    fetch('/sync/status.json').then(r => r.json()).then(applySyncData).catch(() => {});
+  }, 30000);
+}
+
 document.addEventListener('DOMContentLoaded', () => {
   document.querySelectorAll('form[data-confirm]').forEach(form => {
     form.addEventListener('submit', e => {
@@ -70,6 +136,8 @@ document.addEventListener('DOMContentLoaded', () => {
       });
     });
   });
+
+  initSyncPolling();
 
   document.querySelectorAll('time[data-ts]').forEach(el => {
     const ms = parseInt(el.dataset.ts) * 1000;
