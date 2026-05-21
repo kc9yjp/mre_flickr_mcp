@@ -34,19 +34,13 @@ def upsert_engagement(conn, contact_id, faves=0, comments=0):
     """, (contact_id, faves, comments, last_updated))
 
 
-def api_get(method, extra, retries=3):
-    """Call ``flickr_api._api_get`` with exponential-backoff retries."""
-    for attempt in range(retries):
-        try:
-            return flickr_api._api_get(method, extra)
-        except RuntimeError as e:
-            if attempt < retries - 1:
-                wait = 2 ** attempt
-                print(f"  API error, retrying in {wait}s ({e})")
-                time.sleep(wait)
-            else:
-                print(f"  API error: {e}", file=sys.stderr)
-                sys.exit(1)
+def api_get(method, extra):
+    """Call ``flickr_api._api_get``, letting its built-in retry handle transient errors."""
+    try:
+        return flickr_api._api_get(method, extra)
+    except RuntimeError as e:
+        print(f"  API error: {e}", file=sys.stderr)
+        sys.exit(1)
 
 
 def main():
