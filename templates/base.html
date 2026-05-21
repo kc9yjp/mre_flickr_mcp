@@ -17,7 +17,7 @@
   <a href="/stats">Stats</a>
   <a href="/sync">Sync</a>
   <a href="/setup">Setup</a>
-  <form class="nav-logout" method="POST" action="/logout" onsubmit="return confirm('Log out of Flickr?')">
+  <form class="nav-logout" method="POST" action="/logout" onsubmit="return false" data-confirm="Log out of Flickr?">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <button type="submit" class="nav-logout-btn">Logout</button>
   </form>
@@ -26,6 +26,16 @@
 <main>
   {% block content %}{% endblock %}
 </main>
+
+<div id="confirm-modal" class="modal-overlay" hidden>
+  <div class="modal-box">
+    <p id="confirm-msg" class="modal-msg"></p>
+    <div class="modal-actions">
+      <button id="confirm-ok" class="btn">Confirm</button>
+      <button id="confirm-cancel" class="btn btn-secondary">Cancel</button>
+    </div>
+  </div>
+</div>
 <footer>
   &copy; {{ year }} Eric Wettstein &mdash;
   <a href="{{ github_url }}" target="_blank">GitHub</a> &mdash;

@@ -79,7 +79,7 @@
     the old key &mdash; update any MCP client configs afterwards.
   </p>
   <form method="POST" action="/regen-key"
-        onsubmit="return confirm('Regenerate your MCP API key? Existing MCP client connections will break until you update their config.')">
+        onsubmit="return false" data-confirm="Regenerate your MCP API key? Existing MCP client connections will break until you update their config.">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <button class="btn btn-secondary" type="submit">Regenerate API Key</button>
   </form>
