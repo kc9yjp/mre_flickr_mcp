@@ -117,20 +117,20 @@ function initSyncPolling() {
   if (!table) return;
   updateSyncNext();
 
-  let isRunning = false;
+  const note = document.querySelector('.sync-refresh-note');
 
   function poll() {
     fetch('/sync/status.json')
       .then(r => r.json())
       .then(data => {
         applySyncData(data);
-        isRunning = data.running;
+        if (note) note.textContent = data.running ? 'Updating every 5 seconds' : 'Updates every 30 seconds';
         setTimeout(poll, data.running ? 5000 : 30000);
       })
       .catch(() => { setTimeout(poll, 30000); });
   }
 
-  setTimeout(poll, isRunning ? 5000 : 30000);
+  poll();
 }
 
 document.addEventListener('DOMContentLoaded', () => {
