@@ -6,15 +6,8 @@ import logging
 import os
 import sys
 
-LOG_DIR = os.environ.get("FLICKR_LOG_DIR", os.path.join(os.getcwd(), "logs"))
-os.makedirs(LOG_DIR, exist_ok=True)
-LOG_FILE = os.path.join(LOG_DIR, "flickr_mcp.log")
-
 logging.basicConfig(
-    handlers=[
-        logging.StreamHandler(sys.stderr),
-        logging.FileHandler(LOG_FILE, encoding="utf-8"),
-    ],
+    stream=sys.stderr,
     level=logging.DEBUG if os.environ.get("MCP_DEBUG") else logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
 )

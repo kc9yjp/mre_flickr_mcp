@@ -19,7 +19,6 @@ resolve the correct per-user paths transparently.
 """
 
 import asyncio
-import collections
 import html
 import json
 import logging
@@ -117,8 +116,6 @@ _FLICKR_AUTHORIZE_URL     = "https://www.flickr.com/services/oauth/authorize"
 _SITE_TITLE = "Mr E Flickr MCP"
 _GITHUB_URL = "https://github.com/kc9yjp/mre_flickr_mcp"
 _FLICKR_URL = "https://www.flickr.com/photos/ejwettstein/"
-_LOG_DIR = os.environ.get("FLICKR_LOG_DIR", os.path.join(os.getcwd(), "logs"))
-_LOG_FILE = os.path.join(_LOG_DIR, "flickr_mcp.log")
 
 _WEB_CSS = """
 <style>
@@ -232,12 +229,10 @@ def _html_page(title: str, body: str, request: Request, logged_in: bool | None =
         nav_links = f"""
   <a href="/stats">Stats</a>
   <a href="/sync">Sync</a>
-  <a href="/logs">Logs</a>
   <a href="/setup">Setup</a>
   <form method="POST" action="/logout" style="margin:0" onsubmit="return confirm(\'Log out of Flickr?\')">{csrf_input}<button type="submit" style="background:none;border:none;color:#fff;font-weight:500;cursor:pointer;padding:0;font-size:1rem">Logout</button></form>"""
     else:
-        nav_links = """
-  <a href="/logs">Logs</a>"""
+        nav_links = ""
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -897,30 +892,6 @@ async def route_setup(request: Request):
     return HTMLResponse(_html_page("Setup", body, request))
 
 
-async def route_logs(request: Request):
-    max_lines = 250
-    tail_lines = []
-    if os.path.exists(_LOG_FILE):
-        with open(_LOG_FILE, "r", encoding="utf-8", errors="replace") as f:
-            tail_lines = list(collections.deque(f, max_lines))
-    if not tail_lines:
-        body = """
-        <h1>Logs</h1>
-        <div class=\"card\">
-          <p>No log file found yet.</p>
-          <p>Run the server and reload this page to view logs.</p>
-        </div>"""
-        return HTMLResponse(_html_page("Logs", body, request))
-
-    log_content = html.escape("".join(tail_lines))
-    body = f"""
-    <h1>Logs</h1>
-    <div class=\"card\">
-      <p style=\"margin-bottom:14px;color:#555;font-size:.9rem\">Showing the last {len(tail_lines)} log lines from <code>{_LOG_FILE}</code>.</p>
-      <pre style=\"background:#f0f0f0;padding:14px;border-radius:6px;font-size:.8rem;overflow-x:auto;white-space:pre-wrap;word-break:break-word;\">{log_content}</pre>
-    </div>"""
-    return HTMLResponse(_html_page("Logs", body, request))
-
 
 
 # --- SSE handler and API key middleware ---
@@ -1037,7 +1008,6 @@ async def main_sse():
             Route("/sync/{type}",    endpoint=route_sync_trigger, methods=["POST"]),
             Route("/reset",          endpoint=route_reset_db, methods=["POST"]),
             Route("/regen-key",      endpoint=route_regen_key, methods=["POST"]),
-            Route("/logs",           endpoint=route_logs),
             Route("/setup",          endpoint=route_setup),
             Route("/sse",            endpoint=_SSEHandler(sse)),
             Mount("/messages/",      app=sse.handle_post_message),

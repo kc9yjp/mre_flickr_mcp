@@ -46,6 +46,8 @@ Visit `http://localhost:8000` after starting the container:
 | `/sync` | Sync status and trigger buttons; includes Reset Database button |
 | `/setup` | Personal MCP connection config snippet (shows your API key) |
 
+Logs go to stderr and are visible via `docker compose logs -f flickr-mcp`.
+
 ## MCP Server Setup
 
 1. Build and start: `docker compose up -d`
