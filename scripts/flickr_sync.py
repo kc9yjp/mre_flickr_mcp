@@ -7,106 +7,33 @@ Usage:
 """
 
 import argparse
-import base64
-import hashlib
-import hmac
-import json
 import os
-import secrets
 import sqlite3
 import sys
 import time
-import urllib.parse
 
-import requests
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import flickr_api
 
 DB_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "flickr.db")
-CREDENTIALS_FILE = os.path.expanduser("~/.flickr_mcp/credentials.json")
-ENV_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env")
-API_URL = "https://api.flickr.com/services/rest/"
+API_URL = flickr_api.API_URL
+HTTP_TIMEOUT = flickr_api.HTTP_TIMEOUT
 PER_PAGE = 500
-HTTP_TIMEOUT = int(os.environ.get("FLICKR_HTTP_TIMEOUT", 30))
 
 EXTRAS = "description,date_upload,date_taken,last_update,tags,views,count_faves,count_comments,url_o,url_l,path_alias,media"
 
-
-# --- Auth (mirrors flickr.py) ---
-
-def load_env():
-    env = {}
-    if os.path.exists(ENV_FILE):
-        with open(ENV_FILE) as f:
-            for line in f:
-                line = line.strip()
-                if line and not line.startswith("#") and "=" in line:
-                    key, _, value = line.partition("=")
-                    env[key.strip()] = value.strip()
-    api_key = env.get("FLICKR_API_KEY") or os.environ.get("FLICKR_API_KEY")
-    api_secret = env.get("FLICKR_API_SECRET") or os.environ.get("FLICKR_API_SECRET")
-    if not api_key or not api_secret:
-        print("Error: FLICKR_API_KEY and FLICKR_API_SECRET must be set in .env", file=sys.stderr)
-        sys.exit(1)
-    return api_key, api_secret
+# Aliases re-exported for sync_*.py backward compatibility
+load_env = flickr_api._load_env
+load_credentials = flickr_api._load_credentials
 
 
-def sign_request(method, url, params, api_secret, token_secret=""):
-    sorted_params = urllib.parse.urlencode(sorted(params.items()), quote_via=urllib.parse.quote)
-    base_string = f"{method}&{urllib.parse.quote(url, safe='')}&{urllib.parse.quote(sorted_params, safe='')}"
-    signing_key = f"{urllib.parse.quote(api_secret, safe='')}&{urllib.parse.quote(token_secret, safe='')}"
-    sig = hmac.new(signing_key.encode(), base_string.encode(), hashlib.sha1)
-    return base64.b64encode(sig.digest()).decode()
-
-
-def load_credentials():
-    if not os.path.exists(CREDENTIALS_FILE):
-        print("Not logged in. Visit http://localhost:8000/login to authenticate", file=sys.stderr)
-        sys.exit(1)
-    with open(CREDENTIALS_FILE) as f:
-        return json.load(f)
-
-
-def oauth_params(api_key, extra=None):
-    params = {
-        "oauth_nonce": secrets.token_hex(16),
-        "oauth_timestamp": str(int(time.time())),
-        "oauth_consumer_key": api_key,
-        "oauth_signature_method": "HMAC-SHA1",
-        "oauth_version": "1.0",
-    }
-    if extra:
-        params.update(extra)
-    return params
-
-
-def api_get(api_key, api_secret, creds, method, extra=None):
-    params = oauth_params(api_key, {
-        "oauth_token": creds["oauth_token"],
-        "method": method,
-        "format": "json",
-        "nojsoncallback": "1",
-    })
-    if extra:
-        params.update(extra)
-    params["oauth_signature"] = sign_request("GET", API_URL, params, api_secret, creds["oauth_token_secret"])
+def api_get(method, extra=None):
+    """Thin wrapper: translate RuntimeError from flickr_api into sys.exit(1) for script use."""
     try:
-        resp = requests.get(API_URL, params=params, timeout=HTTP_TIMEOUT)
-    except requests.exceptions.Timeout:
-        print(f"API error ({method}): timed out after {HTTP_TIMEOUT}s", file=sys.stderr)
+        return flickr_api._api_get(method, extra)
+    except RuntimeError as e:
+        print(f"API error: {e}", file=sys.stderr)
         sys.exit(1)
-    except requests.exceptions.RequestException as e:
-        print(f"API error ({method}): {e}", file=sys.stderr)
-        sys.exit(1)
-    if resp.status_code == 429:
-        print(f"API error ({method}): rate limited (HTTP 429)", file=sys.stderr)
-        sys.exit(1)
-    if not resp.ok:
-        print(f"API error ({method}): HTTP {resp.status_code}", file=sys.stderr)
-        sys.exit(1)
-    data = resp.json()
-    if data.get("stat") != "ok":
-        print(f"API error ({method}): {data.get('message', 'unknown')}", file=sys.stderr)
-        sys.exit(1)
-    return data
 
 
 # --- Database ---
@@ -259,12 +186,12 @@ def upsert_photo(conn, p, owner_nsid, synced_at):
 
 # --- Fetch iterators ---
 
-def fetch_all_public(api_key, api_secret, creds):
+def fetch_all_public(user_nsid):
     """Yield every public photo for the authenticated user, paginated."""
     page, pages = 1, 1
     while page <= pages:
-        data = api_get(api_key, api_secret, creds, "flickr.people.getPublicPhotos", {
-            "user_id": creds["user_nsid"],
+        data = api_get("flickr.people.getPublicPhotos", {
+            "user_id": user_nsid,
             "extras": EXTRAS,
             "per_page": str(PER_PAGE),
             "page": str(page),
@@ -278,11 +205,11 @@ def fetch_all_public(api_key, api_secret, creds):
             time.sleep(0.5)  # stay within rate limits
 
 
-def fetch_updated(api_key, api_secret, creds, since):
+def fetch_updated(since):
     """Yield public photos updated after `since` (unix timestamp), paginated."""
     page, pages = 1, 1
     while page <= pages:
-        data = api_get(api_key, api_secret, creds, "flickr.photos.recentlyUpdated", {
+        data = api_get("flickr.photos.recentlyUpdated", {
             "min_date": str(since),
             "extras": EXTRAS,
             "per_page": str(PER_PAGE),
@@ -300,37 +227,15 @@ def fetch_updated(api_key, api_secret, creds, since):
 
 # --- Groups ---
 
-def sync_groups(api_key, api_secret, creds, conn):
+def sync_groups(conn):
+    creds = flickr_api._load_credentials()
     page, pages = 1, 1
     synced_at = int(time.time())
     total = 0
     while page <= pages:
-        params = oauth_params(api_key, {
-            "oauth_token": creds["oauth_token"],
-            "method": "flickr.people.getGroups",
+        data = api_get("flickr.people.getGroups", {
             "user_id": creds["user_nsid"],
-            "format": "json",
-            "nojsoncallback": "1",
         })
-        params["oauth_signature"] = sign_request("GET", API_URL, params, api_secret, creds["oauth_token_secret"])
-        try:
-            resp = requests.get(API_URL, params=params, timeout=HTTP_TIMEOUT)
-        except requests.exceptions.Timeout:
-            print(f"Error fetching groups: timed out after {HTTP_TIMEOUT}s", file=sys.stderr)
-            return
-        except requests.exceptions.RequestException as e:
-            print(f"Error fetching groups: {e}", file=sys.stderr)
-            return
-        if resp.status_code == 429:
-            print("Error fetching groups: rate limited (HTTP 429)", file=sys.stderr)
-            return
-        if not resp.ok:
-            print(f"Error fetching groups: HTTP {resp.status_code}", file=sys.stderr)
-            return
-        data = resp.json()
-        if data.get("stat") != "ok":
-            print(f"Error fetching groups: {data.get('message')}", file=sys.stderr)
-            return
         groups = data["groups"]["group"]
         for g in groups:
             conn.execute("""
@@ -346,7 +251,6 @@ def sync_groups(api_key, api_secret, creds, conn):
                 synced_at,
             ))
             total += 1
-        # getGroups doesn't paginate, but handle it if it does
         pages = int(data["groups"].get("pages", 1))
         page += 1
     conn.commit()
@@ -354,29 +258,16 @@ def sync_groups(api_key, api_secret, creds, conn):
     return total
 
 
-def sync_group_descriptions(api_key, api_secret, creds, conn):
+def sync_group_descriptions(conn):
     """Fetch descriptions from flickr.groups.getInfo for groups missing them."""
     rows = conn.execute("SELECT id FROM groups WHERE description IS NULL").fetchall()
     if not rows:
         return 0
     updated = 0
     for (group_id,) in rows:
-        params = oauth_params(api_key, {
-            "oauth_token": creds["oauth_token"],
-            "method": "flickr.groups.getInfo",
-            "group_id": group_id,
-            "format": "json",
-            "nojsoncallback": "1",
-        })
-        params["oauth_signature"] = sign_request("GET", API_URL, params, api_secret, creds["oauth_token_secret"])
         try:
-            resp = requests.get(API_URL, params=params, timeout=HTTP_TIMEOUT)
-        except Exception:
-            continue
-        if not resp.ok:
-            continue
-        data = resp.json()
-        if data.get("stat") != "ok":
+            data = flickr_api._api_get("flickr.groups.getInfo", {"group_id": group_id})
+        except RuntimeError:
             continue
         group = data.get("group", {})
         description = (group.get("description") or {}).get("_content", "") or ""
@@ -394,8 +285,12 @@ def sync_group_descriptions(api_key, api_secret, creds, conn):
 # --- Command ---
 
 def cmd_sync(args):
-    api_key, api_secret = load_env()
-    creds = load_credentials()
+    try:
+        flickr_api._load_env()
+        creds = flickr_api._load_credentials()
+    except RuntimeError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
 
     if not os.path.exists(DB_FILE):
         if not args.create:
@@ -414,11 +309,11 @@ def cmd_sync(args):
         if not args.full:
             print("No previous sync found — running full sync.")
         mode = "full"
-        photos = fetch_all_public(api_key, api_secret, creds)
+        photos = fetch_all_public(creds["user_nsid"])
     else:
         mode = "update"
         print(f"Incremental sync since {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(since))}")
-        photos = fetch_updated(api_key, api_secret, creds, since)
+        photos = fetch_updated(since)
 
     total = 0
     for photo in photos:

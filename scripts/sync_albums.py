@@ -7,9 +7,8 @@ import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from flickr_sync import load_env, load_credentials, oauth_params, sign_request, init_db, DB_FILE, API_URL
-
-import requests
+import flickr_api
+from flickr_sync import api_get, init_db, DB_FILE
 
 if not os.path.exists(DB_FILE):
     print(f"Database not found: {DB_FILE}\nVisit http://localhost:8000/sync to run a sync", file=sys.stderr)
@@ -17,29 +16,22 @@ if not os.path.exists(DB_FILE):
 
 conn = sqlite3.connect(DB_FILE)
 init_db(conn)
-api_key, api_secret = load_env()
-creds = load_credentials()
+try:
+    creds = flickr_api._load_credentials()
+except RuntimeError as e:
+    print(f"Error: {e}", file=sys.stderr)
+    sys.exit(1)
 
 print("Syncing albums...")
 page, pages, total = 1, 1, 0
 synced_at = int(time.time())
 
 while page <= pages:
-    params = oauth_params(api_key, {
-        "oauth_token": creds["oauth_token"],
-        "method": "flickr.photosets.getList",
+    data = api_get("flickr.photosets.getList", {
         "user_id": creds["user_nsid"],
         "per_page": "500",
         "page": str(page),
-        "format": "json",
-        "nojsoncallback": "1",
     })
-    params["oauth_signature"] = sign_request("GET", API_URL, params, api_secret, creds["oauth_token_secret"])
-    resp = requests.get(API_URL, params=params)
-    data = resp.json()
-    if data.get("stat") != "ok":
-        print(f"Error: {data.get('message')}", file=sys.stderr)
-        sys.exit(1)
 
     result = data["photosets"]
     pages = int(result.get("pages", 1))

@@ -8,9 +8,7 @@ import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from flickr_sync import load_env, load_credentials, oauth_params, sign_request, init_db, DB_FILE, API_URL, HTTP_TIMEOUT
-
-import requests
+from flickr_sync import api_get, init_db, DB_FILE
 
 
 def main():
@@ -24,41 +22,16 @@ def main():
 
     conn = sqlite3.connect(DB_FILE)
     init_db(conn)
-    api_key, api_secret = load_env()
-    creds = load_credentials()
 
     print("Syncing contacts...")
     page, pages, total = 1, 1, 0
     synced_at = int(time.time())
 
     while page <= pages:
-        params = oauth_params(api_key, {
-            "oauth_token": creds["oauth_token"],
-            "method": "flickr.contacts.getList",
+        data = api_get("flickr.contacts.getList", {
             "per_page": "1000",
             "page": str(page),
-            "format": "json",
-            "nojsoncallback": "1",
         })
-        params["oauth_signature"] = sign_request("GET", API_URL, params, api_secret, creds["oauth_token_secret"])
-        try:
-            resp = requests.get(API_URL, params=params, timeout=HTTP_TIMEOUT)
-        except requests.exceptions.Timeout:
-            print(f"Error fetching contacts: timed out after {HTTP_TIMEOUT}s", file=sys.stderr)
-            sys.exit(1)
-        except requests.exceptions.RequestException as e:
-            print(f"Error fetching contacts: {e}", file=sys.stderr)
-            sys.exit(1)
-        if resp.status_code == 429:
-            print("Error fetching contacts: rate limited (HTTP 429)", file=sys.stderr)
-            sys.exit(1)
-        if not resp.ok:
-            print(f"Error fetching contacts: HTTP {resp.status_code}", file=sys.stderr)
-            sys.exit(1)
-        data = resp.json()
-        if data.get("stat") != "ok":
-            print(f"Error: {data.get('message')}", file=sys.stderr)
-            sys.exit(1)
 
         contacts = data["contacts"]
         pages = int(contacts.get("pages", 1))
