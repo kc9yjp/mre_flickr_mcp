@@ -22,11 +22,6 @@ function showTab(name) {
   document.querySelector('[data-tab="' + name + '"]').classList.add('active');
 }
 
-function fmtElapsed(startSec) {
-  const s = Math.floor(Date.now() / 1000) - startSec;
-  if (s < 60) return s + 's';
-  return Math.floor(s / 60) + 'm ' + (s % 60) + 's';
-}
 
 function showConfirm(message, onOk) {
   const overlay = document.getElementById('confirm-modal');
@@ -146,13 +141,4 @@ document.addEventListener('DOMContentLoaded', () => {
       hour: 'numeric', minute: '2-digit'
     });
   });
-
-  const elapsed = document.querySelectorAll('[data-elapsed]');
-  if (elapsed.length) {
-    function tick() {
-      elapsed.forEach(el => { el.textContent = fmtElapsed(parseInt(el.dataset.elapsed)); });
-    }
-    tick();
-    setInterval(tick, 1000);
-  }
 });
