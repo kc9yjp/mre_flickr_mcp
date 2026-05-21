@@ -593,9 +593,9 @@ async def route_sync_page(request: Request):
         return redir
     import time as _time
     from db import get_db_for_user
-    running = _get_user_lock(db_username).locked()
     csrf_token = request.session.get("csrf_token", "")
     db_username = request.session.get("username", "")
+    running = _get_user_lock(db_username).locked()
 
     sync_rows = []
     try:
