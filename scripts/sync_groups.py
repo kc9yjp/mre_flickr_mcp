@@ -33,22 +33,21 @@ def main():
         print(f"Database not found: {target_db}\nVisit http://localhost:8000/sync to run a sync", file=sys.stderr)
         sys.exit(1)
 
-    conn = sqlite3.connect(target_db)
-    init_db(conn)
+    with sqlite3.connect(target_db) as conn:
+        init_db(conn)
 
-    print("Syncing groups...")
-    synced_at = int(time.time())
-    total = sync_groups(conn)
+        print("Syncing groups...")
+        synced_at = int(time.time())
+        total = sync_groups(conn)
 
-    print("Fetching group descriptions...")
-    sync_group_descriptions(conn)
+        print("Fetching group descriptions...")
+        sync_group_descriptions(conn)
 
-    conn.execute(
-        "INSERT INTO sync_log (synced_at, mode, photos_fetched, type) VALUES (?, 'full', ?, 'groups')",
-        (synced_at, total or 0),
-    )
-    conn.commit()
-    conn.close()
+        conn.execute(
+            "INSERT INTO sync_log (synced_at, mode, photos_fetched, type) VALUES (?, 'full', ?, 'groups')",
+            (synced_at, total or 0),
+        )
+        conn.commit()
     print("Done.")
 
 

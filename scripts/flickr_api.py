@@ -34,6 +34,7 @@ CREDENTIALS_FILE = os.path.join(_CREDS_BASE, "credentials.json")
 ENV_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env")
 API_URL = "https://api.flickr.com/services/rest/"
 HTTP_TIMEOUT = int(os.environ.get("FLICKR_HTTP_TIMEOUT", 30))
+_API_MAX_RETRIES = 3
 
 
 def credentials_file(nsid: str) -> str:
@@ -164,42 +165,89 @@ def _oauth_params(api_key, extra=None):
 # API wrappers
 # ---------------------------------------------------------------------------
 
+def _api_call(verb: str, method: str, params_factory) -> dict:
+    """Send a signed Flickr API request with exponential-backoff retry.
+
+    ``params_factory`` is called on every attempt so that each request gets a
+    fresh OAuth nonce and timestamp.  Retries on network errors, timeouts,
+    HTTP 429 (rate limit), and HTTP 5xx.  Other HTTP errors and Flickr
+    application-level errors are raised immediately.
+
+    Raises ``RuntimeError`` on permanent failure.
+    """
+    for attempt in range(_API_MAX_RETRIES):
+        params = params_factory()
+        try:
+            if verb == "GET":
+                resp = requests.get(API_URL, params=params, timeout=HTTP_TIMEOUT)
+            else:
+                resp = requests.post(API_URL, data=params, timeout=HTTP_TIMEOUT)
+        except requests.exceptions.Timeout:
+            if attempt < _API_MAX_RETRIES - 1:
+                wait = 2 ** attempt
+                logging.warning("%s %s timed out, retrying in %ds", verb, method, wait)
+                time.sleep(wait)
+                continue
+            raise RuntimeError(f"Flickr API timed out ({method})")
+        except requests.exceptions.RequestException as e:
+            if attempt < _API_MAX_RETRIES - 1:
+                wait = 2 ** attempt
+                logging.warning("%s %s failed (%s), retrying in %ds", verb, method, e, wait)
+                time.sleep(wait)
+                continue
+            raise RuntimeError(f"Flickr API request failed ({method}): {e}")
+
+        if resp.status_code == 429:
+            if attempt < _API_MAX_RETRIES - 1:
+                wait = int(resp.headers.get("Retry-After", 60))
+                logging.warning("Rate limited (HTTP 429) on %s, waiting %ds", method, wait)
+                time.sleep(wait)
+                continue
+            raise RuntimeError(f"Flickr rate limit hit ({method})")
+
+        if resp.status_code >= 500:
+            if attempt < _API_MAX_RETRIES - 1:
+                wait = 2 ** attempt
+                logging.warning("HTTP %s on %s, retrying in %ds", resp.status_code, method, wait)
+                time.sleep(wait)
+                continue
+            raise RuntimeError(f"Flickr API HTTP {resp.status_code} ({method})")
+
+        if not resp.ok:
+            raise RuntimeError(f"Flickr API HTTP {resp.status_code} ({method})")
+
+        data = resp.json()
+        if data.get("stat") != "ok":
+            raise RuntimeError(f"Flickr API error: {data.get('message', 'unknown')}")
+        return data
+
+    raise RuntimeError(f"Flickr API failed after {_API_MAX_RETRIES} attempts ({method})")  # unreachable
+
+
 def _api_get(method, extra=None):
     """Perform a signed OAuth GET against the Flickr REST API.
 
     Credentials are loaded via ``_load_credentials()`` which resolves the active
     user from the ``db._current_user`` ContextVar automatically.
-    Raises ``RuntimeError`` on any API or network error.
+    Retries up to ``_API_MAX_RETRIES`` times on transient errors.
+    Raises ``RuntimeError`` on permanent failure.
     """
     api_key, api_secret = _load_env()
     creds = _load_credentials()
-    params = _oauth_params(api_key, {
-        "oauth_token": creds["oauth_token"],
-        "method": method,
-        "format": "json",
-        "nojsoncallback": "1",
-    })
-    if extra:
-        params.update(extra)
-    params["oauth_signature"] = _sign("GET", API_URL, params, api_secret, creds["oauth_token_secret"])
-    try:
-        resp = requests.get(API_URL, params=params, timeout=HTTP_TIMEOUT)
-    except requests.exceptions.Timeout:
-        logging.error("GET %s timed out after %ss", method, HTTP_TIMEOUT)
-        raise RuntimeError(f"Flickr API request timed out ({method})")
-    except requests.exceptions.RequestException as e:
-        logging.error("GET %s failed: %s", method, e)
-        raise RuntimeError(f"Flickr API request failed ({method}): {e}")
-    if resp.status_code == 429:
-        logging.error("GET %s rate limited (HTTP 429)", method)
-        raise RuntimeError(f"Flickr rate limit hit ({method})")
-    if not resp.ok:
-        logging.error("GET %s HTTP %s", method, resp.status_code)
-        raise RuntimeError(f"Flickr API HTTP {resp.status_code} ({method})")
-    data = resp.json()
-    if data.get("stat") != "ok":
-        raise RuntimeError(f"Flickr API error: {data.get('message', 'unknown')}")
-    return data
+
+    def _make_params():
+        p = _oauth_params(api_key, {
+            "oauth_token": creds["oauth_token"],
+            "method": method,
+            "format": "json",
+            "nojsoncallback": "1",
+        })
+        if extra:
+            p.update(extra)
+        p["oauth_signature"] = _sign("GET", API_URL, p, api_secret, creds["oauth_token_secret"])
+        return p
+
+    return _api_call("GET", method, _make_params)
 
 
 def _api_post(method, extra=None):
@@ -207,34 +255,22 @@ def _api_post(method, extra=None):
 
     Credentials are loaded via ``_load_credentials()`` which resolves the active
     user from the ``db._current_user`` ContextVar automatically.
-    Raises ``RuntimeError`` on any API or network error.
+    Retries up to ``_API_MAX_RETRIES`` times on transient errors.
+    Raises ``RuntimeError`` on permanent failure.
     """
     api_key, api_secret = _load_env()
     creds = _load_credentials()
-    params = _oauth_params(api_key, {
-        "oauth_token": creds["oauth_token"],
-        "method": method,
-        "format": "json",
-        "nojsoncallback": "1",
-    })
-    if extra:
-        params.update(extra)
-    params["oauth_signature"] = _sign("POST", API_URL, params, api_secret, creds["oauth_token_secret"])
-    try:
-        resp = requests.post(API_URL, data=params, timeout=HTTP_TIMEOUT)
-    except requests.exceptions.Timeout:
-        logging.error("POST %s timed out after %ss", method, HTTP_TIMEOUT)
-        raise RuntimeError(f"Flickr API request timed out ({method})")
-    except requests.exceptions.RequestException as e:
-        logging.error("POST %s failed: %s", method, e)
-        raise RuntimeError(f"Flickr API request failed ({method}): {e}")
-    if resp.status_code == 429:
-        logging.error("POST %s rate limited (HTTP 429)", method)
-        raise RuntimeError(f"Flickr rate limit hit ({method})")
-    if not resp.ok:
-        logging.error("POST %s HTTP %s", method, resp.status_code)
-        raise RuntimeError(f"Flickr API HTTP {resp.status_code} ({method})")
-    data = resp.json()
-    if data.get("stat") != "ok":
-        raise RuntimeError(f"Flickr API error: {data.get('message', 'unknown')}")
-    return data
+
+    def _make_params():
+        p = _oauth_params(api_key, {
+            "oauth_token": creds["oauth_token"],
+            "method": method,
+            "format": "json",
+            "nojsoncallback": "1",
+        })
+        if extra:
+            p.update(extra)
+        p["oauth_signature"] = _sign("POST", API_URL, p, api_secret, creds["oauth_token_secret"])
+        return p
+
+    return _api_call("POST", method, _make_params)

@@ -275,8 +275,8 @@ async def route_root(request: Request):
                 if sync_row and sync_row[0]:
                     last_sync = f'<time data-ts="{sync_row[0]}">—</time>'
             db_ok = True
-        except Exception:
-            pass
+        except Exception as e:
+            logging.debug("Could not load home page DB stats: %s", e)
 
     if not logged_in:
         body = f"""<h1>{_SITE_TITLE}</h1>
@@ -440,7 +440,8 @@ async def route_oauth_callback(request: Request):
 
     try:
         api_key, api_secret = _load_env()
-    except Exception:
+    except Exception as e:
+        logging.error("OAuth callback: failed to load env: %s", e)
         return RedirectResponse("/login?msg=err")
 
     params = _oauth_params(api_key, {
@@ -472,8 +473,8 @@ async def route_oauth_callback(request: Request):
     try:
         existing = _load_credentials(nsid=user_nsid)
         mcp_api_key = existing.get("mcp_api_key")
-    except Exception:
-        pass
+    except Exception as e:
+        logging.debug("No existing credentials for %s (first login): %s", user_nsid, e)
     if not mcp_api_key:
         mcp_api_key = str(uuid.uuid4())
 
@@ -600,8 +601,8 @@ async def route_sync_page(request: Request):
                 " JOIN (SELECT type, MAX(synced_at) AS ts FROM sync_log GROUP BY type) m"
                 " ON s.type = m.type AND s.synced_at = m.ts"
             ).fetchall()
-    except Exception:
-        pass
+    except Exception as e:
+        logging.warning("Could not load sync log for %s: %s", db_username, e)
 
     def _ts(ts):
         return f'<time data-ts="{ts}">—</time>' if ts else "—"
@@ -761,8 +762,8 @@ async def route_setup(request: Request):
     if user_nsid:
         try:
             mcp_api_key = _load_credentials(nsid=user_nsid).get("mcp_api_key", "")
-        except Exception:
-            pass
+        except Exception as e:
+            logging.warning("Could not load credentials for setup page (%s): %s", user_nsid, e)
 
     auth_value   = f'"Authorization": "Bearer {mcp_api_key}"' if mcp_api_key else ""
     headers_block = f',\n      "headers": {{{auth_value}}}' if mcp_api_key else ""
@@ -918,8 +919,8 @@ class _SSEHandler:
                     "username": creds.get("username", user_nsid),
                 }
                 token = _db_current_user.set(user_ctx)
-            except Exception:
-                pass
+            except Exception as e:
+                logging.error("SSE handler: failed to load credentials for %s: %s", user_nsid, e)
         try:
             async with self._sse.connect_sse(scope, receive, send) as streams:
                 await server.run(streams[0], streams[1], server.create_initialization_options())

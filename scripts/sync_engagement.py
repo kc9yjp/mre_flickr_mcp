@@ -65,67 +65,66 @@ def main():
         print(f"Database not found: {target_db}\nVisit http://localhost:8000/sync to run a sync", file=sys.stderr)
         sys.exit(1)
 
-    conn = sqlite3.connect(target_db)
-    init_db(conn)
+    with sqlite3.connect(target_db) as conn:
+        init_db(conn)
 
-    # Clear existing engagement so we start fresh (avoids double-counting on resume)
-    conn.execute("DELETE FROM contact_engagement")
-    conn.commit()
+        # Clear existing engagement so we start fresh (avoids double-counting on resume)
+        conn.execute("DELETE FROM contact_engagement")
+        conn.commit()
 
-    # --- Faves ---
-    fave_photos = conn.execute("SELECT id FROM photos WHERE favorites > 0").fetchall()
-    print(f"Fetching faves for {len(fave_photos)} photos...")
-    batch: defaultdict[str, int] = defaultdict(int)
-    for i, (photo_id,) in enumerate(fave_photos, 1):
-        page, pages = 1, 1
-        while page <= pages:
-            data = api_get("flickr.photos.getFavorites", {"photo_id": photo_id, "per_page": "50", "page": str(page)})
+        # --- Faves ---
+        fave_photos = conn.execute("SELECT id FROM photos WHERE favorites > 0").fetchall()
+        print(f"Fetching faves for {len(fave_photos)} photos...")
+        batch: defaultdict[str, int] = defaultdict(int)
+        for i, (photo_id,) in enumerate(fave_photos, 1):
+            page, pages = 1, 1
+            while page <= pages:
+                data = api_get("flickr.photos.getFavorites", {"photo_id": photo_id, "per_page": "50", "page": str(page)})
+                if not data:
+                    break
+                result = data["photo"]
+                pages = int(result.get("pages", 1))
+                for person in result.get("person", []):
+                    batch[person["nsid"]] += 1
+                page += 1
+                if page <= pages:
+                    time.sleep(0.5)
+            if i % 100 == 0:
+                for contact_id, count in batch.items():
+                    upsert_engagement(conn, contact_id, faves=count)
+                conn.commit()
+                batch.clear()
+                print(f"  {i}/{len(fave_photos)} photos processed for faves")
+            time.sleep(0.5)
+        # flush remaining faves
+        for contact_id, count in batch.items():
+            upsert_engagement(conn, contact_id, faves=count)
+        conn.commit()
+        print(f"  {len(fave_photos)}/{len(fave_photos)} photos processed for faves")
+
+        # --- Comments ---
+        comment_photos = conn.execute("SELECT id FROM photos WHERE comments > 0").fetchall()
+        print(f"Fetching comments for {len(comment_photos)} photos...")
+        batch = defaultdict(int)
+        for i, (photo_id,) in enumerate(comment_photos, 1):
+            data = api_get("flickr.photos.comments.getList", {"photo_id": photo_id})
             if not data:
-                break
-            result = data["photo"]
-            pages = int(result.get("pages", 1))
-            for person in result.get("person", []):
-                batch[person["nsid"]] += 1
-            page += 1
-            if page <= pages:
-                time.sleep(0.5)
-        if i % 100 == 0:
-            for contact_id, count in batch.items():
-                upsert_engagement(conn, contact_id, faves=count)
-            conn.commit()
-            batch.clear()
-            print(f"  {i}/{len(fave_photos)} photos processed for faves")
-        time.sleep(0.5)
-    # flush remaining faves
-    for contact_id, count in batch.items():
-        upsert_engagement(conn, contact_id, faves=count)
-    conn.commit()
-    print(f"  {len(fave_photos)}/{len(fave_photos)} photos processed for faves")
+                continue
+            for comment in data.get("comments", {}).get("comment", []):
+                batch[comment["author"]] += 1
+            if i % 100 == 0:
+                for contact_id, count in batch.items():
+                    upsert_engagement(conn, contact_id, comments=count)
+                conn.commit()
+                batch.clear()
+                print(f"  {i}/{len(comment_photos)} photos processed for comments")
+            time.sleep(0.5)
+        # flush remaining comments
+        for contact_id, count in batch.items():
+            upsert_engagement(conn, contact_id, comments=count)
+        conn.commit()
 
-    # --- Comments ---
-    comment_photos = conn.execute("SELECT id FROM photos WHERE comments > 0").fetchall()
-    print(f"Fetching comments for {len(comment_photos)} photos...")
-    batch = defaultdict(int)
-    for i, (photo_id,) in enumerate(comment_photos, 1):
-        data = api_get("flickr.photos.comments.getList", {"photo_id": photo_id})
-        if not data:
-            continue
-        for comment in data.get("comments", {}).get("comment", []):
-            batch[comment["author"]] += 1
-        if i % 100 == 0:
-            for contact_id, count in batch.items():
-                upsert_engagement(conn, contact_id, comments=count)
-            conn.commit()
-            batch.clear()
-            print(f"  {i}/{len(comment_photos)} photos processed for comments")
-        time.sleep(0.5)
-    # flush remaining comments
-    for contact_id, count in batch.items():
-        upsert_engagement(conn, contact_id, comments=count)
-    conn.commit()
-
-    total = conn.execute("SELECT COUNT(*) FROM contact_engagement").fetchone()[0]
-    conn.close()
+        total = conn.execute("SELECT COUNT(*) FROM contact_engagement").fetchone()[0]
     print(f"Done. Engagement recorded for {total} contacts.")
 
 

@@ -333,36 +333,35 @@ def cmd_sync(args):
         os.makedirs(os.path.dirname(target_db), exist_ok=True)
         print(f"Creating database at {target_db}")
 
-    conn = sqlite3.connect(target_db)
-    init_db(conn)
+    with sqlite3.connect(target_db) as conn:
+        init_db(conn)
 
-    synced_at = int(time.time())
-    since = last_sync_time(conn)
+        synced_at = int(time.time())
+        since = last_sync_time(conn)
 
-    if args.full or since is None:
-        if not args.full:
-            print("No previous sync found — running full sync.")
-        mode = "full"
-        photos = fetch_all_public(creds["user_nsid"])
-    else:
-        mode = "update"
-        print(f"Incremental sync since {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(since))}")
-        photos = fetch_updated(since)
+        if args.full or since is None:
+            if not args.full:
+                print("No previous sync found — running full sync.")
+            mode = "full"
+            photos = fetch_all_public(creds["user_nsid"])
+        else:
+            mode = "update"
+            print(f"Incremental sync since {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(since))}")
+            photos = fetch_updated(since)
 
-    total = 0
-    for photo in photos:
-        upsert_photo(conn, photo, creds["user_nsid"], synced_at)
-        total += 1
-        if total % 100 == 0:
-            conn.commit()
+        total = 0
+        for photo in photos:
+            upsert_photo(conn, photo, creds["user_nsid"], synced_at)
+            total += 1
+            if total % 100 == 0:
+                conn.commit()
 
-    conn.commit()
-    conn.execute(
-        "INSERT INTO sync_log (synced_at, mode, photos_fetched, type) VALUES (?, ?, ?, 'photos')",
-        (synced_at, mode, total),
-    )
-    conn.commit()
-    conn.close()
+        conn.commit()
+        conn.execute(
+            "INSERT INTO sync_log (synced_at, mode, photos_fetched, type) VALUES (?, ?, ?, 'photos')",
+            (synced_at, mode, total),
+        )
+        conn.commit()
     print(f"Done. {total} photos synced ({mode}) to {target_db}.")
 
 
