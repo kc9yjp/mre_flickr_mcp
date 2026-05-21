@@ -2,16 +2,16 @@
 {% block content %}
 
 {% macro pre_snippet(id, content) %}
-<div style="position:relative">
-  <pre id="{{ id }}" style="background:#f0f0f0;padding:14px;border-radius:6px;font-size:.82rem;overflow-x:auto;margin-bottom:6px">{{ content }}</pre>
-  <button class="copy-btn" style="position:absolute;top:8px;right:8px" onclick="copyEl(this,'{{ id }}')">Copy</button>
+<div class="snippet-wrap">
+  <pre id="{{ id }}" class="snippet-pre">{{ content }}</pre>
+  <button class="copy-btn snippet-copy" onclick="copyEl(this,'{{ id }}')">Copy</button>
 </div>
 {% endmacro %}
 
 <h1>Setup</h1>
 
 <div class="card">
-  <p style="color:#555;font-size:.9rem;margin-bottom:16px">
+  <p class="card-intro">
     The MCP server speaks SSE at <code>{{ sse_url }}</code>.
     Pick your client below for the exact config snippet.
   </p>
@@ -28,53 +28,53 @@
   <div id="tab-claude-code" class="tab-pane active">
     <p>Add to <code>.mcp.json</code> in your project root, or <code>~/.claude/mcp.json</code> for all projects.</p>
     {{ pre_snippet("snip-cc", snippets.claude_code) }}
-    {% if mcp_api_key %}<p style="font-size:.85rem;color:#555;margin-top:4px">This snippet includes your personal API key. Keep it private.</p>{% endif %}
+    {% if mcp_api_key %}<p class="api-key-note">This snippet includes your personal API key. Keep it private.</p>{% endif %}
   </div>
 
   <div id="tab-claude-desktop" class="tab-pane">
     <p>Edit <code>~/Library/Application Support/Claude/claude_desktop_config.json</code> (macOS) or
        <code>%APPDATA%\Claude\claude_desktop_config.json</code> (Windows).</p>
     {{ pre_snippet("snip-cd", snippets.claude_desktop) }}
-    {% if mcp_api_key %}<p style="font-size:.85rem;color:#555;margin-top:4px">This snippet includes your personal API key. Keep it private.</p>{% endif %}
+    {% if mcp_api_key %}<p class="api-key-note">This snippet includes your personal API key. Keep it private.</p>{% endif %}
     <p class="file-hint">Restart Claude Desktop after saving.</p>
   </div>
 
   <div id="tab-cursor" class="tab-pane">
     <p>Add to <code>~/.cursor/mcp.json</code> (global) or <code>.cursor/mcp.json</code> in your project.</p>
     {{ pre_snippet("snip-cursor", snippets.cursor) }}
-    {% if mcp_api_key %}<p style="font-size:.85rem;color:#555;margin-top:4px">This snippet includes your personal API key. Keep it private.</p>{% endif %}
+    {% if mcp_api_key %}<p class="api-key-note">This snippet includes your personal API key. Keep it private.</p>{% endif %}
     <p class="file-hint">Cursor detects SSE servers from the <code>url</code> field automatically &mdash; no <code>type</code> needed.</p>
   </div>
 
   <div id="tab-windsurf" class="tab-pane">
     <p>Add to <code>~/.codeium/windsurf/mcp_config.json</code>.</p>
     {{ pre_snippet("snip-windsurf", snippets.windsurf) }}
-    {% if mcp_api_key %}<p style="font-size:.85rem;color:#555;margin-top:4px">This snippet includes your personal API key. Keep it private.</p>{% endif %}
+    {% if mcp_api_key %}<p class="api-key-note">This snippet includes your personal API key. Keep it private.</p>{% endif %}
     <p class="file-hint">Same format as Cursor. Reload the Windsurf window after saving.</p>
   </div>
 
   <div id="tab-opencode" class="tab-pane">
     <p>Add to <code>~/.config/opencode/config.json</code>.</p>
     {{ pre_snippet("snip-opencode", snippets.opencode) }}
-    {% if mcp_api_key %}<p style="font-size:.85rem;color:#555;margin-top:4px">This snippet includes your personal API key. Keep it private.</p>{% endif %}
+    {% if mcp_api_key %}<p class="api-key-note">This snippet includes your personal API key. Keep it private.</p>{% endif %}
   </div>
 
   <div id="tab-open-webui" class="tab-pane">
     <p>Open WebUI connects to MCP servers through its admin panel &mdash; no config file needed.</p>
-    <ol style="color:#555;font-size:.9rem;line-height:2;padding-left:20px">
+    <ol class="setup-steps">
       <li>Go to <strong>Admin &rarr; Settings &rarr; Tools</strong></li>
       <li>Click <strong>Add Tool Server</strong></li>
       <li>Enter the server URL:</li>
     </ol>
     {{ pre_snippet("snip-webui", sse_url) }}
-    {% if mcp_api_key %}<p style="font-size:.85rem;color:#555;margin-top:8px">Enter your personal API key in the Authorization field.</p>{% endif %}
+    {% if mcp_api_key %}<p class="api-key-note">Enter your personal API key in the Authorization field.</p>{% endif %}
     <p class="file-hint">Ollama does not support MCP natively &mdash; use Open WebUI as the agent layer on top of Ollama.</p>
   </div>
 </div>
 
-<div class="card" style="margin-top:16px">
-  <h2 style="margin-top:0">API Key</h2>
-  <p style="color:#555;font-size:.9rem;margin-bottom:12px">
+<div class="card card-spaced">
+  <h2 class="card-title">API Key</h2>
+  <p class="card-hint">
     Your current key is shown in the snippets above. Regenerating invalidates
     the old key &mdash; update any MCP client configs afterwards.
   </p>
