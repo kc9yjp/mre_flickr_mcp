@@ -78,6 +78,11 @@
     {{ pre_snippet("snip-stdio", snippets.stdio) }}
     {% if mcp_api_key %}<p class="api-key-note">This snippet includes your Flickr API credentials and personal MCP API key. Keep it private.</p>{% endif %}
     <p class="file-hint">Stdio mode has no web UI &mdash; use <a href="/login">login</a> and <a href="/sync">sync</a> via the SSE server.</p>
+    <details class="file-hint">
+      <summary>Exec into a running container instead (advanced)</summary>
+      <p>If the SSE container is already running you can attach to it directly, though this is not how MCP clients normally work &mdash; they expect to spawn the process, not attach to one.</p>
+      {{ pre_snippet("snip-stdio-exec", snippets.stdio_exec) }}
+    </details>
   </div>
 </div>
 

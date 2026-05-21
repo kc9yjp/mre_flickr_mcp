@@ -667,6 +667,13 @@ async def route_setup(request: Request):
     ]
     stdio_cfg = {"mcpServers": {"flickr": {"command": "docker", "args": stdio_args}}}
 
+    exec_key_part = f" MCP_API_KEY={mcp_api_key}" if mcp_api_key else " MCP_API_KEY=<your-api-key>"
+    stdio_exec_cmd = (
+        "docker compose exec -T flickr-mcp \\\n"
+        f"  env MCP_TRANSPORT=stdio{exec_key_part} \\\n"
+        "  python scripts/flickr_mcp.py"
+    )
+
     snippets = {
         "claude_code":    json.dumps(claude_code_cfg, indent=2),
         "claude_desktop": json.dumps(claude_code_cfg, indent=2),
@@ -674,6 +681,7 @@ async def route_setup(request: Request):
         "windsurf":       json.dumps(cursor_cfg, indent=2),
         "opencode":       json.dumps(opencode_cfg, indent=2),
         "stdio":          json.dumps(stdio_cfg, indent=2),
+        "stdio_exec":     stdio_exec_cmd,
     }
 
     ctx = _base_ctx(request, "Setup")
