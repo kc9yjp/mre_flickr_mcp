@@ -160,9 +160,10 @@ async def _edit_album(args):
     album_id = args["album_id"]
     with get_db() as conn:
         row = conn.execute("SELECT title, description FROM albums WHERE id = ?", (album_id,)).fetchone()
-        title = args.get("title", row["title"] if row else "")
-        description = args.get("description", row["description"] if row else "")
-        flickr_api._api_post("flickr.photosets.editMeta", {"photoset_id": album_id, "title": title, "description": description})
+    title = args.get("title", row["title"] if row else "")
+    description = args.get("description", row["description"] if row else "")
+    flickr_api._api_post("flickr.photosets.editMeta", {"photoset_id": album_id, "title": title, "description": description})
+    with get_db() as conn:
         conn.execute("UPDATE albums SET title=?, description=? WHERE id=?", (title, description, album_id))
     return [TextContent(type="text", text=f"Album {album_id} updated.")]
 

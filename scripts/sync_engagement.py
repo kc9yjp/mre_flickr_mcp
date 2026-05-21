@@ -74,8 +74,6 @@ def main():
             page, pages = 1, 1
             while page <= pages:
                 data = api_get("flickr.photos.getFavorites", {"photo_id": photo_id, "per_page": "50", "page": str(page)})
-                if not data:
-                    break
                 result = data["photo"]
                 pages = int(result.get("pages", 1))
                 for person in result.get("person", []):
@@ -102,8 +100,6 @@ def main():
         batch = defaultdict(int)
         for i, (photo_id,) in enumerate(comment_photos, 1):
             data = api_get("flickr.photos.comments.getList", {"photo_id": photo_id})
-            if not data:
-                continue
             for comment in data.get("comments", {}).get("comment", []):
                 batch[comment["author"]] += 1
             if i % 100 == 0:

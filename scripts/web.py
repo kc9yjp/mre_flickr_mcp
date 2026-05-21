@@ -550,6 +550,11 @@ async def route_stats(request: Request):
         <div class="alert alert-info">No database yet. Run a sync first.</div>
         <p><a href="/sync" class="btn">Go to Sync</a></p>"""
         return HTMLResponse(_html_page("Stats", body, request))
+    except Exception as e:
+        logging.exception("route_stats error")
+        body = f"""<h1>Stats</h1>
+        <div class="alert alert-danger">Error loading stats: {e}</div>"""
+        return HTMLResponse(_html_page("Stats", body, request))
 
     counts = {}
     for row in tag_rows:
