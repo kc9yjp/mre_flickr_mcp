@@ -487,6 +487,9 @@ def _build_sync_rows(db_username: str) -> list[dict]:
     for r in raw_rows:
         stype = r["type"]
         last_ts = r["last"]
+        # Approximation: the background loop checks age >= REFRESH_INTERVAL, so
+        # last_ts + REFRESH_INTERVAL is a reasonable estimate but may lag slightly
+        # after a manual trigger (the loop wakes on its own schedule, not on demand).
         next_ts = (last_ts + REFRESH_INTERVAL) if last_ts else None
         rows.append({
             "type": stype,
