@@ -5,7 +5,7 @@ services:
     environment:
       - MCP_PORT=8000
     volumes:
-      - flickr-creds:/root/.flickr_mcp
+      - flickr-creds:/home/app/.flickr_mcp
       - flickr-data:/app/data
     ports:
       - "8000:8000"
@@ -16,7 +16,7 @@ services:
     environment:
       - MCP_TRANSPORT=stdio
     volumes:
-      - flickr-creds:/root/.flickr_mcp
+      - flickr-creds:/home/app/.flickr_mcp
       - flickr-data:/app/data
     stdin_open: true
     profiles: [stdio]

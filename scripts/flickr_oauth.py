@@ -8,14 +8,12 @@ import json
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import flickr_api
 
-api_key, api_secret = flickr_api._load_env()
-
 REQUEST_TOKEN_URL = "https://www.flickr.com/services/oauth/request_token"
 AUTHORIZE_URL = "https://www.flickr.com/services/oauth/authorize"
 ACCESS_TOKEN_URL = "https://www.flickr.com/services/oauth/access_token"
 CALLBACK = "oob"  # out-of-band, user copies verifier manually
 
-def get_request_token():
+def get_request_token(api_key, api_secret):
     params = flickr_api._oauth_params(api_key, {"oauth_callback": CALLBACK})
     params["oauth_signature"] = flickr_api._sign("GET", REQUEST_TOKEN_URL, params, api_secret)
     
@@ -32,9 +30,10 @@ def get_request_token():
     return data["oauth_token"], data["oauth_token_secret"]
 
 if __name__ == "__main__":
+    api_key, api_secret = flickr_api._load_env()
     if len(sys.argv) == 1:
         # Step 1: Get request token
-        token, token_secret = get_request_token()
+        token, token_secret = get_request_token(api_key, api_secret)
         auth_url = f"{AUTHORIZE_URL}?oauth_token={token}&perms=write"
         print(json.dumps({
             "oauth_token": token,
@@ -46,7 +45,7 @@ if __name__ == "__main__":
         token = sys.argv[2]
         token_secret = sys.argv[3]
         verifier = sys.argv[4]
-        
+
         params = flickr_api._oauth_params(api_key, {
             "oauth_token": token,
             "oauth_verifier": verifier,
