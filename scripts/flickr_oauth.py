@@ -1,14 +1,14 @@
 import hashlib
 import hmac
+import os
 import time
 import urllib.parse
 import requests
 import json
 import sys
 
-# Load credentials
-api_key = "b5451bada0439dceca3abf51686605ff"
-api_secret = "b357569f898fdf9d"
+api_key = os.environ["FLICKR_API_KEY"]
+api_secret = os.environ["FLICKR_API_SECRET"]
 
 REQUEST_TOKEN_URL = "https://www.flickr.com/services/oauth/request_token"
 AUTHORIZE_URL = "https://www.flickr.com/services/oauth/authorize"

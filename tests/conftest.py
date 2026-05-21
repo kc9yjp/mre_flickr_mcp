@@ -106,13 +106,8 @@ def mem_db(tmp_path) -> str:
 @pytest.fixture()
 def patched_server(mem_db, tmp_path):
     """
-    Import flickr_mcp with all external dependencies patched out:
-    - db() returns the in-memory fixture DB
-    - _load_env() returns fake keys
-    - _load_credentials() returns fake OAuth creds
-    - _api_get / _api_post are replaced with controllable MagicMocks
+    Import mcp_tools with all external dependencies patched out.
     """
-    # Patch file-system checks so the module loads cleanly
     creds_file = tmp_path / "credentials.json"
     creds_file.write_text(json.dumps(FAKE_CREDS))
 
@@ -121,15 +116,19 @@ def patched_server(mem_db, tmp_path):
         f"FLICKR_API_KEY={FAKE_ENV[0]}\nFLICKR_API_SECRET={FAKE_ENV[1]}\n"
     )
 
+    def _make_conn():
+        c = sqlite3.connect(mem_db)
+        c.row_factory = sqlite3.Row
+        return c
+
     with (
-        patch("flickr_mcp.DB_FILE", str(tmp_path / "flickr.db")),
-        patch("flickr_mcp.CREDENTIALS_FILE", str(creds_file)),
-        patch("flickr_mcp.ENV_FILE", str(env_file)),
-        patch("flickr_mcp.db", side_effect=lambda: sqlite3.connect(mem_db)),
-        patch("flickr_mcp._load_credentials", return_value=FAKE_CREDS),
-        patch("flickr_mcp._load_env", return_value=FAKE_ENV),
+        patch("flickr_api.CREDENTIALS_FILE", str(creds_file)),
+        patch("flickr_api.ENV_FILE", str(env_file)),
+        patch("mcp_tools.db", side_effect=_make_conn),
+        patch("mcp_tools._load_credentials", return_value=FAKE_CREDS),
+        patch("mcp_tools._load_env", return_value=FAKE_ENV),
     ):
-        import flickr_mcp as mcp
+        import mcp_tools as mcp
         api_get = MagicMock()
         api_post = MagicMock()
         with (

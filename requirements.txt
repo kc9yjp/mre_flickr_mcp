@@ -1,0 +1,6 @@
+requests
+mcp
+starlette
+uvicorn[standard]
+python-multipart
+itsdangerous

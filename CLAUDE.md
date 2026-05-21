@@ -11,6 +11,21 @@ A Flickr MCP (Model Context Protocol) server. The server always runs in SSE/web 
 - `scripts/flickr_sync.py` and `scripts/sync_*.py` — sync scripts invoked by the server
 - `scripts/flickr.py` — standalone CLI (legacy, rarely used directly)
 
+## Local Development
+
+```bash
+# Setup virtual environment
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements-dev.txt
+
+# Run server locally (needs .env)
+python scripts/flickr_mcp.py
+
+# Run tests
+pytest
+```
+
 ## Docker
 
 ```bash

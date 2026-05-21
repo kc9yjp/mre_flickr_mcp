@@ -1,7 +1,4 @@
-requests
-mcp
-starlette
-uvicorn[standard]
+-r requirements.txt
 pytest
 pytest-asyncio
 pytest-timeout

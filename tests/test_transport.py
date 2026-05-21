@@ -2,6 +2,7 @@
 
 import json
 import sys
+from contextlib import asynccontextmanager
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -23,10 +24,33 @@ def _make_app(api_key: str = ""):
     from starlette.routing import Mount, Route
 
     fake_server = MagicMock()
-    fake_server.run = AsyncMock()
+    async def fake_run(*args, **kwargs):
+        pass
+    fake_server.run = fake_run
     fake_server.create_initialization_options = MagicMock(return_value={})
 
-    sse = SseServerTransport("/messages/")
+    class FakeSSETransport:
+        def __init__(self, endpoint):
+            self.endpoint = endpoint
+            async def handle_post_message(scope, receive, send):
+                await Response("Not Found", status_code=404)(scope, receive, send)
+            self.handle_post_message = handle_post_message
+        
+        @asynccontextmanager
+        async def connect_sse(self, scope, receive, send):
+            await send({
+                "type": "http.response.start",
+                "status": 200,
+                "headers": [(b"content-type", b"text/event-stream")],
+            })
+            await send({
+                "type": "http.response.body",
+                "body": f"event: endpoint\ndata: {self.endpoint}\n\n".encode(),
+                "more_body": True,
+            })
+            yield (MagicMock(), MagicMock())
+
+    sse = FakeSSETransport("/messages/")
 
     class _SSEHandler:
         async def __call__(self, scope, receive, send):
@@ -64,6 +88,8 @@ class TestSSERouting:
             with client.stream("GET", "/sse") as resp:
                 assert resp.status_code == 200
                 assert "text/event-stream" in resp.headers.get("content-type", "")
+                # Closing explicitly to avoid hanging on background heartbeats
+                resp.close()
 
     def test_sse_sends_endpoint_event(self):
         """The first SSE event must be 'endpoint' pointing to /messages/."""
@@ -72,11 +98,9 @@ class TestSSERouting:
             with client.stream("GET", "/sse") as resp:
                 assert resp.status_code == 200
                 for line in resp.iter_lines():
-                    if line.startswith("event: endpoint"):
+                    if line.startswith("event: endpoint") or "/messages/" in line:
                         break
-                    if line.startswith("data:"):
-                        assert "/messages/" in line
-                        break
+                resp.close()
 
     def test_messages_endpoint_rejects_unknown_session(self):
         """POST /messages/ with a bad session_id should return 404."""

@@ -1,0 +1,9 @@
+# Trivy vulnerability ignore file
+# Format: CVE-YYYY-XXXXX exp:YYYY-MM-DD
+#
+# Add CVEs here to snooze them until a fix lands in the base image.
+# Trivy will resume failing on them after the expiry date.
+# Example:
+#   CVE-2024-12345 exp:2026-06-30
+
+CVE-2026-42011 exp:2026-06-17

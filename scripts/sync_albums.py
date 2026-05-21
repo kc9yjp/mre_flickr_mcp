@@ -65,5 +65,10 @@ while page <= pages:
     conn.commit()
     page += 1
 
+conn.execute(
+    "INSERT INTO sync_log (synced_at, mode, photos_fetched, type) VALUES (?, 'full', ?, 'albums')",
+    (synced_at, total),
+)
+conn.commit()
 conn.close()
 print(f"Done. {total} albums synced.")
