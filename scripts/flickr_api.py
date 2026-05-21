@@ -134,6 +134,32 @@ def _all_known_users() -> list[dict]:
     return users
 
 
+def _resolve_api_key(api_key: str) -> dict | None:
+    """Return ``{"nsid": ..., "username": ...}`` for the given MCP API key, or None.
+
+    Scans all per-user credential files for a matching ``mcp_api_key``.
+    """
+    if not os.path.isdir(_CREDS_BASE):
+        return None
+    for entry in os.scandir(_CREDS_BASE):
+        if not entry.is_dir():
+            continue
+        cpath = os.path.join(entry.path, "credentials.json")
+        if not os.path.exists(cpath):
+            continue
+        try:
+            with open(cpath) as f:
+                creds = json.load(f)
+            if creds.get("mcp_api_key") == api_key:
+                nsid = creds.get("user_nsid")
+                username = creds.get("username")
+                if nsid and username:
+                    return {"nsid": nsid, "username": username}
+        except Exception:
+            pass
+    return None
+
+
 # ---------------------------------------------------------------------------
 # OAuth helpers
 # ---------------------------------------------------------------------------

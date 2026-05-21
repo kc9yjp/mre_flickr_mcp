@@ -14,13 +14,26 @@ logging.basicConfig(
 
 MCP_TRANSPORT = os.environ.get("MCP_TRANSPORT", "sse")
 
-from flickr_api import _load_env
+from flickr_api import _load_env, _resolve_api_key
 from mcp_tools import _background_refresh, server
 from web import main_sse
 
 
 async def main_stdio():
     from mcp.server.stdio import stdio_server
+    from db import _current_user
+
+    api_key = os.environ.get("MCP_API_KEY", "").strip()
+    if api_key:
+        user = _resolve_api_key(api_key)
+        if not user:
+            logging.error("MCP_API_KEY not recognised — log in at http://localhost:8000/login first")
+            sys.exit(1)
+        _current_user.set(user)
+        logging.info("stdio: authenticated as %s (%s)", user["username"], user["nsid"])
+    else:
+        logging.warning("stdio: no MCP_API_KEY set — tools will fail unless credentials exist at legacy path")
+
     async with stdio_server() as (read_stream, write_stream):
         asyncio.create_task(_background_refresh())
         logging.info("stdio ready — waiting for MCP client")
