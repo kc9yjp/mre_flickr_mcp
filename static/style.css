@@ -66,9 +66,8 @@ footer a { color: #888; }
 
 /* Sync */
 .sync-form { display: inline; }
-.sync-form .btn { margin: 4px; }
 .sync-btn-row { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
-.sync-btn-group { display: flex; flex-wrap: wrap; gap: 0; }
+.sync-btn-group { display: flex; flex-wrap: wrap; gap: 4px; }
 .btn-lg { padding: 10px 28px; font-size: 1rem; }
 .sync-running-badge { display: inline-block; background: #fff3cd; color: #856404;
                       border: 1px solid #ffc107; border-radius: 4px;
