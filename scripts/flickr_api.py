@@ -1,4 +1,14 @@
-"""Flickr OAuth 1.0a signing and HTTP helpers."""
+"""Flickr OAuth 1.0a signing, HTTP helpers, and credential management.
+
+Credentials are stored per-user under ``~/.flickr_mcp/{nsid}/credentials.json``
+so that multiple Flickr accounts can coexist on the same server.  The legacy
+flat path ``~/.flickr_mcp/credentials.json`` (``CREDENTIALS_FILE``) is kept as
+a fallback and for test patching.
+
+In multi-user mode, ``_load_credentials()`` resolves the active user from the
+``db._current_user`` ContextVar when no explicit ``nsid`` is given — meaning
+``_api_get()`` and ``_api_post()`` require no call-site changes.
+"""
 
 import base64
 import hashlib
@@ -12,13 +22,37 @@ import urllib.parse
 
 import requests
 
-CREDENTIALS_FILE = os.path.expanduser("~/.flickr_mcp/credentials.json")
+# ---------------------------------------------------------------------------
+# Paths
+# ---------------------------------------------------------------------------
+
+_CREDS_BASE = os.path.expanduser("~/.flickr_mcp")
+
+# Legacy single-user path — kept for test patching and backward compatibility.
+CREDENTIALS_FILE = os.path.join(_CREDS_BASE, "credentials.json")
+
 ENV_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env")
 API_URL = "https://api.flickr.com/services/rest/"
 HTTP_TIMEOUT = int(os.environ.get("FLICKR_HTTP_TIMEOUT", 30))
 
 
+def credentials_file(nsid: str) -> str:
+    """Return the credentials file path for *nsid*.
+
+    Each user's credentials live at ``~/.flickr_mcp/{nsid}/credentials.json``.
+    """
+    return os.path.join(_CREDS_BASE, nsid, "credentials.json")
+
+
+# ---------------------------------------------------------------------------
+# Environment / credentials
+# ---------------------------------------------------------------------------
+
 def _load_env():
+    """Load ``FLICKR_API_KEY`` and ``FLICKR_API_SECRET`` from ``.env`` or environment.
+
+    Returns ``(api_key, api_secret)`` or raises ``RuntimeError`` if either is missing.
+    """
     env = {}
     if os.path.exists(ENV_FILE):
         with open(ENV_FILE) as f:
@@ -34,14 +68,77 @@ def _load_env():
     return api_key, api_secret
 
 
-def _load_credentials():
-    if not os.path.exists(CREDENTIALS_FILE):
+def _load_credentials(nsid: str | None = None) -> dict:
+    """Load OAuth credentials for the given user.
+
+    Resolution order:
+    1. ``nsid`` argument (explicit, used by sync scripts).
+    2. ``db._current_user`` ContextVar (set per SSE connection by the web layer).
+    3. Legacy single-user ``CREDENTIALS_FILE`` (fallback / test patching).
+
+    Raises ``RuntimeError`` if no credentials file is found.
+    """
+    if nsid is None:
+        try:
+            from db import _current_user
+            user = _current_user.get()
+            if user:
+                nsid = user["nsid"]
+        except ImportError:
+            pass
+
+    path = credentials_file(nsid) if nsid else CREDENTIALS_FILE
+    if not os.path.exists(path):
         raise RuntimeError("Not logged in. Visit http://localhost:8000/login to authenticate.")
-    with open(CREDENTIALS_FILE) as f:
+    with open(path) as f:
         return json.load(f)
 
 
+def _save_credentials(data: dict, nsid: str) -> None:
+    """Persist *data* as the credentials file for *nsid*.
+
+    Creates ``~/.flickr_mcp/{nsid}/`` with mode 0o700 if needed and writes the
+    JSON file with mode 0o600 (owner read/write only).
+    """
+    path = credentials_file(nsid)
+    os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
+    with os.fdopen(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w") as f:
+        json.dump(data, f, indent=2)
+
+
+def _all_known_users() -> list[dict]:
+    """Return a list of ``{"nsid": ..., "username": ...}`` for every registered user.
+
+    Scans ``~/.flickr_mcp/*/credentials.json`` at call time.  Used by the
+    background refresh loop to iterate over all users.
+    """
+    users: list[dict] = []
+    if not os.path.isdir(_CREDS_BASE):
+        return users
+    for entry in os.scandir(_CREDS_BASE):
+        if not entry.is_dir():
+            continue
+        cpath = os.path.join(entry.path, "credentials.json")
+        if not os.path.exists(cpath):
+            continue
+        try:
+            with open(cpath) as f:
+                creds = json.load(f)
+            nsid = creds.get("user_nsid")
+            username = creds.get("username")
+            if nsid and username:
+                users.append({"nsid": nsid, "username": username})
+        except Exception:
+            pass
+    return users
+
+
+# ---------------------------------------------------------------------------
+# OAuth helpers
+# ---------------------------------------------------------------------------
+
 def _sign(method, url, params, api_secret, token_secret=""):
+    """Return the HMAC-SHA1 OAuth signature for a request."""
     sorted_params = urllib.parse.urlencode(sorted(params.items()), quote_via=urllib.parse.quote)
     base = f"{method}&{urllib.parse.quote(url, safe='')}&{urllib.parse.quote(sorted_params, safe='')}"
     key = f"{urllib.parse.quote(api_secret, safe='')}&{urllib.parse.quote(token_secret, safe='')}"
@@ -50,6 +147,7 @@ def _sign(method, url, params, api_secret, token_secret=""):
 
 
 def _oauth_params(api_key, extra=None):
+    """Return a base set of OAuth 1.0a parameters, optionally merged with *extra*."""
     p = {
         "oauth_nonce": secrets.token_hex(16),
         "oauth_timestamp": str(int(time.time())),
@@ -62,7 +160,17 @@ def _oauth_params(api_key, extra=None):
     return p
 
 
+# ---------------------------------------------------------------------------
+# API wrappers
+# ---------------------------------------------------------------------------
+
 def _api_get(method, extra=None):
+    """Perform a signed OAuth GET against the Flickr REST API.
+
+    Credentials are loaded via ``_load_credentials()`` which resolves the active
+    user from the ``db._current_user`` ContextVar automatically.
+    Raises ``RuntimeError`` on any API or network error.
+    """
     api_key, api_secret = _load_env()
     creds = _load_credentials()
     params = _oauth_params(api_key, {
@@ -95,6 +203,12 @@ def _api_get(method, extra=None):
 
 
 def _api_post(method, extra=None):
+    """Perform a signed OAuth POST against the Flickr REST API.
+
+    Credentials are loaded via ``_load_credentials()`` which resolves the active
+    user from the ``db._current_user`` ContextVar automatically.
+    Raises ``RuntimeError`` on any API or network error.
+    """
     api_key, api_secret = _load_env()
     creds = _load_credentials()
     params = _oauth_params(api_key, {

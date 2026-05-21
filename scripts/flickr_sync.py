@@ -1,9 +1,17 @@
 #!/usr/bin/env python3
 """Sync public Flickr photo metadata to a local SQLite database.
 
-Usage:
+Usage (single-user):
     python scripts/flickr_sync.py          # incremental (since last sync)
-    python scripts/flickr_sync.py --full   # fetch all public photos
+    python scripts/flickr_sync.py --full   # fetch all photos
+
+Usage (multi-user):
+    python scripts/flickr_sync.py --nsid 12345@N00 --username jdoe
+    python scripts/flickr_sync.py --nsid 12345@N00 --username jdoe --full --create
+
+When ``--nsid`` / ``--username`` are provided the script resolves credentials
+and the database path per-user; otherwise it falls back to the single-user
+defaults (``~/.flickr_mcp/credentials.json`` and ``data/flickr.db``).
 """
 
 import argparse
@@ -14,7 +22,7 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import flickr_api
-from db import DB_FILE
+from db import DB_FILE, db_file as _db_file
 API_URL = flickr_api.API_URL
 HTTP_TIMEOUT = flickr_api.HTTP_TIMEOUT
 PER_PAGE = 500
@@ -284,21 +292,25 @@ def sync_group_descriptions(conn):
 # --- Command ---
 
 def cmd_sync(args):
+    """Run the photo sync.  Resolves per-user paths from CLI args when provided."""
+    target_db = _db_file(args.username) if args.username else DB_FILE
+    nsid_arg = args.nsid if args.nsid else None
+
     try:
         flickr_api._load_env()
-        creds = flickr_api._load_credentials()
+        creds = flickr_api._load_credentials(nsid=nsid_arg)
     except RuntimeError as e:
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
 
-    if not os.path.exists(DB_FILE):
+    if not os.path.exists(target_db):
         if not args.create:
-            print(f"Database not found: {DB_FILE}\nRun with --create to initialise it.", file=sys.stderr)
+            print(f"Database not found: {target_db}\nRun with --create to initialise it.", file=sys.stderr)
             sys.exit(1)
-        os.makedirs(os.path.dirname(DB_FILE), exist_ok=True)
-        print(f"Creating database at {DB_FILE}")
+        os.makedirs(os.path.dirname(target_db), exist_ok=True)
+        print(f"Creating database at {target_db}")
 
-    conn = sqlite3.connect(DB_FILE)
+    conn = sqlite3.connect(target_db)
     init_db(conn)
 
     synced_at = int(time.time())
@@ -328,15 +340,18 @@ def cmd_sync(args):
     )
     conn.commit()
     conn.close()
-    print(f"Done. {total} photos synced ({mode}).")
+    print(f"Done. {total} photos synced ({mode}) to {target_db}.")
 
 
 # --- Entry point ---
 
 def main():
+    """Parse CLI arguments and run the photo sync."""
     parser = argparse.ArgumentParser(prog="flickr-sync", description="Sync Flickr photo metadata to SQLite")
-    parser.add_argument("--full", action="store_true", help="Full sync (ignore last sync timestamp)")
-    parser.add_argument("--create", action="store_true", help="Create the database if it does not exist")
+    parser.add_argument("--full",     action="store_true", help="Full sync (ignore last sync timestamp)")
+    parser.add_argument("--create",   action="store_true", help="Create the database if it does not exist")
+    parser.add_argument("--nsid",     help="Flickr user NSID for multi-user mode")
+    parser.add_argument("--username", help="Username for per-user DB path (multi-user mode)")
     cmd_sync(parser.parse_args())
 
 

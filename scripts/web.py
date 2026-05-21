@@ -1,4 +1,22 @@
-"""Web UI, OAuth flow, and SSE/uvicorn server setup."""
+"""Web UI, OAuth flow, and SSE/uvicorn server setup.
+
+Multi-user design
+-----------------
+Each Flickr account that completes the OAuth flow gets:
+  * A credentials file at ``~/.flickr_mcp/{nsid}/credentials.json`` containing
+    their OAuth tokens and a randomly-generated ``mcp_api_key``.
+  * A personal SQLite database at ``data/{username}/flickr.db``.
+
+The web session stores ``user_nsid``, ``username``, and ``fullname`` after a
+successful login.  Sessions last 30 days.  Logging out only clears the session
+— credentials and the database are preserved so the user can re-authenticate
+without a full re-sync.
+
+The ``ApiKeyMiddleware`` maps incoming MCP API keys to their owner's NSID via
+the in-memory ``_api_key_registry``.  The ``_SSEHandler`` then sets the
+``db._current_user`` ContextVar so all tool handlers and ``_api_get``/``_api_post``
+resolve the correct per-user paths transparently.
+"""
 
 import asyncio
 import collections
@@ -8,6 +26,7 @@ import logging
 import os
 import time
 import urllib.parse
+import uuid
 import requests
 from starlette.applications import Starlette
 from starlette.middleware import Middleware
@@ -16,32 +35,76 @@ from starlette.requests import Request
 from starlette.responses import HTMLResponse, RedirectResponse, Response
 from starlette.routing import Mount, Route
 
-from db import DB_FILE, get_db
-from flickr_api import CREDENTIALS_FILE, _load_credentials, _load_env, _oauth_params, _sign
+from db import _current_user as _db_current_user, db_file, get_db
+from flickr_api import (
+    _CREDS_BASE, CREDENTIALS_FILE,
+    credentials_file, _load_credentials, _save_credentials,
+    _load_env, _oauth_params, _sign,
+)
 from mcp_tools import SYNC_SCRIPT, _active_syncs, _background_refresh, _run_sync_script, _sync_lock, server
 
 import secrets
 from starlette.middleware.sessions import SessionMiddleware
 
-MCP_API_KEY = os.environ.get("MCP_API_KEY", "")
 MCP_PORT = int(os.environ.get("MCP_PORT", "8000"))
 
-_CREDS_DIR = os.path.dirname(CREDENTIALS_FILE)
-_SESSION_KEY_FILE = os.path.join(_CREDS_DIR, "session_secret.key")
+_SESSION_KEY_FILE = os.path.join(_CREDS_BASE, "session_secret.key")
 
 def _load_or_create_session_key() -> str:
+    """Load the session signing key from env, file, or generate a new one."""
     if key := os.environ.get("SESSION_SECRET_KEY"):
         return key
     if os.path.exists(_SESSION_KEY_FILE):
         with open(_SESSION_KEY_FILE) as f:
             return f.read().strip()
     key = secrets.token_hex(32)
-    os.makedirs(_CREDS_DIR, exist_ok=True)
+    os.makedirs(_CREDS_BASE, exist_ok=True)
     with os.fdopen(os.open(_SESSION_KEY_FILE, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w") as f:
         f.write(key)
     return key
 
 SESSION_SECRET_KEY = _load_or_create_session_key()
+
+# ---------------------------------------------------------------------------
+# Per-user API key registry
+# ---------------------------------------------------------------------------
+
+_api_key_registry: dict[str, str] = {}  # mcp_api_key -> user_nsid
+
+
+def _load_api_key_registry() -> None:
+    """Populate ``_api_key_registry`` by scanning all per-user credential files.
+
+    Called once at startup and again after each successful OAuth login so that
+    newly-registered users are immediately usable without a restart.
+    """
+    _api_key_registry.clear()
+    if not os.path.isdir(_CREDS_BASE):
+        return
+    for entry in os.scandir(_CREDS_BASE):
+        if not entry.is_dir():
+            continue
+        cpath = os.path.join(entry.path, "credentials.json")
+        if not os.path.exists(cpath):
+            continue
+        try:
+            with open(cpath) as f:
+                creds = json.load(f)
+            key = creds.get("mcp_api_key")
+            nsid = creds.get("user_nsid")
+            if key and nsid:
+                _api_key_registry[key] = nsid
+        except Exception:
+            pass
+    logging.debug("API key registry: %d user(s) loaded", len(_api_key_registry))
+
+
+def _require_login(request: Request):
+    """Return a redirect to ``/login`` if the session has no ``user_nsid``, else ``None``."""
+    if not request.session.get("user_nsid"):
+        return RedirectResponse("/login", status_code=303)
+    return None
+
 
 _pending_oauth: dict[str, tuple[str, float]] = {}  # token -> (secret, created_at)
 _PENDING_OAUTH_TTL = 600  # seconds
@@ -155,10 +218,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
 
 def _html_page(title: str, body: str, request: Request, logged_in: bool | None = None) -> str:
+    """Render a full HTML page with the site nav, injecting login state."""
     import datetime as _dt
     year = _dt.date.today().year
     if logged_in is None:
-        logged_in = os.path.exists(CREDENTIALS_FILE)
+        logged_in = bool(request.session.get("user_nsid"))
 
     csrf_token = request.session.get("csrf_token", "")
     csrf_input = f'<input type="hidden" name="csrf_token" value="{csrf_token}">'
@@ -195,30 +259,28 @@ async def route_root(request: Request):
         request.session["csrf_token"] = secrets.token_hex(32)
 
     msg = request.query_params.get("msg", "")
-    logged_in = os.path.exists(CREDENTIALS_FILE)
-    username = ""
-    if logged_in:
-        try:
-            creds = _load_credentials()
-            username = creds.get("username") or creds.get("user_nsid", "")
-        except Exception:
-            logged_in = False
+    user_nsid = request.session.get("user_nsid", "")
+    logged_in = bool(user_nsid)
+    username = request.session.get("fullname") or request.session.get("username") or user_nsid
 
     total_photos = 0
     last_sync = None
     db_ok = False
-    try:
-        with get_db() as conn:
-            row = conn.execute("SELECT COUNT(*) FROM photos").fetchone()
-            total_photos = row[0] if row else 0
-            sync_row = conn.execute(
-                "SELECT MAX(synced_at) FROM sync_log WHERE type = 'photos'"
-            ).fetchone()
-            if sync_row and sync_row[0]:
-                last_sync = f'<time data-ts="{sync_row[0]}">—</time>'
-        db_ok = True
-    except Exception:
-        pass
+    if logged_in:
+        try:
+            from db import get_db_for_user
+            db_username = request.session.get("username", "")
+            with get_db_for_user(db_username) as conn:
+                row = conn.execute("SELECT COUNT(*) FROM photos").fetchone()
+                total_photos = row[0] if row else 0
+                sync_row = conn.execute(
+                    "SELECT MAX(synced_at) FROM sync_log WHERE type = 'photos'"
+                ).fetchone()
+                if sync_row and sync_row[0]:
+                    last_sync = f'<time data-ts="{sync_row[0]}">—</time>'
+            db_ok = True
+        except Exception:
+            pass
 
     if not logged_in:
         body = f"""<h1>{_SITE_TITLE}</h1>
@@ -305,7 +367,7 @@ async def route_login(request: Request):
         request.session["csrf_token"] = secrets.token_hex(32)
 
     msg = request.query_params.get("msg", "")
-    logged_in = os.path.exists(CREDENTIALS_FILE)
+    logged_in = bool(request.session.get("user_nsid"))
 
     if logged_in and msg not in ("ok", "err"):
         return RedirectResponse("/", status_code=303)
@@ -405,43 +467,68 @@ async def route_oauth_callback(request: Request):
         logging.error("No access token in Flickr response: %s", resp.text[:200])
         return RedirectResponse("/login?msg=err")
 
+    # Preserve an existing API key so MCP clients don't break on re-login.
+    mcp_api_key = None
+    try:
+        existing = _load_credentials(nsid=user_nsid)
+        mcp_api_key = existing.get("mcp_api_key")
+    except Exception:
+        pass
+    if not mcp_api_key:
+        mcp_api_key = str(uuid.uuid4())
+
     creds = {
         "oauth_token":        access_token,
         "oauth_token_secret": access_token_secret,
         "user_nsid":          user_nsid,
         "username":           username,
         "fullname":           fullname,
+        "mcp_api_key":        mcp_api_key,
     }
 
-    os.makedirs(os.path.dirname(CREDENTIALS_FILE), exist_ok=True)
-    with os.fdopen(os.open(CREDENTIALS_FILE, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w") as f:
-        json.dump(creds, f, indent=2)
+    _save_credentials(creds, user_nsid)
+    _api_key_registry[mcp_api_key] = user_nsid
+
+    request.session["user_nsid"] = user_nsid
+    request.session["username"]  = username
+    request.session["fullname"]  = fullname
 
     logging.info("OAuth login complete for user %s (%s)", username, user_nsid)
 
     scripts_dir = os.path.dirname(SYNC_SCRIPT)
+    user_args   = ["--nsid", user_nsid, "--username", username]
 
     async def _post_login_sync():
         async with _sync_lock:
-            await _run_sync_script(SYNC_SCRIPT, "photos", extra_args=["--create"])
-            await _run_sync_script(os.path.join(scripts_dir, "sync_contacts.py"), "contacts")
-            await _run_sync_script(os.path.join(scripts_dir, "sync_groups.py"),   "groups")
-            await _run_sync_script(os.path.join(scripts_dir, "sync_albums.py"),   "albums")
+            await _run_sync_script(SYNC_SCRIPT, "photos",
+                                   extra_args=["--create"] + user_args,
+                                   username=username)
+            await _run_sync_script(os.path.join(scripts_dir, "sync_contacts.py"), "contacts",
+                                   extra_args=user_args, username=username)
+            await _run_sync_script(os.path.join(scripts_dir, "sync_groups.py"),   "groups",
+                                   extra_args=user_args, username=username)
+            await _run_sync_script(os.path.join(scripts_dir, "sync_albums.py"),   "albums",
+                                   extra_args=user_args, username=username)
 
     asyncio.create_task(_post_login_sync())
     return RedirectResponse("/?msg=ok", status_code=303)
 
 
 async def route_logout(request: Request):
-    if os.path.exists(CREDENTIALS_FILE):
-        os.remove(CREDENTIALS_FILE)
+    """Clear the session cookie.  Credentials and database are preserved."""
     request.session.clear()
     return RedirectResponse("/", status_code=303)
 
 
 async def route_stats(request: Request):
+    """Render collection statistics for the logged-in user."""
+    redir = _require_login(request)
+    if redir:
+        return redir
+    from db import get_db_for_user
+    db_username = request.session.get("username", "")
     try:
-        with get_db() as conn:
+        with get_db_for_user(db_username) as conn:
             stats = conn.execute("""
                 SELECT COUNT(*) AS total_photos,
                        SUM(CASE WHEN is_public = 1 THEN 1 ELSE 0 END) AS public_photos,
@@ -494,13 +581,19 @@ async def route_stats(request: Request):
 
 
 async def route_sync_page(request: Request):
+    """Render the sync status page with trigger buttons and reset option."""
+    redir = _require_login(request)
+    if redir:
+        return redir
     import time as _time
+    from db import get_db_for_user
     running = _sync_lock.locked()
     csrf_token = request.session.get("csrf_token", "")
+    db_username = request.session.get("username", "")
 
     sync_rows = []
     try:
-        with get_db() as conn:
+        with get_db_for_user(db_username) as conn:
             sync_rows = conn.execute(
                 "SELECT s.type, s.synced_at AS last, s.duration_seconds"
                 " FROM sync_log s"
@@ -557,13 +650,29 @@ async def route_sync_page(request: Request):
       <h2 style="margin-top:0">Trigger sync</h2>
       <p style="margin-bottom:12px;color:#555;font-size:.9rem">Syncs run in the background. Refresh this page to see updated times.</p>
       {buttons}
+    </div>
+    <div class="card">
+      <h2 style="margin-top:0">Reset Database</h2>
+      <p style="color:#555;font-size:.9rem;margin-bottom:12px">Delete your local database and re-sync from scratch. Your Flickr credentials and API key are not affected.</p>
+      <form method="POST" action="/reset" onsubmit="return confirm('Delete your local database? This cannot be undone.')">
+        <input type="hidden" name="csrf_token" value="{csrf_token}">
+        <button class="btn btn-secondary" type="submit">Reset DB</button>
+      </form>
     </div>"""
     return HTMLResponse(_html_page("Sync", body, request))
 
 
 async def route_sync_trigger(request: Request):
-    sync_type = request.path_params["type"]
+    """Handle sync trigger button POSTs from the sync page."""
+    redir = _require_login(request)
+    if redir:
+        return redir
+
+    sync_type   = request.path_params["type"]
     scripts_dir = os.path.dirname(SYNC_SCRIPT)
+    user_nsid   = request.session.get("user_nsid", "")
+    username    = request.session.get("username", "")
+    user_args   = ["--nsid", user_nsid, "--username", username] if user_nsid else []
 
     script_map = {
         "photos":   SYNC_SCRIPT,
@@ -582,20 +691,57 @@ async def route_sync_trigger(request: Request):
         async with _sync_lock:
             if sync_type == "all":
                 for label, path in script_map.items():
-                    await _run_sync_script(path, label)
+                    await _run_sync_script(path, label, extra_args=user_args or None, username=username or None)
             else:
-                await _run_sync_script(script_map[sync_type], sync_type)
+                await _run_sync_script(script_map[sync_type], sync_type,
+                                       extra_args=user_args or None, username=username or None)
 
     asyncio.create_task(_run())
     return RedirectResponse("/sync", status_code=303)
 
 
+async def route_reset_db(request: Request):
+    """Delete the current user's local database.
+
+    Credentials and the MCP API key are preserved.  The user is redirected to
+    the sync page where they can trigger a fresh sync.
+    """
+    redir = _require_login(request)
+    if redir:
+        return redir
+    username = request.session.get("username", "")
+    if username:
+        path = db_file(username)
+        if os.path.exists(path):
+            os.remove(path)
+            logging.info("Database reset by user %s", username)
+    return RedirectResponse("/sync", status_code=303)
+
+
 async def route_setup(request: Request):
+    """Render the MCP client setup page with the user's personal API key."""
+    redir = _require_login(request)
+    if redir:
+        return redir
+
     base = str(request.base_url).rstrip("/")
     sse_url = f"{base}/sse"
-    auth_placeholder = '"Authorization": "Bearer MCP_API_KEY"'
-    headers_block = f',\n      "headers": {{{auth_placeholder}}}' if MCP_API_KEY else ""
-    auth_note = '<p style="font-size:.85rem;color:#555;margin-top:4px">Replace <code>MCP_API_KEY</code> with the value from your <code>.env</code>.</p>' if MCP_API_KEY else ""
+
+    # Load the user's personal MCP API key.
+    user_nsid   = request.session.get("user_nsid", "")
+    mcp_api_key = ""
+    if user_nsid:
+        try:
+            mcp_api_key = _load_credentials(nsid=user_nsid).get("mcp_api_key", "")
+        except Exception:
+            pass
+
+    auth_value   = f'"Authorization": "Bearer {mcp_api_key}"' if mcp_api_key else ""
+    headers_block = f',\n      "headers": {{{auth_value}}}' if mcp_api_key else ""
+    auth_note = (
+        '<p style="font-size:.85rem;color:#555;margin-top:4px">'
+        'This snippet includes your personal API key. Keep it private.</p>'
+    ) if mcp_api_key else ""
 
     def _pre(snippet_id, text):
         return (
@@ -636,7 +782,7 @@ async def route_setup(request: Request):
         '    "flickr": {\n'
         '      "type": "remote",\n'
         f'      "url": "{sse_url}"'
-        + (f',\n      "headers": {{{auth_placeholder}}}' if MCP_API_KEY else "")
+        + (f',\n      "headers": {{{auth_value}}}' if mcp_api_key else "")
         + "\n    }\n  }\n}"
     )
 
@@ -699,7 +845,7 @@ async def route_setup(request: Request):
           <li>Enter the server URL:</li>
         </ol>
         {_pre("snip-webui", sse_url)}
-        {"<p style='font-size:.85rem;color:#555;margin-top:8px'>Also enter your API key (<code>MCP_API_KEY</code> from your <code>.env</code>) in the Authorization field if prompted.</p>" if MCP_API_KEY else ""}
+        {"<p style='font-size:.85rem;color:#555;margin-top:8px'>Enter your personal API key in the Authorization field.</p>" if mcp_api_key else ""}
         <p class="file-hint">Ollama does not support MCP natively &mdash; use Open WebUI as the agent layer on top of Ollama.</p>
       </div>
     </div>"""
@@ -735,26 +881,58 @@ async def route_logs(request: Request):
 # --- SSE handler and API key middleware ---
 
 class _SSEHandler:
+    """ASGI handler for the MCP SSE endpoint.
+
+    Sets ``db._current_user`` from the API key resolved by ``ApiKeyMiddleware``
+    so that all tool calls within a connection operate on the correct per-user
+    database and credentials.
+    """
+
     def __init__(self, sse_transport):
         self._sse = sse_transport
 
     async def __call__(self, scope, receive, send):
-        async with self._sse.connect_sse(scope, receive, send) as streams:
-            await server.run(streams[0], streams[1], server.create_initialization_options())
+        user_nsid = getattr(scope.get("state"), "user_nsid", None)
+        token = None
+        if user_nsid:
+            try:
+                creds = _load_credentials(nsid=user_nsid)
+                user_ctx = {
+                    "nsid":     user_nsid,
+                    "username": creds.get("username", user_nsid),
+                }
+                token = _db_current_user.set(user_ctx)
+            except Exception:
+                pass
+        try:
+            async with self._sse.connect_sse(scope, receive, send) as streams:
+                await server.run(streams[0], streams[1], server.create_initialization_options())
+        finally:
+            if token is not None:
+                _db_current_user.reset(token)
 
 
 class ApiKeyMiddleware(BaseHTTPMiddleware):
+    """Validate MCP API keys and attach the resolved user NSID to request state.
+
+    Every request to ``/sse`` or ``/messages`` must carry a valid API key via
+    the ``X-API-Key`` header or ``Authorization: Bearer`` header.  The key is
+    looked up in ``_api_key_registry`` (populated at startup and on each login)
+    and the matched NSID is stored in ``request.state.user_nsid`` for the SSE
+    handler to consume.
+    """
+
     async def dispatch(self, request: Request, call_next):
-        if MCP_API_KEY:
-            path = request.url.path
-            if path.startswith("/sse") or path.startswith("/messages"):
-                key = request.headers.get("X-API-Key", "")
-                if not key:
-                    auth = request.headers.get("Authorization", "")
-                    if auth.startswith("Bearer "):
-                        key = auth[7:]
-                if key != MCP_API_KEY:
-                    return Response("Unauthorized", status_code=401)
+        path = request.url.path
+        if path.startswith("/sse") or path.startswith("/messages"):
+            key = request.headers.get("X-API-Key", "")
+            if not key:
+                auth = request.headers.get("Authorization", "")
+                if auth.startswith("Bearer "):
+                    key = auth[7:]
+            if not key or key not in _api_key_registry:
+                return Response("Unauthorized", status_code=401)
+            request.state.user_nsid = _api_key_registry[key]
         return await call_next(request)
 
 
@@ -777,16 +955,29 @@ class CSRFMiddleware(BaseHTTPMiddleware):
 
 
 async def main_sse():
+    """Start the MCP SSE server with the Starlette web application.
+
+    Loads the per-user API key registry, configures middleware (session,
+    CSRF, API key auth), registers all routes, starts the background refresh
+    task, and begins serving on ``MCP_PORT``.
+    """
     from mcp.server.sse import SseServerTransport
     import uvicorn
 
+    _load_api_key_registry()
+
     sse = SseServerTransport("/messages/")
     middleware = [
-        Middleware(SessionMiddleware, secret_key=SESSION_SECRET_KEY),
+        Middleware(
+            SessionMiddleware,
+            secret_key=SESSION_SECRET_KEY,
+            max_age=30 * 24 * 3600,
+            https_only=False,
+            same_site="lax",
+        ),
         Middleware(CSRFMiddleware),
+        Middleware(ApiKeyMiddleware),
     ]
-    if MCP_API_KEY:
-        middleware.append(Middleware(ApiKeyMiddleware))
 
     app = Starlette(
         middleware=middleware,
@@ -799,6 +990,7 @@ async def main_sse():
             Route("/stats",          endpoint=route_stats),
             Route("/sync",           endpoint=route_sync_page),
             Route("/sync/{type}",    endpoint=route_sync_trigger, methods=["POST"]),
+            Route("/reset",          endpoint=route_reset_db, methods=["POST"]),
             Route("/logs",           endpoint=route_logs),
             Route("/setup",          endpoint=route_setup),
             Route("/sse",            endpoint=_SSEHandler(sse)),
@@ -806,10 +998,9 @@ async def main_sse():
         ],
     )
 
-
     config = uvicorn.Config(app, host="0.0.0.0", port=MCP_PORT, log_level="info")
     uv_server = uvicorn.Server(config)
 
     asyncio.create_task(_background_refresh())
-    logging.info("SSE ready on port %d (api_key=%s)", MCP_PORT, "set" if MCP_API_KEY else "none")
+    logging.info("SSE ready on port %d", MCP_PORT)
     await uv_server.serve()

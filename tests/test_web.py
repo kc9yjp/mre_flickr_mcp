@@ -62,7 +62,7 @@ def test_csrf_rejects_post_with_wrong_token(tmp_path):
     assert response.status_code == 403
 
 
-def test_logout_removes_credentials_and_clears_session(tmp_path):
+def test_logout_clears_session_without_deleting_credentials(tmp_path):
     creds_file = tmp_path / "credentials.json"
     creds_file.write_text(json.dumps({"oauth_token": "tok", "oauth_token_secret": "sec"}))
 
@@ -73,6 +73,7 @@ def test_logout_removes_credentials_and_clears_session(tmp_path):
     async def seed_session(request):
         from starlette.responses import PlainTextResponse
         request.session["csrf_token"] = CSRF
+        request.session["user_nsid"] = "12345@N00"
         return PlainTextResponse("ok")
 
     app = _make_app(web, [
@@ -80,10 +81,9 @@ def test_logout_removes_credentials_and_clears_session(tmp_path):
         Route("/logout", endpoint=web.route_logout, methods=["POST"]),
     ])
 
-    with patch("web.CREDENTIALS_FILE", str(creds_file)):
-        with TestClient(app, raise_server_exceptions=False) as client:
-            client.get("/seed")
-            response = client.post("/logout", data={"csrf_token": CSRF}, follow_redirects=False)
+    with TestClient(app, raise_server_exceptions=False) as client:
+        client.get("/seed")
+        response = client.post("/logout", data={"csrf_token": CSRF}, follow_redirects=False)
 
     assert response.status_code in (302, 303)
-    assert not creds_file.exists()
+    assert creds_file.exists()
