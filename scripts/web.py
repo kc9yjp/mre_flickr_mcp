@@ -455,10 +455,13 @@ def _build_sync_rows(db_username: str) -> list[dict]:
     from tools.sync import REFRESH_INTERVAL
 
     def _fmt_dur(secs):
-        if not secs:
+        if secs is None:
             return None
-        mins = round(secs / 60, 1)
-        return f"{mins:.0f} min" if mins >= 1 else f"{secs}s"
+        if secs == 0:
+            return "< 1s"
+        if secs < 60:
+            return f"{secs}s"
+        return f"{round(secs / 60)} min"
 
     raw_rows = []
     try:
