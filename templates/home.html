@@ -61,7 +61,7 @@
   {% for p in prompts %}
   <div class="prompt-card">
     <span class="prompt-text">{{ p.display | safe }}</span>
-    <button class="copy-btn" onclick="copyCmd(this, {{ p.copy | tojson }})">Copy</button>
+    <button class="copy-btn" onclick="copyCmd(this, {{ p.cmd | tojson }})">Copy</button>
   </div>
   {% endfor %}
 </div>

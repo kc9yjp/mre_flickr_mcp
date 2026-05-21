@@ -180,31 +180,31 @@ async def route_root(request: Request):
     prompts = [
         {
             "display": "Review my photo at <em>[PHOTO URL]</em> — suggest a better title, description, and tags, then add it to relevant groups.",
-            "copy": "Review my photo at [PHOTO URL] — suggest a better title, description, and tags, then add it to relevant groups.",
+            "cmd": "Review my photo at [PHOTO URL] — suggest a better title, description, and tags, then add it to relevant groups.",
         },
         {
             "display": "Fave my photo at <em>[PHOTO URL]</em> and suggest a comment to post on it.",
-            "copy": "Fave my photo at [PHOTO URL] and suggest a comment to post on it.",
+            "cmd": "Fave my photo at [PHOTO URL] and suggest a comment to post on it.",
         },
         {
             "display": "Check if my photo at <em>[PHOTO URL]</em> qualifies for any threshold groups based on its view and fave counts, and add it.",
-            "copy": "Check if my photo at [PHOTO URL] qualifies for any threshold groups based on its view and fave counts, and add it.",
+            "cmd": "Check if my photo at [PHOTO URL] qualifies for any threshold groups based on its view and fave counts, and add it.",
         },
         {
             "display": "Add my photo at <em>[PHOTO URL]</em> to an appropriate album.",
-            "copy": "Add my photo at [PHOTO URL] to an appropriate album.",
+            "cmd": "Add my photo at [PHOTO URL] to an appropriate album.",
         },
         {
             "display": "Find my weakest photos — low views, zero faves — and help me decide which to make private or improve.",
-            "copy": "Find my weakest photos — low views, zero faves — and help me decide which to make private or improve.",
+            "cmd": "Find my weakest photos — low views, zero faves — and help me decide which to make private or improve.",
         },
         {
             "display": "Review my contacts and identify unfollow candidates based on engagement — walk me through them one at a time.",
-            "copy": "Review my contacts and identify unfollow candidates based on engagement — walk me through them one at a time.",
+            "cmd": "Review my contacts and identify unfollow candidates based on engagement — walk me through them one at a time.",
         },
         {
             "display": "Sync my Flickr data — photos, contacts, groups, and albums.",
-            "copy": "Sync my Flickr data — photos, contacts, groups, and albums.",
+            "cmd": "Sync my Flickr data — photos, contacts, groups, and albums.",
         },
     ]
 
@@ -218,7 +218,7 @@ async def route_root(request: Request):
         "syncing": syncing,
         "prompts": prompts,
     })
-    return templates.TemplateResponse("home.html", ctx)
+    return templates.TemplateResponse(request, "home.html", ctx)
 
 
 async def route_login(request: Request):
@@ -236,14 +236,14 @@ async def route_login(request: Request):
         "alert_ok": "Login successful! You are now connected to Flickr." if msg == "ok" else None,
         "alert_err": "Login failed. Please try again." if msg == "err" else None,
     })
-    return templates.TemplateResponse("login.html", ctx)
+    return templates.TemplateResponse(request, "login.html", ctx)
 
 
 
 def _login_error(request: Request, message: str, status_code: int = 500):
     ctx = _base_ctx(request, "Login", logged_in=False)
     ctx["alert_err"] = message
-    return templates.TemplateResponse("login.html", ctx, status_code=status_code)
+    return templates.TemplateResponse(request, "login.html", ctx, status_code=status_code)
 
 
 async def route_login_start(request: Request):
@@ -405,11 +405,11 @@ async def route_stats(request: Request):
             contact_count = conn.execute("SELECT COUNT(*) FROM contacts").fetchone()[0]
     except FileNotFoundError:
         ctx["no_db"] = True
-        return templates.TemplateResponse("stats.html", ctx)
+        return templates.TemplateResponse(request, "stats.html", ctx)
     except Exception as e:
         logging.exception("route_stats error")
         ctx["error"] = str(e)
-        return templates.TemplateResponse("stats.html", ctx)
+        return templates.TemplateResponse(request, "stats.html", ctx)
 
     counts = {}
     for row in tag_rows:
@@ -431,7 +431,7 @@ async def route_stats(request: Request):
         "date_range": f"{stats['earliest'] or '?'} → {stats['latest'] or '?'}",
         "top_tags": top_tags,
     })
-    return templates.TemplateResponse("stats.html", ctx)
+    return templates.TemplateResponse(request, "stats.html", ctx)
 
 
 async def _trigger_full_sync(username: str, user_nsid: str, user_args: list[str], scripts_dir: str) -> None:
@@ -488,7 +488,7 @@ async def route_sync_page(request: Request):
         "sync_rows": sync_rows,
         "active_syncs": active_syncs,
     })
-    return templates.TemplateResponse("sync.html", ctx)
+    return templates.TemplateResponse(request, "sync.html", ctx)
 
 
 async def route_sync_trigger(request: Request):
@@ -623,7 +623,7 @@ async def route_setup(request: Request):
         "mcp_api_key": mcp_api_key,
         "snippets": snippets,
     })
-    return templates.TemplateResponse("setup.html", ctx)
+    return templates.TemplateResponse(request, "setup.html", ctx)
 
 
 
