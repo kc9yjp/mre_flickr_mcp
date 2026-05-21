@@ -107,7 +107,8 @@ def _require_login(request: Request):
 
 
 _pending_oauth: dict[str, tuple[str, float]] = {}  # token -> (secret, created_at)
-_PENDING_OAUTH_TTL = 600  # seconds
+_PENDING_OAUTH_TTL = 600   # seconds before an unused request token is discarded
+_PENDING_OAUTH_MAX = 100   # hard cap on concurrent in-flight OAuth flows
 
 _FLICKR_REQUEST_TOKEN_URL = "https://www.flickr.com/services/oauth/request_token"
 _FLICKR_ACCESS_TOKEN_URL  = "https://www.flickr.com/services/oauth/access_token"
@@ -420,6 +421,10 @@ async def route_login_start(request: Request):
     stale = [t for t, (_, ts) in _pending_oauth.items() if ts < cutoff]
     for t in stale:
         del _pending_oauth[t]
+
+    if len(_pending_oauth) >= _PENDING_OAUTH_MAX:
+        logging.warning("Rejected OAuth start: pending dict at capacity (%d)", _PENDING_OAUTH_MAX)
+        return HTMLResponse(_html_page("Login", '<h1>Login</h1><div class="alert alert-err">Too many login attempts in progress. Try again shortly.</div>', request), status_code=429)
 
     _pending_oauth[oauth_token] = (oauth_token_secret, time.time())
     authorize_url = f"{_FLICKR_AUTHORIZE_URL}?oauth_token={oauth_token}&perms=write"
