@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block content %}
+
+<h1>Connect to Flickr</h1>
+
+{% if alert_ok %}
+<div class="alert alert-ok">{{ alert_ok }}</div>
+{% endif %}
+{% if alert_err %}
+<div class="alert alert-err">{{ alert_err }}</div>
+{% endif %}
+
+<div class="card card-hero">
+  <div class="hero-icon">&#128273;</div>
+  <p class="hero-text">Authorize this app to access your Flickr account.</p>
+  <a href="/login/start" class="btn">Login with Flickr &rarr;</a>
+</div>
+
+{% endblock %}

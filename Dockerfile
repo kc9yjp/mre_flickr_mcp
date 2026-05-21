@@ -15,6 +15,8 @@ RUN useradd -m -u 1000 app && \
     chown app /app/data
 
 COPY --chown=app scripts/ ./scripts/
+COPY --chown=app templates/ ./templates/
+COPY --chown=app static/ ./static/
 
 USER app
 

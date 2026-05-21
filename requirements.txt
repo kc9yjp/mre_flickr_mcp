@@ -4,3 +4,4 @@ starlette
 uvicorn[standard]
 python-multipart
 itsdangerous
+jinja2

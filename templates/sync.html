@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block content %}
+
+<h1>Sync</h1>
+
+<div class="card">
+  <h2 class="card-title">Last sync times</h2>
+  <table id="sync-table">
+    <thead>
+      <tr><th>Type</th><th>Completed</th><th>Duration</th><th>Next Sync</th><th>Status</th></tr>
+    </thead>
+    <tbody>
+      {% if sync_rows %}
+        {% for row in sync_rows | sort(attribute='type') %}
+        <tr data-sync-type="{{ row.type }}">
+          <td>{{ row.type | title }}</td>
+          <td class="sync-last">
+            {% if row.last %}<time data-ts="{{ row.last }}">—</time>{% else %}—{% endif %}
+          </td>
+          <td class="sync-duration-cell">{% if row.duration %}{{ row.duration }}{% else %}—{% endif %}</td>
+          <td class="sync-next">
+            {% if row.next %}<span data-next="{{ row.next }}"></span>{% else %}—{% endif %}
+          </td>
+          <td class="sync-status">
+            {% if row.running %}<span class="sync-running-badge">Syncing…</span>{% else %}—{% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      {% else %}
+      <tr><td colspan="5">No syncs recorded yet</td></tr>
+      {% endif %}
+    </tbody>
+  </table>
+  <p class="sync-refresh-note">Updates every 30 seconds</p>
+</div>
+
+<div class="card">
+  <h2 class="card-title">Trigger sync</h2>
+  <p class="card-hint">Syncs run in the background. The table above updates automatically.</p>
+  <div class="sync-btn-row">
+    <div class="sync-btn-group">
+      {% for stype in ["albums", "contacts", "groups", "photos"] %}
+      <form class="sync-form" method="POST" action="/sync/{{ stype }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <button class="btn" {% if running %}disabled{% endif %} type="submit">{{ stype | title }}</button>
+      </form>
+      {% endfor %}
+    </div>
+    <form class="sync-form" method="POST" action="/sync/all">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <button class="btn btn-lg" {% if running %}disabled{% endif %} type="submit">Sync All</button>
+    </form>
+  </div>
+</div>
+
+<div class="card">
+  <h2 class="card-title">Reset Database</h2>
+  <p class="card-hint">
+    Delete your local database and re-sync from scratch. Your Flickr credentials and API key are not affected.
+  </p>
+  <form method="POST" action="/reset" onsubmit="return false" data-confirm="Delete your local database? This cannot be undone.">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <button class="btn btn-secondary" type="submit">Reset DB</button>
+  </form>
+</div>
+
+{% endblock %}

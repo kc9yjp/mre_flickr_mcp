@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block content %}
+
+<h1>{{ site_title }}</h1>
+
+{% if msg == "ok" %}
+  {% if syncing %}
+  <div class="alert alert-ok">
+    Welcome, <strong>{{ username }}</strong>! You're connected to Flickr.
+    Syncing your library in the background &mdash; check the <a href="/sync">Sync</a> page for progress.
+  </div>
+  {% else %}
+  <div class="alert alert-ok">Welcome, <strong>{{ username }}</strong>! You're connected to Flickr.</div>
+  {% endif %}
+{% else %}
+<div class="alert alert-ok">Logged in as <strong>{{ username }}</strong></div>
+{% endif %}
+
+<div class="nav-card-grid">
+  <a href="/stats" class="card-link">
+    <div class="card card-nav">
+      <div class="card-icon">&#128202;</div>
+      <div class="card-label">Stats</div>
+      <div class="card-meta">
+        {% if db_ok %}Photos: {{ total_photos }}{% else %}No database yet{% endif %}
+      </div>
+    </div>
+  </a>
+  <a href="/sync" class="card-link">
+    <div class="card card-nav">
+      <div class="card-icon">&#128260;</div>
+      <div class="card-label">Sync</div>
+      <div class="card-meta">
+        {% if last_sync %}Last: <time data-ts="{{ last_sync }}">—</time>{% else %}Never synced{% endif %}
+      </div>
+    </div>
+  </a>
+  <a href="/setup" class="card-link">
+    <div class="card card-nav">
+      <div class="card-icon">&#9881;&#65039;</div>
+      <div class="card-label">Setup</div>
+      <div class="card-meta">MCP client config</div>
+    </div>
+  </a>
+</div>
+
+<h2>Suggested Prompts</h2>
+<div class="prompt-list">
+  {% for p in prompts %}
+  <div class="prompt-card">
+    <span class="prompt-text">{{ p.display | safe }}</span>
+    <button class="copy-btn" onclick="copyCmd(this, {{ p.cmd | tojson }})">Copy</button>
+  </div>
+  {% endfor %}
+</div>
+
+{% endblock %}

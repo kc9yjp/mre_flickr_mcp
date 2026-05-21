@@ -1,0 +1,62 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <defs>
+    <clipPath id="bg-clip">
+      <rect width="64" height="64" rx="14"/>
+    </clipPath>
+    <!-- Radial gradient gives the lens a convex glass look -->
+    <radialGradient id="lens-grad" cx="38%" cy="35%" r="65%">
+      <stop offset="0%" stop-color="#1a72ee"/>
+      <stop offset="100%" stop-color="#004cb8"/>
+    </radialGradient>
+    <!-- Soft drop-shadow lifts the E off the lens surface -->
+    <filter id="e-shadow" x="-25%" y="-25%" width="150%" height="150%">
+      <feDropShadow dx="0" dy="2" stdDeviation="2" flood-color="#001a5c" flood-opacity="0.45"/>
+    </filter>
+  </defs>
+
+  <!-- Background -->
+  <rect width="64" height="64" rx="14" fill="#0063dc"/>
+
+  <g clip-path="url(#bg-clip)">
+    <!-- 6 aperture blades at 60° intervals -->
+    <rect x="27" y="3" width="10" height="30" rx="5" fill="#0048aa" transform="rotate(0 32 32)"/>
+    <rect x="27" y="3" width="10" height="30" rx="5" fill="#0048aa" transform="rotate(60 32 32)"/>
+    <rect x="27" y="3" width="10" height="30" rx="5" fill="#0048aa" transform="rotate(120 32 32)"/>
+    <rect x="27" y="3" width="10" height="30" rx="5" fill="#0048aa" transform="rotate(180 32 32)"/>
+    <rect x="27" y="3" width="10" height="30" rx="5" fill="#0048aa" transform="rotate(240 32 32)"/>
+    <rect x="27" y="3" width="10" height="30" rx="5" fill="#0048aa" transform="rotate(300 32 32)"/>
+
+    <!-- "Mr" marks — decorative, centred in the visible blade band -->
+    <g font-family="system-ui, -apple-system, Arial, sans-serif" font-size="4.5" font-weight="700"
+       fill="white" fill-opacity="0.8" text-anchor="middle">
+      <text x="32" y="10" transform="rotate(0 32 32)">Mr</text>
+      <text x="32" y="10" transform="rotate(60 32 32)">Mr</text>
+      <text x="32" y="10" transform="rotate(120 32 32)">Mr</text>
+      <text x="32" y="10" transform="rotate(180 32 32)">Mr</text>
+      <text x="32" y="10" transform="rotate(240 32 32)">Mr</text>
+      <text x="32" y="10" transform="rotate(300 32 32)">Mr</text>
+    </g>
+  </g>
+
+  <!-- Inner lens: gradient gives it depth -->
+  <circle cx="32" cy="32" r="20" fill="url(#lens-grad)"/>
+
+  <!-- Glint: small highlight ellipse in upper-left, like light on glass -->
+  <ellipse cx="26" cy="26" rx="5" ry="3" fill="white" fill-opacity="0.14" transform="rotate(-30 26 26)"/>
+
+  <!-- Bold E: outer edges curve ~1 unit to echo the lens circle -->
+  <g fill="white" filter="url(#e-shadow)">
+    <!-- Left vertical: outer left edge bows left 1 unit at mid-height -->
+    <path d="M 23.5,20 A 2.5,2.5 0 0 0 21,22.5 Q 19,32 21,41.5 A 2.5,2.5 0 0 0 23.5,44 H 26 V 20 Z"/>
+    <!-- Top bar: outer top edge bows up 1 unit at centre; left end hidden under vertical bar -->
+    <path d="M 21,20 Q 32,18 40.5,20 A 2.5,2.5 0 0 1 43,22.5 L 43,25 L 21,25 Z"/>
+    <!-- Middle bar: interior element, no outer edge to curve -->
+    <rect x="21" y="29" width="19" height="4" rx="2"/>
+    <!-- Bottom bar: outer bottom edge bows down 1 unit at centre -->
+    <path d="M 21,39 L 43,39 L 43,41.5 A 2.5,2.5 0 0 1 40.5,44 Q 32,46 23.5,44 A 2.5,2.5 0 0 0 21,41.5 Z"/>
+  </g>
+
+  <!-- Curved reflection below the E — suggests the lens curves away underneath -->
+  <path d="M23,46 Q32,52 41,46" fill="none" stroke="white" stroke-width="1.2"
+        stroke-opacity="0.2" stroke-linecap="round"/>
+</svg>
