@@ -52,32 +52,28 @@ def db(mem_db):
     """Patch mcp_tools.db() to create fresh connections to the test DB file each call."""
     import sqlite3 as _sqlite3
 
-    def _make_conn():
-        c = _sqlite3.connect(mem_db)
-        c.row_factory = _sqlite3.Row
-        return c
-
-    verify_conn = _make_conn()
-    with patch("mcp_tools.db", side_effect=_make_conn):
+    verify_conn = _sqlite3.connect(mem_db)
+    verify_conn.row_factory = _sqlite3.Row
+    with patch("db.DB_FILE", mem_db):
         yield verify_conn
     verify_conn.close()
 
 
 @pytest.fixture()
 def api_get():
-    with patch("mcp_tools._api_get") as m:
+    with patch("flickr_api._api_get") as m:
         yield m
 
 
 @pytest.fixture()
 def api_post():
-    with patch("mcp_tools._api_post") as m:
+    with patch("flickr_api._api_post") as m:
         yield m
 
 
 @pytest.fixture()
 def creds():
-    with patch("mcp_tools._load_credentials", return_value=FAKE_CREDS):
+    with patch("flickr_api._load_credentials", return_value=FAKE_CREDS):
         yield FAKE_CREDS
 
 

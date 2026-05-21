@@ -124,15 +124,15 @@ def patched_server(mem_db, tmp_path):
     with (
         patch("flickr_api.CREDENTIALS_FILE", str(creds_file)),
         patch("flickr_api.ENV_FILE", str(env_file)),
-        patch("mcp_tools.db", side_effect=_make_conn),
-        patch("mcp_tools._load_credentials", return_value=FAKE_CREDS),
-        patch("mcp_tools._load_env", return_value=FAKE_ENV),
+        patch("db.DB_FILE", mem_db),
+        patch("flickr_api._load_credentials", return_value=FAKE_CREDS),
+        patch("flickr_api._load_env", return_value=FAKE_ENV),
     ):
         import mcp_tools as mcp
         api_get = MagicMock()
         api_post = MagicMock()
         with (
-            patch.object(mcp, "_api_get", api_get),
-            patch.object(mcp, "_api_post", api_post),
+            patch("flickr_api._api_get", api_get),
+            patch("flickr_api._api_post", api_post),
         ):
             yield mcp, api_get, api_post
