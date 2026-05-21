@@ -129,6 +129,17 @@ _GITHUB_URL = "https://github.com/kc9yjp/mre_flickr_mcp"
 _FLICKR_URL = "https://www.flickr.com/photos/ejwettstein/"
 
 
+def _fmt_dur(secs) -> str | None:
+    """Format a duration in seconds for display in the sync table."""
+    if secs is None:
+        return None
+    if secs == 0:
+        return "< 1s"
+    if secs < 60:
+        return f"{secs}s"
+    return f"{round(secs / 60)} min"
+
+
 def _base_ctx(request: Request, title: str, logged_in: bool | None = None) -> dict:
     """Build the template context shared by every page."""
     if logged_in is None:
@@ -457,15 +468,6 @@ def _build_sync_rows(db_username: str) -> list[dict]:
     """Query sync_log and return rows enriched with active-sync status."""
     from db import get_db_for_user
     from tools.sync import REFRESH_INTERVAL
-
-    def _fmt_dur(secs):
-        if secs is None:
-            return None
-        if secs == 0:
-            return "< 1s"
-        if secs < 60:
-            return f"{secs}s"
-        return f"{round(secs / 60)} min"
 
     raw_rows = []
     try:
