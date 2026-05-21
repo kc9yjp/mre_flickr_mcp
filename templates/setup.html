@@ -73,7 +73,8 @@
   </div>
 
   <div id="tab-stdio" class="tab-pane">
-    <p>For MCP clients that require stdio transport. The container shares the same credential volumes as the SSE server, so no separate login is needed.</p>
+    <p>For MCP clients that require stdio transport. Your MCP client spawns a fresh container on demand using <code>docker run -i --rm</code> &mdash; it does <em>not</em> connect to the running SSE server.</p>
+    <p><strong>One-time setup required:</strong> start the SSE server (<code>docker compose up -d</code>), log in at <a href="/login">{{ base_url }}/login</a>, then return here to copy this snippet. After that the SSE server can be stopped &mdash; credentials are stored in a Docker volume that the stdio container mounts automatically.</p>
     {{ pre_snippet("snip-stdio", snippets.stdio) }}
     {% if mcp_api_key %}<p class="api-key-note">This snippet includes your Flickr API credentials and personal MCP API key. Keep it private.</p>{% endif %}
     <p class="file-hint">Stdio mode has no web UI &mdash; use <a href="/login">login</a> and <a href="/sync">sync</a> via the SSE server.</p>
