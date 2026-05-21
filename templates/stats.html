@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block content %}
+
+<h1>Collection Stats</h1>
+
+{% if no_db %}
+<div class="alert alert-info">No database yet. Run a sync first.</div>
+<p><a href="/sync" class="btn">Go to Sync</a></p>
+{% elif error %}
+<div class="alert alert-err">Error loading stats: {{ error }}</div>
+{% else %}
+
+<div class="card">
+  <div class="stat-grid">
+    <div class="stat"><div class="num">{{ total_photos }}</div><div class="lbl">Photos</div></div>
+    <div class="stat"><div class="num">{{ public_photos }}</div><div class="lbl">Public</div></div>
+    <div class="stat"><div class="num">{{ private_photos }}</div><div class="lbl">Private</div></div>
+    <div class="stat"><div class="num">{{ total_views }}</div><div class="lbl">Total Views</div></div>
+    <div class="stat"><div class="num">{{ album_count }}</div><div class="lbl">Albums</div></div>
+    <div class="stat"><div class="num">{{ group_count }}</div><div class="lbl">Groups</div></div>
+    <div class="stat"><div class="num">{{ contact_count }}</div><div class="lbl">Contacts</div></div>
+  </div>
+  <p style="margin-top:14px;color:#555;font-size:.9rem">Date range: {{ date_range }}</p>
+</div>
+
+<h2>Top Tags</h2>
+<div class="card">
+  {% if top_tags %}
+    {% for tag, count in top_tags %}
+    <span class="tag">{{ tag }} ({{ count }})</span>
+    {% endfor %}
+  {% else %}
+  <em>No tags</em>
+  {% endif %}
+</div>
+
+{% endif %}
+{% endblock %}

@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+{% block content %}
+
+<h1>Sync</h1>
+
+{% if running and active_syncs %}
+<div class="alert alert-info">
+  <strong>Sync in progress:</strong>
+  <ul style="margin:6px 0 0 18px;line-height:1.8">
+    {% for label, started in active_syncs %}
+    <li>
+      <strong>{{ label }}</strong> &mdash; started <time data-ts="{{ started | int }}">—</time>
+      &nbsp;(<span data-elapsed="{{ started | int }}"></span>)
+    </li>
+    {% endfor %}
+  </ul>
+</div>
+{% elif running %}
+<div class="alert alert-info">A sync is currently running&hellip;</div>
+{% endif %}
+
+<div class="card">
+  <h2 style="margin-top:0">Last sync times</h2>
+  <table>
+    <thead><tr><th>Type</th><th>Completed</th></tr></thead>
+    <tbody>
+      {% if sync_rows %}
+        {% for row in sync_rows %}
+        <tr>
+          <td>{{ row.type }}</td>
+          <td>
+            {% if row.last %}<time data-ts="{{ row.last }}">—</time>{% else %}—{% endif %}
+            {% if row.duration %}<span style="color:#888;font-size:.8rem">&nbsp;{{ row.duration }}</span>{% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      {% else %}
+      <tr><td colspan="2">No syncs recorded yet</td></tr>
+      {% endif %}
+    </tbody>
+  </table>
+</div>
+
+<div class="card">
+  <h2 style="margin-top:0">Trigger sync</h2>
+  <p style="margin-bottom:12px;color:#555;font-size:.9rem">Syncs run in the background. Refresh this page to see updated times.</p>
+  {% for stype in ["photos", "contacts", "groups", "albums", "all"] %}
+  <form method="POST" action="/sync/{{ stype }}" style="display:inline">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <button class="btn" style="margin:4px" {% if running %}disabled{% endif %} type="submit">{{ stype | title }}</button>
+  </form>
+  {% endfor %}
+</div>
+
+<div class="card">
+  <h2 style="margin-top:0">Reset Database</h2>
+  <p style="color:#555;font-size:.9rem;margin-bottom:12px">
+    Delete your local database and re-sync from scratch. Your Flickr credentials and API key are not affected.
+  </p>
+  <form method="POST" action="/reset" onsubmit="return confirm('Delete your local database? This cannot be undone.')">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <button class="btn btn-secondary" type="submit">Reset DB</button>
+  </form>
+</div>
+
+{% endblock %}

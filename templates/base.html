@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>{{ title }} — {{ site_title }}</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<nav>
+  <a href="/" class="title">{{ site_title }}</a>
+  {% if logged_in %}
+  <a href="/stats">Stats</a>
+  <a href="/sync">Sync</a>
+  <a href="/setup">Setup</a>
+  <form method="POST" action="/logout" style="margin:0" onsubmit="return confirm('Log out of Flickr?')">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <button type="submit" style="background:none;border:none;color:#fff;font-weight:500;cursor:pointer;padding:0;font-size:1rem">Logout</button>
+  </form>
+  {% endif %}
+</nav>
+<main>
+  {% block content %}{% endblock %}
+</main>
+<footer>
+  &copy; {{ year }} Eric Wettstein &mdash;
+  <a href="{{ github_url }}" target="_blank">GitHub</a> &mdash;
+  <a href="{{ flickr_url }}" target="_blank">Flickr</a>
+</footer>
+<script src="/static/app.js"></script>
+</body>
+</html>

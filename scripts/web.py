@@ -19,10 +19,11 @@ resolve the correct per-user paths transparently.
 """
 
 import asyncio
-import html
+import datetime
 import json
 import logging
 import os
+import pathlib
 import time
 import urllib.parse
 import uuid
@@ -31,8 +32,10 @@ from starlette.applications import Starlette
 from starlette.middleware import Middleware
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
-from starlette.responses import HTMLResponse, RedirectResponse, Response
+from starlette.responses import RedirectResponse, Response
 from starlette.routing import Mount, Route
+from starlette.staticfiles import StaticFiles
+from starlette.templating import Jinja2Templates
 
 from db import _current_user as _db_current_user, db_file, get_db
 from flickr_api import (
@@ -46,6 +49,9 @@ import secrets
 from starlette.middleware.sessions import SessionMiddleware
 
 MCP_PORT = int(os.environ.get("MCP_PORT", "8000"))
+
+_PROJECT_ROOT = pathlib.Path(__file__).parent.parent
+templates = Jinja2Templates(directory=str(_PROJECT_ROOT / "templates"))
 
 _SESSION_KEY_FILE = os.path.join(_CREDS_BASE, "session_secret.key")
 
@@ -122,135 +128,21 @@ _SITE_TITLE = "Mr E Flickr MCP"
 _GITHUB_URL = "https://github.com/kc9yjp/mre_flickr_mcp"
 _FLICKR_URL = "https://www.flickr.com/photos/ejwettstein/"
 
-_WEB_CSS = """
-<style>
-* { box-sizing: border-box; margin: 0; padding: 0; }
-body { font-family: system-ui, sans-serif; background: #f5f5f5; color: #222; }
-nav { background: #0063dc; color: #fff; padding: 12px 24px; display: flex; gap: 20px; align-items: center; }
-nav a { color: #fff; text-decoration: none; font-weight: 500; }
-nav a:hover { text-decoration: underline; }
-nav .title { font-weight: 700; margin-right: auto; }
-main { max-width: 860px; margin: 32px auto; padding: 0 16px; }
-h1 { font-size: 1.5rem; margin-bottom: 20px; }
-h2 { font-size: 1.1rem; margin: 24px 0 10px; color: #555; }
-.card { background: #fff; border-radius: 8px; box-shadow: 0 1px 4px rgba(0,0,0,.1); padding: 20px 24px; margin-bottom: 16px; }
-.stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; }
-.stat { text-align: center; padding: 12px; background: #f0f4ff; border-radius: 6px; }
-.stat .num { font-size: 1.8rem; font-weight: 700; color: #0063dc; }
-.stat .lbl { font-size: .75rem; color: #666; margin-top: 2px; }
-table { width: 100%; border-collapse: collapse; font-size: .9rem; }
-th { text-align: left; padding: 6px 10px; background: #f0f0f0; border-bottom: 2px solid #ddd; }
-td { padding: 6px 10px; border-bottom: 1px solid #eee; }
-.btn { display: inline-block; padding: 8px 18px; background: #0063dc; color: #fff; border: none;
-       border-radius: 5px; cursor: pointer; font-size: .9rem; text-decoration: none; }
-.btn:hover { background: #0052b4; }
-.btn-secondary { background: #6c757d; }
-.btn-secondary:hover { background: #5a6268; }
-.tag { display: inline-block; background: #e8f0ff; color: #0040a0; padding: 2px 8px;
-       border-radius: 12px; font-size: .8rem; margin: 2px; }
-.alert { padding: 12px 18px; border-radius: 6px; margin-bottom: 16px; }
-.alert-ok  { background: #d4edda; color: #155724; }
-.alert-err { background: #f8d7da; color: #721c24; }
-.alert-info { background: #d1ecf1; color: #0c5460; }
-footer { text-align: center; padding: 24px 16px; color: #888; font-size: .8rem; border-top: 1px solid #e0e0e0; margin-top: 40px; }
-footer a { color: #888; }
-.prompt-list { display: flex; flex-direction: column; gap: 10px; margin-bottom: 8px; }
-.prompt-card { background: #fff; border-radius: 8px; box-shadow: 0 1px 4px rgba(0,0,0,.1); padding: 14px 16px; display: flex; align-items: flex-start; gap: 12px; }
-.prompt-text { font-size: .9rem; color: #222; line-height: 1.45; flex: 1; }
-.prompt-text em { font-style: normal; color: #888; }
-.copy-btn { padding: 3px 10px; font-size: .75rem; background: #e8f0ff; color: #0040a0; border: 1px solid #b8cff8;
-            border-radius: 4px; cursor: pointer; white-space: nowrap; flex-shrink: 0; margin-top: 2px; }
-.copy-btn:hover { background: #d0e2ff; }
-.copy-btn.copied { background: #d4edda; color: #155724; border-color: #c3e6cb; }
-.tab-nav { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 16px; }
-.tab-btn { padding: 6px 14px; border: 1px solid #ccc; border-radius: 5px; background: #f5f5f5;
-           cursor: pointer; font-size: .85rem; }
-.tab-btn:hover { background: #e8f0ff; border-color: #99b8f8; }
-.tab-btn.active { background: #0063dc; color: #fff; border-color: #0063dc; }
-.tab-pane { display: none; }
-.tab-pane.active { display: block; }
-.tab-pane p { color: #555; font-size: .9rem; margin-bottom: 10px; }
-.tab-pane .file-hint { font-size: .8rem; color: #888; margin-top: 8px; }
-</style>
-<script>
-function copyCmd(btn, text) {
-  navigator.clipboard.writeText(text).then(() => {
-    btn.textContent = 'Copied!';
-    btn.classList.add('copied');
-    setTimeout(() => { btn.textContent = 'Copy'; btn.classList.remove('copied'); }, 1500);
-  });
-}
-function copyEl(btn, id) {
-  const text = document.getElementById(id).textContent;
-  navigator.clipboard.writeText(text).then(() => {
-    btn.textContent = 'Copied!';
-    btn.classList.add('copied');
-    setTimeout(() => { btn.textContent = 'Copy'; btn.classList.remove('copied'); }, 1500);
-  });
-}
-function showTab(name) {
-  document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
-  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-  document.getElementById('tab-' + name).classList.add('active');
-  document.querySelector('[data-tab="' + name + '"]').classList.add('active');
-}
-function fmtElapsed(startSec) {
-  const s = Math.floor(Date.now() / 1000) - startSec;
-  if (s < 60) return s + 's';
-  return Math.floor(s / 60) + 'm ' + (s % 60) + 's';
-}
-document.addEventListener('DOMContentLoaded', () => {
-  document.querySelectorAll('time[data-ts]').forEach(el => {
-    const ms = parseInt(el.dataset.ts) * 1000;
-    el.textContent = new Date(ms).toLocaleString(undefined, {
-      month: 'short', day: 'numeric', year: 'numeric',
-      hour: 'numeric', minute: '2-digit'
-    });
-  });
-  const elapsed = document.querySelectorAll('[data-elapsed]');
-  if (elapsed.length) {
-    function tick() {
-      elapsed.forEach(el => { el.textContent = fmtElapsed(parseInt(el.dataset.elapsed)); });
-    }
-    tick();
-    setInterval(tick, 1000);
-  }
-});
-</script>
-"""
 
-
-def _html_page(title: str, body: str, request: Request, logged_in: bool | None = None) -> str:
-    """Render a full HTML page with the site nav, injecting login state."""
-    import datetime as _dt
-    year = _dt.date.today().year
+def _base_ctx(request: Request, title: str, logged_in: bool | None = None) -> dict:
+    """Build the template context shared by every page."""
     if logged_in is None:
         logged_in = bool(request.session.get("user_nsid"))
-
-    csrf_token = request.session.get("csrf_token", "")
-    csrf_input = f'<input type="hidden" name="csrf_token" value="{csrf_token}">'
-
-    if logged_in:
-        nav_links = f"""
-  <a href="/stats">Stats</a>
-  <a href="/sync">Sync</a>
-  <a href="/setup">Setup</a>
-  <form method="POST" action="/logout" style="margin:0" onsubmit="return confirm(\'Log out of Flickr?\')">{csrf_input}<button type="submit" style="background:none;border:none;color:#fff;font-weight:500;cursor:pointer;padding:0;font-size:1rem">Logout</button></form>"""
-    else:
-        nav_links = ""
-    return f"""<!DOCTYPE html>
-<html lang="en">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>{title} — {_SITE_TITLE}</title>{_WEB_CSS}</head>
-<body>
-<nav>
-  <a href="/" class="title">{_SITE_TITLE}</a>{nav_links}
-</nav>
-<main>{body}</main>
-<footer>
-    &copy; {year} Eric Wettstein &mdash; <a href="{_GITHUB_URL}" target="_blank">GitHub</a> &mdash; <a href="{_FLICKR_URL}" target="_blank">Flickr</a>
-</footer>
-</body></html>"""
+    return {
+        "request": request,
+        "title": title,
+        "site_title": _SITE_TITLE,
+        "github_url": _GITHUB_URL,
+        "flickr_url": _FLICKR_URL,
+        "year": datetime.date.today().year,
+        "logged_in": logged_in,
+        "csrf_token": request.session.get("csrf_token", ""),
+    }
 
 
 # --- Route handlers ---
@@ -263,14 +155,15 @@ async def route_root(request: Request):
     user_nsid = request.session.get("user_nsid", "")
     logged_in = bool(user_nsid)
     username = request.session.get("fullname") or request.session.get("username") or user_nsid
+    db_username = request.session.get("username", "")
 
     total_photos = 0
     last_sync = None
     db_ok = False
+    syncing = False
     if logged_in:
         try:
             from db import get_db_for_user
-            db_username = request.session.get("username", "")
             with get_db_for_user(db_username) as conn:
                 row = conn.execute("SELECT COUNT(*) FROM photos").fetchone()
                 total_photos = row[0] if row else 0
@@ -278,89 +171,54 @@ async def route_root(request: Request):
                     "SELECT MAX(synced_at) FROM sync_log WHERE type = 'photos'"
                 ).fetchone()
                 if sync_row and sync_row[0]:
-                    last_sync = f'<time data-ts="{sync_row[0]}">—</time>'
+                    last_sync = sync_row[0]
             db_ok = True
         except Exception as e:
             logging.debug("Could not load home page DB stats: %s", e)
+        syncing = _get_user_lock(db_username).locked()
 
-    if not logged_in:
-        body = f"""<h1>{_SITE_TITLE}</h1>
-        <div class="card" style="text-align:center;max-width:400px;margin:40px auto">
-          <div style="font-size:3rem">&#128273;</div>
-          <h2 style="margin:12px 0 8px">Connect to Flickr</h2>
-          <p style="color:#555;margin-bottom:20px">Login with your Flickr account to get started.</p>
-          <a href="/login" class="btn">Login with Flickr &rarr;</a>
-        </div>"""
-        return HTMLResponse(_html_page("Home", body, request, logged_in=False))
+    prompts = [
+        {
+            "display": "Review my photo at <em>[PHOTO URL]</em> — suggest a better title, description, and tags, then add it to relevant groups.",
+            "copy": "Review my photo at [PHOTO URL] — suggest a better title, description, and tags, then add it to relevant groups.",
+        },
+        {
+            "display": "Fave my photo at <em>[PHOTO URL]</em> and suggest a comment to post on it.",
+            "copy": "Fave my photo at [PHOTO URL] and suggest a comment to post on it.",
+        },
+        {
+            "display": "Check if my photo at <em>[PHOTO URL]</em> qualifies for any threshold groups based on its view and fave counts, and add it.",
+            "copy": "Check if my photo at [PHOTO URL] qualifies for any threshold groups based on its view and fave counts, and add it.",
+        },
+        {
+            "display": "Add my photo at <em>[PHOTO URL]</em> to an appropriate album.",
+            "copy": "Add my photo at [PHOTO URL] to an appropriate album.",
+        },
+        {
+            "display": "Find my weakest photos — low views, zero faves — and help me decide which to make private or improve.",
+            "copy": "Find my weakest photos — low views, zero faves — and help me decide which to make private or improve.",
+        },
+        {
+            "display": "Review my contacts and identify unfollow candidates based on engagement — walk me through them one at a time.",
+            "copy": "Review my contacts and identify unfollow candidates based on engagement — walk me through them one at a time.",
+        },
+        {
+            "display": "Sync my Flickr data — photos, contacts, groups, and albums.",
+            "copy": "Sync my Flickr data — photos, contacts, groups, and albums.",
+        },
+    ]
 
-    syncing = _get_user_lock(db_username).locked()
-    if msg == "ok":
-        sync_note = ' Syncing your library in the background &mdash; check the <a href="/sync">Sync</a> page for progress.' if syncing else ""
-        status_html = f'<div class="alert alert-ok" style="margin-bottom:20px">Welcome, <strong>{username}</strong>! You\'re connected to Flickr.{sync_note}</div>'
-    else:
-        status_html = f'<div class="alert alert-ok" style="margin-bottom:20px">Logged in as <strong>{username}</strong></div>'
-
-    cards = f"""
-    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px;margin-bottom:24px">
-      <a href="/stats" style="text-decoration:none">
-        <div class="card" style="text-align:center;cursor:pointer">
-          <div style="font-size:2rem">&#128202;</div>
-          <div style="font-weight:600;margin:8px 0 4px">Stats</div>
-          <div style="color:#555;font-size:.85rem">{"Photos: " + f"{total_photos:,}" if db_ok else "No database yet"}</div>
-        </div>
-      </a>
-      <a href="/sync" style="text-decoration:none">
-        <div class="card" style="text-align:center;cursor:pointer">
-          <div style="font-size:2rem">&#128260;</div>
-          <div style="font-weight:600;margin:8px 0 4px">Sync</div>
-          <div style="color:#555;font-size:.85rem">{"Last: " + last_sync if last_sync else "Never synced"}</div>
-
-        </div>
-      </a>
-      <a href="/setup" style="text-decoration:none">
-        <div class="card" style="text-align:center;cursor:pointer">
-          <div style="font-size:2rem">&#9881;&#65039;</div>
-          <div style="font-weight:600;margin:8px 0 4px">Setup</div>
-          <div style="color:#555;font-size:.85rem">MCP client config</div>
-        </div>
-      </a>
-    </div>"""
-
-    def _prompt(text, copy_text=None):
-        if copy_text is None:
-            copy_text = text
-        safe = html.escape(copy_text).replace("'", "&#39;")
-        return f"""<div class="prompt-card">
-          <span class="prompt-text">{text}</span>
-          <button class="copy-btn" onclick="copyCmd(this, '{safe}')">Copy</button>
-        </div>"""
-
-    prompts = (
-        _prompt(
-            "Review my photo at <em>[PHOTO URL]</em> — suggest a better title, description, and tags, then add it to relevant groups.",
-            "Review my photo at [PHOTO URL] — suggest a better title, description, and tags, then add it to relevant groups.",
-        ),
-        _prompt(
-            "Fave my photo at <em>[PHOTO URL]</em> and suggest a comment to post on it.",
-            "Fave my photo at [PHOTO URL] and suggest a comment to post on it.",
-        ),
-        _prompt(
-            "Check if my photo at <em>[PHOTO URL]</em> qualifies for any threshold groups based on its view and fave counts, and add it.",
-            "Check if my photo at [PHOTO URL] qualifies for any threshold groups based on its view and fave counts, and add it.",
-        ),
-        _prompt(
-            "Add my photo at <em>[PHOTO URL]</em> to an appropriate album.",
-            "Add my photo at [PHOTO URL] to an appropriate album.",
-        ),
-        _prompt("Find my weakest photos — low views, zero faves — and help me decide which to make private or improve."),
-        _prompt("Review my contacts and identify unfollow candidates based on engagement — walk me through them one at a time."),
-        _prompt("Sync my Flickr data — photos, contacts, groups, and albums."),
-    )
-
-    cmd_section = f'<h2>Suggested Prompts</h2><div class="prompt-list">{"".join(prompts)}</div>'
-
-    body = f"<h1>{_SITE_TITLE}</h1>{status_html}{cards}{cmd_section}"
-    return HTMLResponse(_html_page("Home", body, request, logged_in=True))
+    ctx = _base_ctx(request, "Home", logged_in=logged_in)
+    ctx.update({
+        "msg": msg,
+        "username": username,
+        "total_photos": f"{total_photos:,}",
+        "last_sync": last_sync,
+        "db_ok": db_ok,
+        "syncing": syncing,
+        "prompts": prompts,
+    })
+    return templates.TemplateResponse("home.html", ctx)
 
 
 async def route_login(request: Request):
@@ -373,30 +231,26 @@ async def route_login(request: Request):
     if logged_in and msg not in ("ok", "err"):
         return RedirectResponse("/", status_code=303)
 
-    alert = ""
-    if msg == "ok":
-        alert = '<div class="alert alert-ok">Login successful! You are now connected to Flickr.</div>'
-    elif msg == "err":
-        alert = '<div class="alert alert-err">Login failed. Please try again.</div>'
+    ctx = _base_ctx(request, "Login", logged_in=False)
+    ctx.update({
+        "alert_ok": "Login successful! You are now connected to Flickr." if msg == "ok" else None,
+        "alert_err": "Login failed. Please try again." if msg == "err" else None,
+    })
+    return templates.TemplateResponse("login.html", ctx)
 
-    body = f"""
-    <h1>Connect to Flickr</h1>
-    {alert}
-    <div class="card" style="text-align:center;max-width:400px;margin:40px auto">
-      <div style="font-size:3rem">&#128273;</div>
-      <p style="color:#555;margin:12px 0 20px">Authorize this app to access your Flickr account.</p>
-      <a href="/login/start" class="btn">Login with Flickr &rarr;</a>
-    </div>"""
-    return HTMLResponse(_html_page("Login", body, request, logged_in=False))
 
+
+def _login_error(request: Request, message: str, status_code: int = 500):
+    ctx = _base_ctx(request, "Login", logged_in=False)
+    ctx["alert_err"] = message
+    return templates.TemplateResponse("login.html", ctx, status_code=status_code)
 
 
 async def route_login_start(request: Request):
     try:
         api_key, api_secret = _load_env()
     except Exception as e:
-        body = f'<h1>Login</h1><div class="alert alert-err">Config error: {e}</div>'
-        return HTMLResponse(_html_page("Login", body, request), status_code=500)
+        return _login_error(request, f"Config error: {e}")
 
     callback_url = str(request.base_url).rstrip("/") + "/oauth/callback"
     params = _oauth_params(api_key, {"oauth_callback": callback_url})
@@ -406,16 +260,14 @@ async def route_login_start(request: Request):
         resp = requests.get(_FLICKR_REQUEST_TOKEN_URL, params=params, timeout=15)
         resp.raise_for_status()
     except Exception as e:
-        body = f'<h1>Login</h1><div class="alert alert-err">Failed to get request token: {e}</div>'
-        return HTMLResponse(_html_page("Login", body, request), status_code=500)
+        return _login_error(request, f"Failed to get request token: {e}")
 
     token_data = dict(urllib.parse.parse_qsl(resp.text))
     oauth_token = token_data.get("oauth_token")
     oauth_token_secret = token_data.get("oauth_token_secret")
 
     if not oauth_token:
-        body = f'<h1>Login</h1><div class="alert alert-err">Flickr returned no token: {resp.text[:200]}</div>'
-        return HTMLResponse(_html_page("Login", body, request), status_code=500)
+        return _login_error(request, f"Flickr returned no token: {resp.text[:200]}")
 
     cutoff = time.time() - _PENDING_OAUTH_TTL
     stale = [t for t, (_, ts) in _pending_oauth.items() if ts < cutoff]
@@ -424,7 +276,7 @@ async def route_login_start(request: Request):
 
     if len(_pending_oauth) >= _PENDING_OAUTH_MAX:
         logging.warning("Rejected OAuth start: pending dict at capacity (%d)", _PENDING_OAUTH_MAX)
-        return HTMLResponse(_html_page("Login", '<h1>Login</h1><div class="alert alert-err">Too many login attempts in progress. Try again shortly.</div>', request), status_code=429)
+        return _login_error(request, "Too many login attempts in progress. Try again shortly.", status_code=429)
 
     _pending_oauth[oauth_token] = (oauth_token_secret, time.time())
     authorize_url = f"{_FLICKR_AUTHORIZE_URL}?oauth_token={oauth_token}&perms=write"
@@ -533,6 +385,7 @@ async def route_stats(request: Request):
         return redir
     from db import get_db_for_user
     db_username = request.session.get("username", "")
+    ctx = _base_ctx(request, "Stats")
     try:
         with get_db_for_user(db_username) as conn:
             stats = conn.execute("""
@@ -551,15 +404,12 @@ async def route_stats(request: Request):
             album_count   = conn.execute("SELECT COUNT(*) FROM albums").fetchone()[0]
             contact_count = conn.execute("SELECT COUNT(*) FROM contacts").fetchone()[0]
     except FileNotFoundError:
-        body = """<h1>Stats</h1>
-        <div class="alert alert-info">No database yet. Run a sync first.</div>
-        <p><a href="/sync" class="btn">Go to Sync</a></p>"""
-        return HTMLResponse(_html_page("Stats", body, request))
+        ctx["no_db"] = True
+        return templates.TemplateResponse("stats.html", ctx)
     except Exception as e:
         logging.exception("route_stats error")
-        body = f"""<h1>Stats</h1>
-        <div class="alert alert-danger">Error loading stats: {e}</div>"""
-        return HTMLResponse(_html_page("Stats", body, request))
+        ctx["error"] = str(e)
+        return templates.TemplateResponse("stats.html", ctx)
 
     counts = {}
     for row in tag_rows:
@@ -567,28 +417,21 @@ async def route_stats(request: Request):
             counts[tag] = counts.get(tag, 0) + 1
     top_tags = sorted(counts.items(), key=lambda x: -x[1])[:20]
 
-    stat_grid = f"""
-    <div class="stat-grid">
-      <div class="stat"><div class="num">{stats['total_photos'] or 0:,}</div><div class="lbl">Photos</div></div>
-      <div class="stat"><div class="num">{stats['public_photos'] or 0:,}</div><div class="lbl">Public</div></div>
-      <div class="stat"><div class="num">{stats['private_photos'] or 0:,}</div><div class="lbl">Private</div></div>
-      <div class="stat"><div class="num">{f"{(stats['total_views'] or 0) / 1_000_000:.2f}M" if (stats['total_views'] or 0) >= 1_000_000 else f"{stats['total_views'] or 0:,}"}</div><div class="lbl">Total Views</div></div>
-      <div class="stat"><div class="num">{album_count:,}</div><div class="lbl">Albums</div></div>
-      <div class="stat"><div class="num">{group_count:,}</div><div class="lbl">Groups</div></div>
-      <div class="stat"><div class="num">{contact_count:,}</div><div class="lbl">Contacts</div></div>
-    </div>"""
+    total_views = stats["total_views"] or 0
+    views_str = f"{total_views / 1_000_000:.2f}M" if total_views >= 1_000_000 else f"{total_views:,}"
 
-    date_range = f"{stats['earliest'] or '?'} &rarr; {stats['latest'] or '?'}"
-    tag_html = " ".join(f'<span class="tag">{t} ({c})</span>' for t, c in top_tags)
-
-    body = f"""
-    <h1>Collection Stats</h1>
-    <div class="card">{stat_grid}
-      <p style="margin-top:14px;color:#555;font-size:.9rem">Date range: {date_range}</p>
-    </div>
-    <h2>Top Tags</h2>
-    <div class="card">{tag_html or '<em>No tags</em>'}</div>"""
-    return HTMLResponse(_html_page("Stats", body, request))
+    ctx.update({
+        "total_photos": f"{stats['total_photos'] or 0:,}",
+        "public_photos": f"{stats['public_photos'] or 0:,}",
+        "private_photos": f"{stats['private_photos'] or 0:,}",
+        "total_views": views_str,
+        "album_count": f"{album_count:,}",
+        "group_count": f"{group_count:,}",
+        "contact_count": f"{contact_count:,}",
+        "date_range": f"{stats['earliest'] or '?'} → {stats['latest'] or '?'}",
+        "top_tags": top_tags,
+    })
+    return templates.TemplateResponse("stats.html", ctx)
 
 
 async def _trigger_full_sync(username: str, user_nsid: str, user_args: list[str], scripts_dir: str) -> None:
@@ -611,16 +454,14 @@ async def route_sync_page(request: Request):
     redir = _require_login(request)
     if redir:
         return redir
-    import time as _time
     from db import get_db_for_user
-    csrf_token = request.session.get("csrf_token", "")
     db_username = request.session.get("username", "")
     running = _get_user_lock(db_username).locked()
 
-    sync_rows = []
+    raw_rows = []
     try:
         with get_db_for_user(db_username) as conn:
-            sync_rows = conn.execute(
+            raw_rows = conn.execute(
                 "SELECT s.type, s.synced_at AS last, s.duration_seconds"
                 " FROM sync_log s"
                 " JOIN (SELECT type, MAX(synced_at) AS ts FROM sync_log GROUP BY type) m"
@@ -629,63 +470,25 @@ async def route_sync_page(request: Request):
     except Exception as e:
         logging.warning("Could not load sync log for %s: %s", db_username, e)
 
-    def _ts(ts):
-        return f'<time data-ts="{ts}">—</time>' if ts else "—"
-
-    def _dur(secs):
+    def _fmt_dur(secs):
         if not secs:
-            return ""
+            return None
         mins = round(secs / 60, 1)
-        label = f"{mins:.0f} min" if mins >= 1 else f"{secs}s"
-        return f'<span style="color:#888;font-size:.8rem"> &nbsp;{label}</span>'
+        return f"{mins:.0f} min" if mins >= 1 else f"{secs}s"
 
-    sync_html = "".join(
-        f"<tr><td>{r['type']}</td><td>{_ts(r['last'])}{_dur(r['duration_seconds'])}</td></tr>"
-        for r in sync_rows
-    ) or "<tr><td colspan=2>No syncs recorded yet</td></tr>"
+    sync_rows = [
+        {"type": r["type"], "last": r["last"], "duration": _fmt_dur(r["duration_seconds"])}
+        for r in raw_rows
+    ]
+    active_syncs = sorted(_active_syncs.items(), key=lambda x: x[1]) if running else []
 
-    if running and _active_syncs:
-        now = _time.time()
-        items = "".join(
-            f'<li><strong>{label}</strong> &mdash; started <time data-ts="{int(started)}">—</time>'
-            f' &nbsp;(<span data-elapsed="{int(started)}"></span>)</li>'
-            for label, started in sorted(_active_syncs.items(), key=lambda x: x[1])
-        )
-        running_badge = f'<div class="alert alert-info"><strong>Sync in progress:</strong><ul style="margin:6px 0 0 18px;line-height:1.8">{items}</ul></div>'
-    elif running:
-        running_badge = '<div class="alert alert-info">A sync is currently running&hellip;</div>'
-    else:
-        running_badge = ""
-
-    buttons = ""
-    for stype in ("photos", "contacts", "groups", "albums", "all"):
-        buttons += f"""<form method="POST" action="/sync/{stype}" style="display:inline">
-          <input type="hidden" name="csrf_token" value="{csrf_token}">
-          <button class="btn" style="margin:4px" {"disabled" if running else ""} type="submit">{stype.title()}</button>
-        </form>"""
-
-    body = f"""
-    <h1>Sync</h1>
-    {running_badge}
-    <div class="card">
-      <h2 style="margin-top:0">Last sync times</h2>
-      <table><thead><tr><th>Type</th><th>Completed</th></tr></thead>
-      <tbody>{sync_html}</tbody></table>
-    </div>
-    <div class="card">
-      <h2 style="margin-top:0">Trigger sync</h2>
-      <p style="margin-bottom:12px;color:#555;font-size:.9rem">Syncs run in the background. Refresh this page to see updated times.</p>
-      {buttons}
-    </div>
-    <div class="card">
-      <h2 style="margin-top:0">Reset Database</h2>
-      <p style="color:#555;font-size:.9rem;margin-bottom:12px">Delete your local database and re-sync from scratch. Your Flickr credentials and API key are not affected.</p>
-      <form method="POST" action="/reset" onsubmit="return confirm('Delete your local database? This cannot be undone.')">
-        <input type="hidden" name="csrf_token" value="{csrf_token}">
-        <button class="btn btn-secondary" type="submit">Reset DB</button>
-      </form>
-    </div>"""
-    return HTMLResponse(_html_page("Sync", body, request))
+    ctx = _base_ctx(request, "Sync")
+    ctx.update({
+        "running": running,
+        "sync_rows": sync_rows,
+        "active_syncs": active_syncs,
+    })
+    return templates.TemplateResponse("sync.html", ctx)
 
 
 async def route_sync_trigger(request: Request):
@@ -783,9 +586,7 @@ async def route_setup(request: Request):
 
     base = str(request.base_url).rstrip("/")
     sse_url = f"{base}/sse"
-    csrf_token = request.session.get("csrf_token", "")
 
-    # Load the user's personal MCP API key.
     user_nsid   = request.session.get("user_nsid", "")
     mcp_api_key = ""
     if user_nsid:
@@ -794,132 +595,35 @@ async def route_setup(request: Request):
         except Exception as e:
             logging.warning("Could not load credentials for setup page (%s): %s", user_nsid, e)
 
-    auth_value   = f'"Authorization": "Bearer {mcp_api_key}"' if mcp_api_key else ""
-    headers_block = f',\n      "headers": {{{auth_value}}}' if mcp_api_key else ""
-    auth_note = (
-        '<p style="font-size:.85rem;color:#555;margin-top:4px">'
-        'This snippet includes your personal API key. Keep it private.</p>'
-    ) if mcp_api_key else ""
+    headers = {"Authorization": f"Bearer {mcp_api_key}"} if mcp_api_key else {}
 
-    def _pre(snippet_id, text):
-        return (
-            f'<div style="position:relative">'
-            f'<pre id="{snippet_id}" style="background:#f0f0f0;padding:14px;border-radius:6px;'
-            f'font-size:.82rem;overflow-x:auto;margin-bottom:6px">{text}</pre>'
-            f'<button class="copy-btn" style="position:absolute;top:8px;right:8px" '
-            f'onclick="copyEl(this,\'{snippet_id}\')">Copy</button></div>'
-        )
+    claude_code_cfg = {"mcpServers": {"flickr": {"type": "sse", "url": sse_url}}}
+    if headers:
+        claude_code_cfg["mcpServers"]["flickr"]["headers"] = headers
 
-    # --- per-client snippets ---
-    claude_code_json = (
-        "{\n"
-        '  "mcpServers": {\n'
-        '    "flickr": {\n'
-        '      "type": "sse",\n'
-        f'      "url": "{sse_url}"{headers_block}\n'
-        "    }\n"
-        "  }\n"
-        "}"
-    )
+    cursor_cfg = {"mcpServers": {"flickr": {"url": sse_url}}}
+    if headers:
+        cursor_cfg["mcpServers"]["flickr"]["headers"] = headers
 
-    claude_desktop_json = claude_code_json  # identical format
+    opencode_cfg = {"mcp": {"flickr": {"type": "remote", "url": sse_url}}}
+    if headers:
+        opencode_cfg["mcp"]["flickr"]["headers"] = headers
 
-    cursor_json = (
-        "{\n"
-        '  "mcpServers": {\n'
-        '    "flickr": {\n'
-        f'      "url": "{sse_url}"{headers_block}\n'
-        "    }\n"
-        "  }\n"
-        "}"
-    )
+    snippets = {
+        "claude_code":    json.dumps(claude_code_cfg, indent=2),
+        "claude_desktop": json.dumps(claude_code_cfg, indent=2),
+        "cursor":         json.dumps(cursor_cfg, indent=2),
+        "windsurf":       json.dumps(cursor_cfg, indent=2),
+        "opencode":       json.dumps(opencode_cfg, indent=2),
+    }
 
-    opencode_json = (
-        "{\n"
-        '  "mcp": {\n'
-        '    "flickr": {\n'
-        '      "type": "remote",\n'
-        f'      "url": "{sse_url}"'
-        + (f',\n      "headers": {{{auth_value}}}' if mcp_api_key else "")
-        + "\n    }\n  }\n}"
-    )
-
-    body = f"""
-    <h1>Setup</h1>
-    <div class="card">
-      <p style="color:#555;font-size:.9rem;margin-bottom:16px">
-        The MCP server speaks SSE at <code>{sse_url}</code>.
-        Pick your client below for the exact config snippet.
-      </p>
-
-      <div class="tab-nav">
-        <button class="tab-btn active" data-tab="claude-code"   onclick="showTab('claude-code')">Claude Code</button>
-        <button class="tab-btn"        data-tab="claude-desktop" onclick="showTab('claude-desktop')">Claude Desktop</button>
-        <button class="tab-btn"        data-tab="cursor"         onclick="showTab('cursor')">Cursor</button>
-        <button class="tab-btn"        data-tab="windsurf"       onclick="showTab('windsurf')">Windsurf</button>
-        <button class="tab-btn"        data-tab="opencode"       onclick="showTab('opencode')">OpenCode</button>
-        <button class="tab-btn"        data-tab="open-webui"     onclick="showTab('open-webui')">Open WebUI</button>
-      </div>
-
-      <div id="tab-claude-code" class="tab-pane active">
-        <p>Add to <code>.mcp.json</code> in your project root, or <code>~/.claude/mcp.json</code> for all projects.</p>
-        {_pre("snip-cc", claude_code_json)}
-        {auth_note}
-      </div>
-
-      <div id="tab-claude-desktop" class="tab-pane">
-        <p>Edit <code>~/Library/Application Support/Claude/claude_desktop_config.json</code> (macOS) or
-           <code>%APPDATA%\\Claude\\claude_desktop_config.json</code> (Windows).</p>
-        {_pre("snip-cd", claude_desktop_json)}
-        {auth_note}
-        <p class="file-hint">Restart Claude Desktop after saving.</p>
-      </div>
-
-      <div id="tab-cursor" class="tab-pane">
-        <p>Add to <code>~/.cursor/mcp.json</code> (global) or <code>.cursor/mcp.json</code> in your project.</p>
-        {_pre("snip-cursor", cursor_json)}
-        {auth_note}
-        <p class="file-hint">Cursor detects SSE servers from the <code>url</code> field automatically &mdash; no <code>type</code> needed.</p>
-      </div>
-
-      <div id="tab-windsurf" class="tab-pane">
-        <p>Add to <code>~/.codeium/windsurf/mcp_config.json</code>.</p>
-        {_pre("snip-windsurf", cursor_json)}
-        {auth_note}
-        <p class="file-hint">Same format as Cursor. Reload the Windsurf window after saving.</p>
-      </div>
-
-      <div id="tab-opencode" class="tab-pane">
-        <p>Add to <code>~/.config/opencode/config.json</code>.</p>
-        {_pre("snip-opencode", opencode_json)}
-        {auth_note}
-      </div>
-
-      <div id="tab-open-webui" class="tab-pane">
-        <p>Open WebUI connects to MCP servers through its admin panel &mdash; no config file needed.</p>
-        <ol style="color:#555;font-size:.9rem;line-height:2;padding-left:20px">
-          <li>Go to <strong>Admin &rarr; Settings &rarr; Tools</strong></li>
-          <li>Click <strong>Add Tool Server</strong></li>
-          <li>Enter the server URL:</li>
-        </ol>
-        {_pre("snip-webui", sse_url)}
-        {"<p style='font-size:.85rem;color:#555;margin-top:8px'>Enter your personal API key in the Authorization field.</p>" if mcp_api_key else ""}
-        <p class="file-hint">Ollama does not support MCP natively &mdash; use Open WebUI as the agent layer on top of Ollama.</p>
-      </div>
-    </div>
-    <div class="card" style="margin-top:16px">
-      <h2 style="margin-top:0">API Key</h2>
-      <p style="color:#555;font-size:.9rem;margin-bottom:12px">
-        Your current key is shown in the snippets above. Regenerating invalidates
-        the old key &mdash; update any MCP client configs afterwards.
-      </p>
-      <form method="POST" action="/regen-key"
-            onsubmit="return confirm('Regenerate your MCP API key? Existing MCP client connections will break until you update their config.')">
-        <input type="hidden" name="csrf_token" value="{csrf_token}">
-        <button class="btn btn-secondary" type="submit">Regenerate API Key</button>
-      </form>
-    </div>"""
-    return HTMLResponse(_html_page("Setup", body, request))
+    ctx = _base_ctx(request, "Setup")
+    ctx.update({
+        "sse_url": sse_url,
+        "mcp_api_key": mcp_api_key,
+        "snippets": snippets,
+    })
+    return templates.TemplateResponse("setup.html", ctx)
 
 
 
@@ -1045,6 +749,7 @@ async def main_sse():
             Route("/setup",          endpoint=route_setup),
             Route("/sse",            endpoint=_SSEHandler(sse)),
             Mount("/messages/",      app=sse.handle_post_message),
+            Mount("/static",         app=StaticFiles(directory=str(_PROJECT_ROOT / "static")), name="static"),
         ],
     )
 

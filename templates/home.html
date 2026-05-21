@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% block content %}
+
+{% if not logged_in %}
+
+<h1>{{ site_title }}</h1>
+<div class="card" style="text-align:center;max-width:400px;margin:40px auto">
+  <div style="font-size:3rem">&#128273;</div>
+  <h2 style="margin:12px 0 8px">Connect to Flickr</h2>
+  <p style="color:#555;margin-bottom:20px">Login with your Flickr account to get started.</p>
+  <a href="/login" class="btn">Login with Flickr &rarr;</a>
+</div>
+
+{% else %}
+
+<h1>{{ site_title }}</h1>
+
+{% if msg == "ok" %}
+  {% if syncing %}
+  <div class="alert alert-ok" style="margin-bottom:20px">
+    Welcome, <strong>{{ username }}</strong>! You're connected to Flickr.
+    Syncing your library in the background &mdash; check the <a href="/sync">Sync</a> page for progress.
+  </div>
+  {% else %}
+  <div class="alert alert-ok" style="margin-bottom:20px">Welcome, <strong>{{ username }}</strong>! You're connected to Flickr.</div>
+  {% endif %}
+{% else %}
+<div class="alert alert-ok" style="margin-bottom:20px">Logged in as <strong>{{ username }}</strong></div>
+{% endif %}
+
+<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px;margin-bottom:24px">
+  <a href="/stats" style="text-decoration:none">
+    <div class="card" style="text-align:center;cursor:pointer">
+      <div style="font-size:2rem">&#128202;</div>
+      <div style="font-weight:600;margin:8px 0 4px">Stats</div>
+      <div style="color:#555;font-size:.85rem">
+        {% if db_ok %}Photos: {{ total_photos | int }}{% else %}No database yet{% endif %}
+      </div>
+    </div>
+  </a>
+  <a href="/sync" style="text-decoration:none">
+    <div class="card" style="text-align:center;cursor:pointer">
+      <div style="font-size:2rem">&#128260;</div>
+      <div style="font-weight:600;margin:8px 0 4px">Sync</div>
+      <div style="color:#555;font-size:.85rem">
+        {% if last_sync %}Last: <time data-ts="{{ last_sync }}">—</time>{% else %}Never synced{% endif %}
+      </div>
+    </div>
+  </a>
+  <a href="/setup" style="text-decoration:none">
+    <div class="card" style="text-align:center;cursor:pointer">
+      <div style="font-size:2rem">&#9881;&#65039;</div>
+      <div style="font-weight:600;margin:8px 0 4px">Setup</div>
+      <div style="color:#555;font-size:.85rem">MCP client config</div>
+    </div>
+  </a>
+</div>
+
+<h2>Suggested Prompts</h2>
+<div class="prompt-list">
+  {% for p in prompts %}
+  <div class="prompt-card">
+    <span class="prompt-text">{{ p.display | safe }}</span>
+    <button class="copy-btn" onclick="copyCmd(this, {{ p.copy | tojson }})">Copy</button>
+  </div>
+  {% endfor %}
+</div>
+
+{% endif %}
+{% endblock %}
