@@ -1,39 +1,23 @@
-import hashlib
-import hmac
 import os
+import sys
 import time
 import urllib.parse
 import requests
 import json
-import sys
 
-api_key = os.environ["FLICKR_API_KEY"]
-api_secret = os.environ["FLICKR_API_SECRET"]
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import flickr_api
+
+api_key, api_secret = flickr_api._load_env()
 
 REQUEST_TOKEN_URL = "https://www.flickr.com/services/oauth/request_token"
 AUTHORIZE_URL = "https://www.flickr.com/services/oauth/authorize"
 ACCESS_TOKEN_URL = "https://www.flickr.com/services/oauth/access_token"
 CALLBACK = "oob"  # out-of-band, user copies verifier manually
 
-def sign_request(method, url, params, secret, token_secret=""):
-    """Generate OAuth 1.0a signature"""
-    sorted_params = urllib.parse.urlencode(sorted(params.items()))
-    base_string = f"{method}&{urllib.parse.quote(url, safe='')}&{urllib.parse.quote(sorted_params, safe='')}"
-    signing_key = f"{urllib.parse.quote(secret, safe='')}&{urllib.parse.quote(token_secret, safe='')}"
-    signature = hmac.new(signing_key.encode(), base_string.encode(), hashlib.sha1)
-    import base64
-    return base64.b64encode(signature.digest()).decode()
-
 def get_request_token():
-    params = {
-        "oauth_nonce": hashlib.md5(str(time.time()).encode()).hexdigest(),
-        "oauth_timestamp": str(int(time.time())),
-        "oauth_consumer_key": api_key,
-        "oauth_signature_method": "HMAC-SHA1",
-        "oauth_version": "1.0",
-        "oauth_callback": CALLBACK,
-    }
-    params["oauth_signature"] = sign_request("GET", REQUEST_TOKEN_URL, params, api_secret)
+    params = flickr_api._oauth_params(api_key, {"oauth_callback": CALLBACK})
+    params["oauth_signature"] = flickr_api._sign("GET", REQUEST_TOKEN_URL, params, api_secret)
     
     resp = requests.get(REQUEST_TOKEN_URL, params=params)
     if resp.status_code != 200:
@@ -63,16 +47,11 @@ if __name__ == "__main__":
         token_secret = sys.argv[3]
         verifier = sys.argv[4]
         
-        params = {
-            "oauth_nonce": hashlib.md5(str(time.time()).encode()).hexdigest(),
-            "oauth_timestamp": str(int(time.time())),
-            "oauth_consumer_key": api_key,
-            "oauth_signature_method": "HMAC-SHA1",
-            "oauth_version": "1.0",
+        params = flickr_api._oauth_params(api_key, {
             "oauth_token": token,
             "oauth_verifier": verifier,
-        }
-        params["oauth_signature"] = sign_request("GET", ACCESS_TOKEN_URL, params, api_secret, token_secret)
+        })
+        params["oauth_signature"] = flickr_api._sign("GET", ACCESS_TOKEN_URL, params, api_secret, token_secret)
         
         resp = requests.get(ACCESS_TOKEN_URL, params=params)
         if resp.status_code != 200:

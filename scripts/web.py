@@ -16,7 +16,7 @@ from starlette.requests import Request
 from starlette.responses import HTMLResponse, RedirectResponse, Response
 from starlette.routing import Mount, Route
 
-from db import DB_FILE, db
+from db import DB_FILE, get_db
 from flickr_api import CREDENTIALS_FILE, _load_credentials, _load_env, _oauth_params, _sign
 from mcp_tools import SYNC_SCRIPT, _active_syncs, _background_refresh, _run_sync_script, _sync_lock, server
 
@@ -208,15 +208,14 @@ async def route_root(request: Request):
     last_sync = None
     db_ok = False
     try:
-        conn = db()
-        row = conn.execute("SELECT COUNT(*) FROM photos").fetchone()
-        total_photos = row[0] if row else 0
-        sync_row = conn.execute(
-            "SELECT MAX(synced_at) FROM sync_log WHERE type = 'photos'"
-        ).fetchone()
-        if sync_row and sync_row[0]:
-            last_sync = f'<time data-ts="{sync_row[0]}">—</time>'
-        conn.close()
+        with get_db() as conn:
+            row = conn.execute("SELECT COUNT(*) FROM photos").fetchone()
+            total_photos = row[0] if row else 0
+            sync_row = conn.execute(
+                "SELECT MAX(synced_at) FROM sync_log WHERE type = 'photos'"
+            ).fetchone()
+            if sync_row and sync_row[0]:
+                last_sync = f'<time data-ts="{sync_row[0]}">—</time>'
         db_ok = True
     except Exception:
         pass
@@ -442,33 +441,27 @@ async def route_logout(request: Request):
 
 async def route_stats(request: Request):
     try:
-        conn = db()
+        with get_db() as conn:
+            stats = conn.execute("""
+                SELECT COUNT(*) AS total_photos,
+                       SUM(CASE WHEN is_public = 1 THEN 1 ELSE 0 END) AS public_photos,
+                       SUM(CASE WHEN is_public = 0 THEN 1 ELSE 0 END) AS private_photos,
+                       SUM(views) AS total_views,
+                       MIN(date_taken) AS earliest,
+                       MAX(date_taken) AS latest
+                FROM photos
+            """).fetchone()
+            tag_rows = conn.execute(
+                "SELECT tags FROM photos WHERE tags != '' AND tags IS NOT NULL"
+            ).fetchall()
+            group_count   = conn.execute("SELECT COUNT(*) FROM groups").fetchone()[0]
+            album_count   = conn.execute("SELECT COUNT(*) FROM albums").fetchone()[0]
+            contact_count = conn.execute("SELECT COUNT(*) FROM contacts").fetchone()[0]
     except FileNotFoundError:
         body = """<h1>Stats</h1>
         <div class="alert alert-info">No database yet. Run a sync first.</div>
         <p><a href="/sync" class="btn">Go to Sync</a></p>"""
         return HTMLResponse(_html_page("Stats", body, request))
-
-    try:
-        stats = conn.execute("""
-            SELECT COUNT(*) AS total_photos,
-                   SUM(CASE WHEN is_public = 1 THEN 1 ELSE 0 END) AS public_photos,
-                   SUM(CASE WHEN is_public = 0 THEN 1 ELSE 0 END) AS private_photos,
-                   SUM(views) AS total_views,
-                   MIN(date_taken) AS earliest,
-                   MAX(date_taken) AS latest
-            FROM photos
-        """).fetchone()
-
-        tag_rows = conn.execute(
-            "SELECT tags FROM photos WHERE tags != '' AND tags IS NOT NULL"
-        ).fetchall()
-        group_count   = conn.execute("SELECT COUNT(*) FROM groups").fetchone()[0]
-        album_count   = conn.execute("SELECT COUNT(*) FROM albums").fetchone()[0]
-        contact_count = conn.execute("SELECT COUNT(*) FROM contacts").fetchone()[0]
-
-    finally:
-        conn.close()
 
     counts = {}
     for row in tag_rows:
@@ -507,14 +500,13 @@ async def route_sync_page(request: Request):
 
     sync_rows = []
     try:
-        conn = db()
-        sync_rows = conn.execute(
-            "SELECT s.type, s.synced_at AS last, s.duration_seconds"
-            " FROM sync_log s"
-            " JOIN (SELECT type, MAX(synced_at) AS ts FROM sync_log GROUP BY type) m"
-            " ON s.type = m.type AND s.synced_at = m.ts"
-        ).fetchall()
-        conn.close()
+        with get_db() as conn:
+            sync_rows = conn.execute(
+                "SELECT s.type, s.synced_at AS last, s.duration_seconds"
+                " FROM sync_log s"
+                " JOIN (SELECT type, MAX(synced_at) AS ts FROM sync_log GROUP BY type) m"
+                " ON s.type = m.type AND s.synced_at = m.ts"
+            ).fetchall()
     except Exception:
         pass
 
@@ -601,8 +593,9 @@ async def route_sync_trigger(request: Request):
 async def route_setup(request: Request):
     base = str(request.base_url).rstrip("/")
     sse_url = f"{base}/sse"
-    auth = f'"Authorization": "Bearer {MCP_API_KEY}"' if MCP_API_KEY else ""
-    headers_block = f',\n      "headers": {{{auth}}}' if auth else ""
+    auth_placeholder = '"Authorization": "Bearer MCP_API_KEY"'
+    headers_block = f',\n      "headers": {{{auth_placeholder}}}' if MCP_API_KEY else ""
+    auth_note = '<p style="font-size:.85rem;color:#555;margin-top:4px">Replace <code>MCP_API_KEY</code> with the value from your <code>.env</code>.</p>' if MCP_API_KEY else ""
 
     def _pre(snippet_id, text):
         return (
@@ -643,7 +636,7 @@ async def route_setup(request: Request):
         '    "flickr": {\n'
         '      "type": "remote",\n'
         f'      "url": "{sse_url}"'
-        + (f',\n      "headers": {{{auth}}}' if auth else "")
+        + (f',\n      "headers": {{{auth_placeholder}}}' if MCP_API_KEY else "")
         + "\n    }\n  }\n}"
     )
 
@@ -667,30 +660,35 @@ async def route_setup(request: Request):
       <div id="tab-claude-code" class="tab-pane active">
         <p>Add to <code>.mcp.json</code> in your project root, or <code>~/.claude/mcp.json</code> for all projects.</p>
         {_pre("snip-cc", claude_code_json)}
+        {auth_note}
       </div>
 
       <div id="tab-claude-desktop" class="tab-pane">
         <p>Edit <code>~/Library/Application Support/Claude/claude_desktop_config.json</code> (macOS) or
            <code>%APPDATA%\\Claude\\claude_desktop_config.json</code> (Windows).</p>
         {_pre("snip-cd", claude_desktop_json)}
+        {auth_note}
         <p class="file-hint">Restart Claude Desktop after saving.</p>
       </div>
 
       <div id="tab-cursor" class="tab-pane">
         <p>Add to <code>~/.cursor/mcp.json</code> (global) or <code>.cursor/mcp.json</code> in your project.</p>
         {_pre("snip-cursor", cursor_json)}
+        {auth_note}
         <p class="file-hint">Cursor detects SSE servers from the <code>url</code> field automatically &mdash; no <code>type</code> needed.</p>
       </div>
 
       <div id="tab-windsurf" class="tab-pane">
         <p>Add to <code>~/.codeium/windsurf/mcp_config.json</code>.</p>
         {_pre("snip-windsurf", cursor_json)}
+        {auth_note}
         <p class="file-hint">Same format as Cursor. Reload the Windsurf window after saving.</p>
       </div>
 
       <div id="tab-opencode" class="tab-pane">
         <p>Add to <code>~/.config/opencode/config.json</code>.</p>
         {_pre("snip-opencode", opencode_json)}
+        {auth_note}
       </div>
 
       <div id="tab-open-webui" class="tab-pane">
@@ -701,7 +699,7 @@ async def route_setup(request: Request):
           <li>Enter the server URL:</li>
         </ol>
         {_pre("snip-webui", sse_url)}
-        {"<p style='font-size:.85rem;color:#555;margin-top:8px'>Also enter your API key in the Authorization field if prompted: <code>" + MCP_API_KEY + "</code></p>" if MCP_API_KEY else ""}
+        {"<p style='font-size:.85rem;color:#555;margin-top:8px'>Also enter your API key (<code>MCP_API_KEY</code> from your <code>.env</code>) in the Authorization field if prompted.</p>" if MCP_API_KEY else ""}
         <p class="file-hint">Ollama does not support MCP natively &mdash; use Open WebUI as the agent layer on top of Ollama.</p>
       </div>
     </div>"""
