@@ -1,9 +1,17 @@
 #!/usr/bin/env python3
 """Sync public Flickr photo metadata to a local SQLite database.
 
-Usage:
+Usage (single-user):
     python scripts/flickr_sync.py          # incremental (since last sync)
-    python scripts/flickr_sync.py --full   # fetch all public photos
+    python scripts/flickr_sync.py --full   # fetch all photos
+
+Usage (multi-user):
+    python scripts/flickr_sync.py --nsid 12345@N00 --username jdoe
+    python scripts/flickr_sync.py --nsid 12345@N00 --username jdoe --full --create
+
+When ``--nsid`` / ``--username`` are provided the script resolves credentials
+and the database path per-user; otherwise it falls back to the single-user
+defaults (``~/.flickr_mcp/credentials.json`` and ``data/flickr.db``).
 """
 
 import argparse
@@ -14,7 +22,7 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import flickr_api
-from db import DB_FILE
+from db import DB_FILE, db_file as _db_file
 API_URL = flickr_api.API_URL
 HTTP_TIMEOUT = flickr_api.HTTP_TIMEOUT
 PER_PAGE = 500
@@ -36,6 +44,46 @@ def api_get(method, extra=None):
 
 
 # --- Database ---
+
+_MIGRATIONS = [
+    "ALTER TABLE photos ADD COLUMN favorites    INTEGER DEFAULT 0",
+    "ALTER TABLE photos ADD COLUMN comments     INTEGER DEFAULT 0",
+    "ALTER TABLE photos ADD COLUMN reviewed_at  INTEGER DEFAULT NULL",
+    "ALTER TABLE photos ADD COLUMN is_public    INTEGER DEFAULT 1",
+    "ALTER TABLE sync_log ADD COLUMN type       TEXT DEFAULT 'photos'",
+    "ALTER TABLE groups ADD COLUMN description  TEXT",
+    "ALTER TABLE groups ADD COLUMN keywords     TEXT",
+    "ALTER TABLE sync_log ADD COLUMN duration_seconds INTEGER",
+]
+
+SCHEMA_VERSION = len(_MIGRATIONS)
+
+
+def _apply_migrations(conn):
+    """Run pending schema migrations using PRAGMA user_version as a cursor.
+
+    Each migration has a 1-based index. Only migrations whose index exceeds the
+    stored user_version are executed. The version is incremented after each
+    migration so partial failures leave the DB in a consistent state.
+    Existing databases with user_version=0 (pre-versioning) run all migrations;
+    duplicate-column errors are silently skipped (columns already exist from the
+    old try/except approach). Any other error propagates so the DB is not
+    silently left in a partially-migrated state.
+    """
+    import sqlite3 as _sqlite3
+    cur = conn.execute("PRAGMA user_version").fetchone()[0]
+    for i, sql in enumerate(_MIGRATIONS, 1):
+        if i <= cur:
+            continue
+        try:
+            conn.execute(sql)
+            conn.commit()
+        except _sqlite3.OperationalError as e:
+            if "duplicate column name" not in str(e).lower():
+                raise
+        conn.execute(f"PRAGMA user_version = {i}")
+        conn.commit()
+
 
 def init_db(conn):
     conn.executescript("""
@@ -107,24 +155,7 @@ def init_db(conn):
         );
     """)
     conn.commit()
-
-    # Migrations: safely add columns that may be missing from older databases
-    migrations = [
-        "ALTER TABLE photos ADD COLUMN favorites    INTEGER DEFAULT 0",
-        "ALTER TABLE photos ADD COLUMN comments     INTEGER DEFAULT 0",
-        "ALTER TABLE photos ADD COLUMN reviewed_at  INTEGER DEFAULT NULL",
-        "ALTER TABLE photos ADD COLUMN is_public    INTEGER DEFAULT 1",
-        "ALTER TABLE sync_log ADD COLUMN type       TEXT DEFAULT 'photos'",
-        "ALTER TABLE groups ADD COLUMN description  TEXT",
-        "ALTER TABLE groups ADD COLUMN keywords     TEXT",
-        "ALTER TABLE sync_log ADD COLUMN duration_seconds INTEGER",
-    ]
-    for sql in migrations:
-        try:
-            conn.execute(sql)
-            conn.commit()
-        except Exception:
-            pass  # column already exists
+    _apply_migrations(conn)
 
 
 def last_sync_time(conn):
@@ -284,59 +315,65 @@ def sync_group_descriptions(conn):
 # --- Command ---
 
 def cmd_sync(args):
+    """Run the photo sync.  Resolves per-user paths from CLI args when provided."""
+    target_db = _db_file(args.username) if args.username else DB_FILE
+    nsid_arg = args.nsid if args.nsid else None
+
     try:
         flickr_api._load_env()
-        creds = flickr_api._load_credentials()
+        creds = flickr_api._load_credentials(nsid=nsid_arg)
     except RuntimeError as e:
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
 
-    if not os.path.exists(DB_FILE):
+    if not os.path.exists(target_db):
         if not args.create:
-            print(f"Database not found: {DB_FILE}\nRun with --create to initialise it.", file=sys.stderr)
+            print(f"Database not found: {target_db}\nRun with --create to initialise it.", file=sys.stderr)
             sys.exit(1)
-        os.makedirs(os.path.dirname(DB_FILE), exist_ok=True)
-        print(f"Creating database at {DB_FILE}")
+        os.makedirs(os.path.dirname(target_db), exist_ok=True)
+        print(f"Creating database at {target_db}")
 
-    conn = sqlite3.connect(DB_FILE)
-    init_db(conn)
+    with sqlite3.connect(target_db) as conn:
+        init_db(conn)
 
-    synced_at = int(time.time())
-    since = last_sync_time(conn)
+        synced_at = int(time.time())
+        since = last_sync_time(conn)
 
-    if args.full or since is None:
-        if not args.full:
-            print("No previous sync found — running full sync.")
-        mode = "full"
-        photos = fetch_all_public(creds["user_nsid"])
-    else:
-        mode = "update"
-        print(f"Incremental sync since {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(since))}")
-        photos = fetch_updated(since)
+        if args.full or since is None:
+            if not args.full:
+                print("No previous sync found — running full sync.")
+            mode = "full"
+            photos = fetch_all_public(creds["user_nsid"])
+        else:
+            mode = "update"
+            print(f"Incremental sync since {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(since))}")
+            photos = fetch_updated(since)
 
-    total = 0
-    for photo in photos:
-        upsert_photo(conn, photo, creds["user_nsid"], synced_at)
-        total += 1
-        if total % 100 == 0:
-            conn.commit()
+        total = 0
+        for photo in photos:
+            upsert_photo(conn, photo, creds["user_nsid"], synced_at)
+            total += 1
+            if total % 100 == 0:
+                conn.commit()
 
-    conn.commit()
-    conn.execute(
-        "INSERT INTO sync_log (synced_at, mode, photos_fetched, type) VALUES (?, ?, ?, 'photos')",
-        (synced_at, mode, total),
-    )
-    conn.commit()
-    conn.close()
-    print(f"Done. {total} photos synced ({mode}).")
+        conn.commit()
+        conn.execute(
+            "INSERT INTO sync_log (synced_at, mode, photos_fetched, type) VALUES (?, ?, ?, 'photos')",
+            (synced_at, mode, total),
+        )
+        conn.commit()
+    print(f"Done. {total} photos synced ({mode}) to {target_db}.")
 
 
 # --- Entry point ---
 
 def main():
+    """Parse CLI arguments and run the photo sync."""
     parser = argparse.ArgumentParser(prog="flickr-sync", description="Sync Flickr photo metadata to SQLite")
-    parser.add_argument("--full", action="store_true", help="Full sync (ignore last sync timestamp)")
-    parser.add_argument("--create", action="store_true", help="Create the database if it does not exist")
+    parser.add_argument("--full",     action="store_true", help="Full sync (ignore last sync timestamp)")
+    parser.add_argument("--create",   action="store_true", help="Create the database if it does not exist")
+    parser.add_argument("--nsid",     help="Flickr user NSID for multi-user mode")
+    parser.add_argument("--username", help="Username for per-user DB path (multi-user mode)")
     cmd_sync(parser.parse_args())
 
 

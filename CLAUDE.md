@@ -43,21 +43,40 @@ Visit `http://localhost:8000` after starting the container:
 |------|---------|
 | `/login` | Browser-based Flickr OAuth login (no terminal paste) |
 | `/stats` | Collection statistics from local SQLite |
-| `/sync` | Sync status and trigger buttons |
-| `/setup` | MCP connection config snippet for Claude Code |
+| `/sync` | Sync status and trigger buttons; includes Reset Database button |
+| `/setup` | Personal MCP connection config snippet (shows your API key) |
+
+Logs go to stderr and are visible via `docker compose logs -f flickr-mcp`.
 
 ## MCP Server Setup
 
 1. Build and start: `docker compose up -d`
-2. Visit `http://localhost:8000/setup` for the `.mcp.json` config snippet
-3. Add it to your project or global `~/.claude/mcp.json`
-4. Restart Claude Code and run `/mcp` to confirm the `flickr` server is connected
+2. Log in at `http://localhost:8000/login` via Flickr OAuth
+3. Visit `http://localhost:8000/setup` for your personal `.mcp.json` config snippet
+4. Add it to your project or global `~/.claude/mcp.json`
+5. Restart Claude Code and run `/mcp` to confirm the `flickr` server is connected
 
 ## Configuration
 
-- `.env` — API key and secret (`FLICKR_API_KEY`, `FLICKR_API_SECRET`, optionally `MCP_API_KEY`)
-- OAuth access tokens: persisted in the `flickr-creds` Docker volume (`/root/.flickr_mcp/credentials.json`)
-- SQLite database: `data/flickr.db` (in the `flickr-data` volume)
+- `.env` — Flickr app credentials only: `FLICKR_API_KEY`, `FLICKR_API_SECRET`
+- `MCP_API_KEY` env var is **no longer used** — each user gets a personal API key generated on first login
+- OAuth access tokens + personal API key: `~/.flickr_mcp/{nsid}/credentials.json` (in the `flickr-creds` Docker volume)
+- SQLite database: `data/{username}/flickr.db` (in the `flickr-data` volume)
+
+## Multi-User Support
+
+The server supports multiple independent Flickr accounts:
+
+- Each user authenticates via Flickr OAuth at `/login`
+- A personal MCP API key is generated automatically on first login and shown at `/setup`
+- Each user has an isolated SQLite database (`data/{username}/flickr.db`) and credentials dir (`~/.flickr_mcp/{nsid}/`)
+- Sessions last 30 days; logout clears the session but preserves credentials and database
+- Users can reset (delete) their own database from the `/sync` page — a fresh sync recreates it
+- The background refresh task syncs each registered user independently every 12 hours
+
+### Migration from single-user installs
+
+Existing deployments with credentials at `~/.flickr_mcp/credentials.json` (flat path) must re-login via `/login` after upgrading. The old flat file is not migrated automatically.
 
 ## Database Schema
 

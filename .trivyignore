@@ -7,3 +7,10 @@
 #   CVE-2024-12345 exp:2026-06-30
 
 CVE-2026-42011 exp:2026-06-17
+
+# libgnutls30 — fixed in 3.7.9-2+deb12u7, pending base image update
+CVE-2026-33845 exp:2026-06-21
+CVE-2026-42010 exp:2026-06-21
+CVE-2026-33846 exp:2026-06-21
+CVE-2026-3833  exp:2026-06-21
+CVE-2026-42009 exp:2026-06-21
