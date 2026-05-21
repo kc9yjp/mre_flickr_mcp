@@ -163,15 +163,16 @@ async def _background_refresh():
                 username = user["username"]
                 upath = db_file(username)
                 if not os.path.exists(upath):
-                    continue
-                try:
-                    with get_db_for_user(username) as conn:
-                        row = conn.execute(
-                            "SELECT MAX(synced_at) FROM sync_log WHERE type = 'photos'"
-                        ).fetchone()
-                    last_sync = row[0] if row and row[0] else 0
-                except Exception:
-                    continue
+                    last_sync = 0
+                else:
+                    try:
+                        with get_db_for_user(username) as conn:
+                            row = conn.execute(
+                                "SELECT MAX(synced_at) FROM sync_log WHERE type = 'photos'"
+                            ).fetchone()
+                        last_sync = row[0] if row and row[0] else 0
+                    except Exception:
+                        continue
 
                 age = time.time() - last_sync
                 if age >= REFRESH_INTERVAL:

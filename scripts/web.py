@@ -591,6 +591,21 @@ async def route_stats(request: Request):
     return HTMLResponse(_html_page("Stats", body, request))
 
 
+async def _trigger_full_sync(username: str, user_nsid: str, user_args: list[str], scripts_dir: str) -> None:
+    """Run a full sync cycle for *username* in the background."""
+    lock = _get_user_lock(username)
+    if lock.locked():
+        return
+    async with lock:
+        await _run_sync_script(SYNC_SCRIPT, f"photos/{username}", extra_args=user_args, username=username)
+        await asyncio.gather(
+            _run_sync_script(os.path.join(scripts_dir, "sync_contacts.py"), f"contacts/{username}", extra_args=user_args, username=username),
+            _run_sync_script(os.path.join(scripts_dir, "sync_groups.py"),   f"groups/{username}",   extra_args=user_args, username=username),
+            _run_sync_script(os.path.join(scripts_dir, "sync_albums.py"),   f"albums/{username}",   extra_args=user_args, username=username),
+        )
+        await _run_sync_script(os.path.join(scripts_dir, "sync_engagement.py"), f"engagement/{username}", extra_args=user_args, username=username)
+
+
 async def route_sync_page(request: Request):
     """Render the sync status page with trigger buttons and reset option."""
     redir = _require_login(request)
@@ -722,11 +737,15 @@ async def route_reset_db(request: Request):
     if redir:
         return redir
     username = request.session.get("username", "")
+    user_nsid = request.session.get("user_nsid", "")
     if username:
         path = db_file(username)
         if os.path.exists(path):
             os.remove(path)
             logging.info("Database reset by user %s", username)
+        if user_nsid:
+            user_args = ["--nsid", user_nsid, "--username", username]
+            asyncio.create_task(_trigger_full_sync(username, user_nsid, user_args, os.path.dirname(SYNC_SCRIPT)))
     return RedirectResponse("/sync", status_code=303)
 
 
