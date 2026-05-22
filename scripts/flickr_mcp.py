@@ -32,7 +32,8 @@ async def main_stdio():
         _current_user.set(user)
         logging.info("stdio: authenticated as %s (%s)", user["username"], user["nsid"])
     else:
-        logging.warning("stdio: no MCP_API_KEY set — tools will fail unless credentials exist at legacy path")
+        logging.error("stdio: no MCP_API_KEY set — log in at http://localhost:8000/login first")
+        sys.exit(1)
 
     async with stdio_server() as (read_stream, write_stream):
         asyncio.create_task(_background_refresh())
