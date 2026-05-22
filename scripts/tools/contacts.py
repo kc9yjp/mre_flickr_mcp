@@ -41,6 +41,19 @@ TOOLS = [
         },
     ),
     Tool(
+        name="follow_contact",
+        description="Follow a Flickr user by NSID. Optionally mark them as a friend and/or family member.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "contact_id": {"type": "string", "description": "Flickr NSID of the user to follow"},
+                "is_friend":  {"type": "boolean", "description": "Mark as a friend (default false)"},
+                "is_family":  {"type": "boolean", "description": "Mark as family (default false)"},
+            },
+            "required": ["contact_id"],
+        },
+    ),
+    Tool(
         name="unfollow_contact",
         description=(
             "Attempt to unfollow a contact via the Flickr API. "
@@ -144,6 +157,47 @@ async def _protect_contact(args):
     return [TextContent(type="text", text=f"Contact {contact_id} added to do-not-unfollow list.")]
 
 
+async def _follow_contact(args):
+    contact_id = args["contact_id"]
+    is_friend = 1 if args.get("is_friend") else 0
+    is_family = 1 if args.get("is_family") else 0
+    profile_url = f"https://www.flickr.com/people/{contact_id}/"
+    try:
+        flickr_api._api_post("flickr.contacts.add", {
+            "user_nsid": contact_id,
+            "friend":    str(is_friend),
+            "family":    str(is_family),
+        })
+        # Fetch the user's display name to store locally
+        try:
+            info = flickr_api._api_get("flickr.people.getInfo", {"user_id": contact_id})
+            person = info.get("person", {})
+            username = person.get("username", {}).get("_content", "")
+            realname = person.get("realname", {}).get("_content", "")
+        except Exception:
+            username, realname = "", ""
+        with get_db() as conn:
+            conn.execute(
+                "INSERT INTO contacts (id, username, realname, is_friend, is_family, synced_at) "
+                "VALUES (?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT(id) DO UPDATE SET "
+                "  username=excluded.username, realname=excluded.realname, "
+                "  is_friend=excluded.is_friend, is_family=excluded.is_family, "
+                "  synced_at=excluded.synced_at",
+                (contact_id, username, realname, is_friend, is_family, int(time.time())),
+            )
+        labels = []
+        if is_friend:
+            labels.append("friend")
+        if is_family:
+            labels.append("family")
+        label_str = f" (marked as {', '.join(labels)})" if labels else ""
+        msg = f"Now following {username or contact_id}{label_str}. Profile: {profile_url}"
+    except RuntimeError as e:
+        msg = f"API follow failed ({e}). Profile: {profile_url}"
+    return [TextContent(type="text", text=msg)]
+
+
 async def _unfollow_contact(args):
     contact_id = args["contact_id"]
     profile_url = f"https://www.flickr.com/people/{contact_id}/"
@@ -178,6 +232,7 @@ HANDLERS = {
     "get_contacts_summary":     lambda _: _get_contacts_summary(),
     "find_unfollow_candidates": _find_unfollow_candidates,
     "protect_contact":          _protect_contact,
+    "follow_contact":           _follow_contact,
     "unfollow_contact":         _unfollow_contact,
     "get_contact_uploads":      _get_contact_uploads,
 }
