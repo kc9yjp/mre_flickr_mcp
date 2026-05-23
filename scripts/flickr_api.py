@@ -22,6 +22,15 @@ import urllib.parse
 
 import requests
 
+
+class FlickrAPIError(RuntimeError):
+    """Flickr application-level error with numeric error code preserved."""
+    def __init__(self, code: int, message: str):
+        super().__init__(f"Flickr API error {code}: {message}")
+        self.code = code
+        self.flickr_message = message
+
+
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
@@ -244,7 +253,7 @@ def _api_call(verb: str, method: str, params_factory) -> dict:
 
         data = resp.json()
         if data.get("stat") != "ok":
-            raise RuntimeError(f"Flickr API error: {data.get('message', 'unknown')}")
+            raise FlickrAPIError(data.get("code", 0), data.get("message", "unknown"))
         return data
 
 
