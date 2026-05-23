@@ -180,6 +180,8 @@ async def _background_refresh():
 
                 age = time.time() - last_sync
                 # Stable random threshold per sync epoch: between 2h and 12h.
+                # Since user_threshold <= REFRESH_INTERVAL, any user with age >= 12h
+                # always satisfies age >= user_threshold and is always refreshed.
                 user_threshold = random.Random(int(last_sync)).uniform(
                     MIN_REFRESH_INTERVAL, REFRESH_INTERVAL
                 )
@@ -228,11 +230,9 @@ async def _background_refresh():
                         sleep_for = remaining
 
             # Wake at most every REFRESH_CHECK_INTERVAL so no user waits long.
+            # This also handles the no-users case: sleep_for starts at REFRESH_INTERVAL
+            # and is capped here to REFRESH_CHECK_INTERVAL.
             sleep_for = min(sleep_for, REFRESH_CHECK_INTERVAL)
-
-            # If no users exist yet, fall back to polling every check interval.
-            if not users:
-                sleep_for = REFRESH_CHECK_INTERVAL
 
         except Exception:
             logging.exception("Background refresh error")
