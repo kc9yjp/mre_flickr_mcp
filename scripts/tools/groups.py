@@ -237,12 +237,19 @@ async def _get_photo_contexts(args):
                 "JOIN groups g ON pg.group_id = g.id WHERE pg.photo_id = ?",
                 (photo_id,),
             ).fetchall()
+            # photo-album membership isn't tracked locally yet — fetch from API
+            try:
+                api_data = flickr_api._api_get("flickr.photos.getAllContexts", {"photo_id": photo_id})
+                sets = [{"id": s["id"], "title": s.get("title", "")} for s in api_data.get("set", [])]
+            except RuntimeError:
+                sets = []
             return [TextContent(type="text", text=json.dumps({
                 "photo_id":    photo_id,
                 "source":      "local_db",
                 "group_pools": [{"id": r["id"], "title": r["name"]} for r in rows],
+                "albums":      sets,
             }, indent=2))]
-    # No local data yet — fall back to API
+    # No local data yet — fall back to API for everything
     data = flickr_api._api_get("flickr.photos.getAllContexts", {"photo_id": photo_id})
     pools = [{"id": p["id"], "title": p.get("title", "")} for p in data.get("pool", [])]
     sets  = [{"id": s["id"], "title": s.get("title", "")} for s in data.get("set",  [])]
@@ -251,7 +258,7 @@ async def _get_photo_contexts(args):
         "source":      "flickr_api",
         "group_pools": pools,
         "albums":      sets,
-        "note":        "Run 'sync groups' to enable faster local lookups",
+        "note":        "Run 'sync groups' to enable faster local group lookups",
     }, indent=2))]
 
 
