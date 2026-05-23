@@ -89,6 +89,7 @@ contact_engagement — contact_id, faves, comments, last_updated
 do_not_unfollow   — contact_id, reason, added_at
 groups            — id, name, members, pool_count, synced_at
 albums            — id, title, description, primary_photo_id, count_photos, count_views, synced_at
+photo_groups      — photo_id, group_id (which of your photos are in each group)
 sync_log          — type, mode, photos_fetched, synced_at
 ```
 
@@ -116,8 +117,11 @@ sync_log          — type, mode, photos_fetched, synced_at
 | `edit_album` | Update album title/description |
 | `delete_album` | Delete an album |
 | `find_groups` | Search joined groups by keyword |
+| `get_group_stats` | Groups ranked by how many of your photos are in each |
+| `get_photo_group_count` | Photos ranked by how many groups they belong to |
 | `add_to_group` | Add photo to a group pool |
 | `remove_from_group` | Remove photo from a group pool |
+| `get_photo_contexts` | Return group pools and albums a photo belongs to (local DB after sync, API fallback) |
 | `get_contacts_summary` | Total contacts, friends/family count, engagement stats, top engagers |
 | `find_unfollow_candidates` | Contacts ranked by lowest engagement (faves + comments) |
 | `protect_contact` | Add contact to do-not-unfollow whitelist |

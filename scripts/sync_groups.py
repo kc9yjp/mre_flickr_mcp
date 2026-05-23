@@ -15,7 +15,7 @@ import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from flickr_sync import sync_groups, sync_group_descriptions, init_db, DB_FILE
+from flickr_sync import sync_groups, sync_group_descriptions, sync_photo_groups, init_db, DB_FILE
 from db import db_file as _db_file
 
 
@@ -46,6 +46,9 @@ def main():
 
         print("Fetching group descriptions...")
         sync_group_descriptions(conn)
+
+        print("Syncing photo-group memberships...")
+        sync_photo_groups(conn)
 
         conn.execute(
             "INSERT INTO sync_log (synced_at, mode, photos_fetched, type) VALUES (?, 'full', ?, 'groups')",

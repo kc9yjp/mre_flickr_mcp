@@ -113,6 +113,26 @@ TOOLS = [
             "required": ["photo_id"],
         },
     ),
+    Tool(
+        name="get_group_stats",
+        description="Show how many of your photos are in each group you've joined, ranked by photo count. Requires groups sync to have run.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "limit": {"type": "integer", "description": "Max groups to return (default 20)"},
+            },
+        },
+    ),
+    Tool(
+        name="get_photo_group_count",
+        description="List your photos ranked by how many groups they belong to. Useful for finding well-distributed or under-distributed photos. Requires groups sync to have run.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "limit": {"type": "integer", "description": "Max photos to return (default 20)"},
+            },
+        },
+    ),
 ]
 
 
@@ -144,11 +164,21 @@ async def _set_group_keywords(args):
 
 async def _add_to_group(args):
     flickr_api._api_post("flickr.groups.pools.add", {"photo_id": args["photo_id"], "group_id": args["group_id"]})
+    with get_db() as conn:
+        conn.execute(
+            "INSERT OR IGNORE INTO photo_groups (photo_id, group_id) VALUES (?, ?)",
+            (args["photo_id"], args["group_id"]),
+        )
     return [TextContent(type="text", text=f"Photo {args['photo_id']} added to group {args['group_id']}.")]
 
 
 async def _remove_from_group(args):
     flickr_api._api_post("flickr.groups.pools.remove", {"photo_id": args["photo_id"], "group_id": args["group_id"]})
+    with get_db() as conn:
+        conn.execute(
+            "DELETE FROM photo_groups WHERE photo_id=? AND group_id=?",
+            (args["photo_id"], args["group_id"]),
+        )
     return [TextContent(type="text", text=f"Photo {args['photo_id']} removed from group {args['group_id']}.")]
 
 
@@ -199,14 +229,58 @@ async def _search_all_groups(args):
 
 async def _get_photo_contexts(args):
     photo_id = args["photo_id"]
+    with get_db() as conn:
+        synced = conn.execute("SELECT COUNT(*) FROM photo_groups").fetchone()[0] > 0
+        if synced:
+            rows = conn.execute(
+                "SELECT g.id, g.name FROM photo_groups pg "
+                "JOIN groups g ON pg.group_id = g.id WHERE pg.photo_id = ?",
+                (photo_id,),
+            ).fetchall()
+            return [TextContent(type="text", text=json.dumps({
+                "photo_id":    photo_id,
+                "source":      "local_db",
+                "group_pools": [{"id": r["id"], "title": r["name"]} for r in rows],
+            }, indent=2))]
+    # No local data yet — fall back to API
     data = flickr_api._api_get("flickr.photos.getAllContexts", {"photo_id": photo_id})
     pools = [{"id": p["id"], "title": p.get("title", "")} for p in data.get("pool", [])]
     sets  = [{"id": s["id"], "title": s.get("title", "")} for s in data.get("set",  [])]
     return [TextContent(type="text", text=json.dumps({
-        "photo_id": photo_id,
+        "photo_id":    photo_id,
+        "source":      "flickr_api",
         "group_pools": pools,
-        "albums": sets,
+        "albums":      sets,
+        "note":        "Run 'sync groups' to enable faster local lookups",
     }, indent=2))]
+
+
+async def _get_group_stats(args):
+    limit = int(args.get("limit", 20))
+    with get_db() as conn:
+        rows = conn.execute(
+            "SELECT g.name, g.id, g.pool_count, g.members, COUNT(pg.photo_id) AS my_count "
+            "FROM groups g LEFT JOIN photo_groups pg ON g.id = pg.group_id "
+            "GROUP BY g.id ORDER BY my_count DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+    if not rows:
+        return [TextContent(type="text", text="No group data found. Run 'sync groups' first.")]
+    return [TextContent(type="text", text=json.dumps([dict(r) for r in rows], indent=2))]
+
+
+async def _get_photo_group_count(args):
+    limit = int(args.get("limit", 20))
+    with get_db() as conn:
+        rows = conn.execute(
+            "SELECT p.title, p.id, p.views, p.favorites, COUNT(pg.group_id) AS group_count "
+            "FROM photos p JOIN photo_groups pg ON p.id = pg.photo_id "
+            "GROUP BY p.id ORDER BY group_count DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+    if not rows:
+        return [TextContent(type="text", text="No photo-group data found. Run 'sync groups' first.")]
+    return [TextContent(type="text", text=json.dumps([dict(r) for r in rows], indent=2))]
 
 
 HANDLERS = {
@@ -219,4 +293,6 @@ HANDLERS = {
     "get_group_photos":  _get_group_photos,
     "search_all_groups":   _search_all_groups,
     "get_photo_contexts":  _get_photo_contexts,
+    "get_group_stats":       _get_group_stats,
+    "get_photo_group_count": _get_photo_group_count,
 }
