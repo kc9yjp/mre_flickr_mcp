@@ -12,6 +12,7 @@ Find photos that qualify for view-count or fave-count threshold groups, and add 
 | 50+ Favorites | 2888626@N21 | 50+ faves |
 | 250 faves | 2838082@N25 | 250+ faves |
 | 1000 views + 4 faves landscape | 59076347@N00 | 1,000+ views AND 4+ faves, landscape/landmarks only (no people, no animals) |
+| Make Love Not War | 10153482@N00 | Themed group — positive, peaceful, or beautiful imagery |
 
 ## Workflow
 
