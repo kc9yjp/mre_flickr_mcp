@@ -102,6 +102,17 @@ TOOLS = [
             "required": ["query"],
         },
     ),
+    Tool(
+        name="get_photo_contexts",
+        description="Return all group pools and albums a photo currently belongs to. Use this before add_to_group to skip groups the photo is already in.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "photo_id": {"type": "string", "description": "Flickr photo ID"},
+            },
+            "required": ["photo_id"],
+        },
+    ),
 ]
 
 
@@ -186,6 +197,18 @@ async def _search_all_groups(args):
     } for g in groups], indent=2))]
 
 
+async def _get_photo_contexts(args):
+    photo_id = args["photo_id"]
+    data = flickr_api._api_get("flickr.photos.getAllContexts", {"photo_id": photo_id})
+    pools = [{"id": p["id"], "title": p.get("title", "")} for p in data.get("pool", [])]
+    sets  = [{"id": s["id"], "title": s.get("title", "")} for s in data.get("set",  [])]
+    return [TextContent(type="text", text=json.dumps({
+        "photo_id": photo_id,
+        "group_pools": pools,
+        "albums": sets,
+    }, indent=2))]
+
+
 HANDLERS = {
     "find_groups":       _find_groups,
     "set_group_keywords": _set_group_keywords,
@@ -194,5 +217,6 @@ HANDLERS = {
     "join_group":        _join_group,
     "leave_group":       _leave_group,
     "get_group_photos":  _get_group_photos,
-    "search_all_groups": _search_all_groups,
+    "search_all_groups":   _search_all_groups,
+    "get_photo_contexts":  _get_photo_contexts,
 }
