@@ -616,6 +616,120 @@ async def route_regen_key(request: Request):
     return RedirectResponse("/setup", status_code=303)
 
 
+async def route_queue(request: Request):
+    """GET: show pending group-add queue. POST: flush ready or force-retry all."""
+    redir = _require_login(request)
+    if redir:
+        return redir
+
+    from db import get_db_for_user, _current_user as _ctx
+    from tools.groups import _flush_group_queue, _fmt_chicago
+
+    db_username = request.session.get("username", "")
+    user_nsid   = request.session.get("user_nsid", "")
+    ctx = _base_ctx(request, "Group Queue")
+    alert_ok = alert_err = None
+    flushed = []
+
+    if request.method == "POST":
+        form = await request.form()
+        action = form.get("action", "retry_ready")
+        force = (action == "retry_all")
+        token = _ctx.set({"nsid": user_nsid, "username": db_username})
+        try:
+            with get_db_for_user(db_username) as conn:
+                flushed = _flush_group_queue(conn, force=force)
+        except Exception as e:
+            logging.exception("route_queue flush error")
+            alert_err = f"Retry failed: {e}"
+        finally:
+            _ctx.reset(token)
+        if flushed and not alert_err:
+            ok  = sum(1 for r in flushed if r["result"] == "success")
+            lim = sum(1 for r in flushed if r["result"] == "still_limited")
+            err = sum(1 for r in flushed if r["result"].startswith("error"))
+            parts = []
+            if ok:  parts.append(f"{ok} added")
+            if lim: parts.append(f"{lim} still limited")
+            if err: parts.append(f"{err} errored")
+            alert_ok = "Retry complete: " + ", ".join(parts) + "." if parts else "Nothing to retry."
+
+    def _row(r):
+        return {
+            "id":          r["id"],
+            "photo_id":    r["photo_id"],
+            "photo_title": r["photo_title"] or r["photo_id"],
+            "photo_url":   r["photo_url"] or f"https://www.flickr.com/photo.gne?id={r['photo_id']}",
+            "group_id":    r["group_id"],
+            "group_name":  r["group_name"] or r["group_id"],
+            "group_url":   f"https://www.flickr.com/groups/{r['group_id']}/pool/",
+            "retry_at":    _fmt_chicago(r["retry_after"]) if r["retry_after"] else "—",
+            "queued_at":   _fmt_chicago(r["queued_at"]),
+            "error_msg":   r.get("error_msg", ""),
+            "completed_at": _fmt_chicago(r["completed_at"]) if r.get("completed_at") else "—",
+        }
+
+    try:
+        with get_db_for_user(db_username) as conn:
+            counts = {row["status"]: row["n"] for row in conn.execute(
+                "SELECT status, COUNT(*) AS n FROM pending_group_adds GROUP BY status"
+            ).fetchall()}
+            counts.setdefault("waiting", 0)
+            counts.setdefault("success", 0)
+            counts.setdefault("error", 0)
+
+            waiting_rows = [_row(r) for r in conn.execute(
+                "SELECT pga.id, pga.photo_id, pga.group_id, pga.retry_after, pga.queued_at, "
+                "       p.title AS photo_title, p.url_photopage AS photo_url, g.name AS group_name "
+                "FROM pending_group_adds pga "
+                "LEFT JOIN photos p ON pga.photo_id = p.id "
+                "LEFT JOIN groups g ON pga.group_id = g.id "
+                "WHERE pga.status='waiting' ORDER BY pga.retry_after ASC"
+            ).fetchall()]
+
+            error_rows = [_row(r) for r in conn.execute(
+                "SELECT pga.id, pga.photo_id, pga.group_id, pga.queued_at, pga.completed_at, pga.error_msg, "
+                "       p.title AS photo_title, p.url_photopage AS photo_url, g.name AS group_name "
+                "FROM pending_group_adds pga "
+                "LEFT JOIN photos p ON pga.photo_id = p.id "
+                "LEFT JOIN groups g ON pga.group_id = g.id "
+                "WHERE pga.status='error' ORDER BY pga.queued_at DESC LIMIT 30"
+            ).fetchall()]
+
+            success_rows = [_row(r) for r in conn.execute(
+                "SELECT pga.id, pga.photo_id, pga.group_id, pga.queued_at, pga.completed_at, "
+                "       p.title AS photo_title, p.url_photopage AS photo_url, g.name AS group_name "
+                "FROM pending_group_adds pga "
+                "LEFT JOIN photos p ON pga.photo_id = p.id "
+                "LEFT JOIN groups g ON pga.group_id = g.id "
+                "WHERE pga.status='success' ORDER BY pga.completed_at DESC LIMIT 20"
+            ).fetchall()]
+
+    except FileNotFoundError:
+        ctx["no_db"] = True
+        return templates.TemplateResponse(request, "queue.html", ctx)
+    except Exception as e:
+        logging.exception("route_queue load error")
+        ctx["error"] = str(e)
+        return templates.TemplateResponse(request, "queue.html", ctx)
+
+    import time as _time
+    now_ts = int(_time.time())
+    ready_count = sum(1 for r in waiting_rows if r["retry_at"] != "—" and
+                      # re-check: parse the row's retry_after from the raw query
+                      True)  # we just use waiting_rows count for simplicity
+
+    ctx.update({
+        "counts":       counts,
+        "waiting_rows": waiting_rows,
+        "error_rows":   error_rows,
+        "success_rows": success_rows,
+        "alert_ok":     alert_ok,
+        "alert_err":    alert_err,
+    })
+    return templates.TemplateResponse(request, "queue.html", ctx)
+
+
 async def route_settings(request: Request):
     """GET: render settings form. POST: validate and save changed values."""
     redir = _require_login(request)
@@ -895,6 +1009,7 @@ async def main_sse():
             Route("/sync/{type}",    endpoint=route_sync_trigger, methods=["POST"]),
             Route("/reset",          endpoint=route_reset_db, methods=["POST"]),
             Route("/regen-key",      endpoint=route_regen_key, methods=["POST"]),
+            Route("/queue",          endpoint=route_queue, methods=["GET", "POST"]),
             Route("/settings",       endpoint=route_settings, methods=["GET", "POST"]),
             Route("/setup",          endpoint=route_setup),
             Route("/sse",            endpoint=_SSEHandler(sse)),

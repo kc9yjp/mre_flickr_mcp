@@ -254,13 +254,22 @@ def _fmt_chicago(ts: int) -> str:
     return dt.strftime("%Y-%m-%d %I:%M %p CT")
 
 
-def _flush_group_queue(conn) -> list[dict]:
-    """Process waiting queue items whose retry_after has passed. Returns flushed results."""
+def _flush_group_queue(conn, force: bool = False) -> list[dict]:
+    """Process waiting queue items whose retry_after has passed.
+
+    When *force* is True, all waiting items are retried regardless of schedule.
+    Returns a list of result dicts.
+    """
     now = int(time.time())
-    rows = conn.execute(
-        "SELECT id, photo_id, group_id FROM pending_group_adds WHERE status='waiting' AND retry_after <= ?",
-        (now,),
-    ).fetchall()
+    if force:
+        rows = conn.execute(
+            "SELECT id, photo_id, group_id FROM pending_group_adds WHERE status='waiting'",
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT id, photo_id, group_id FROM pending_group_adds WHERE status='waiting' AND retry_after <= ?",
+            (now,),
+        ).fetchall()
     flushed = []
     for row in rows:
         try:
