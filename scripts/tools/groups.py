@@ -53,7 +53,7 @@ TOOLS = [
                     "description": (
                         "When to retry if the daily limit is hit. Named times: morning (8am), "
                         "lunchtime (12pm), afternoon (2pm), evening (6pm), night (9pm), midnight. "
-                        "Or HH:MM (24h, Chicago time). Defaults to midnight."
+                        "Or HH:MM (24h, Chicago time). Defaults to 5pm CT."
                     ),
                 },
             },
@@ -220,7 +220,7 @@ def _parse_retry_time(retry_at: str | None) -> int:
     midnight Chicago time when input is None or unrecognised.
     """
     if retry_at is None:
-        return _parse_retry_time("midnight")
+        return _parse_retry_time("17:00")
 
     from zoneinfo import ZoneInfo
     tz = ZoneInfo(_RETRY_TZ)
