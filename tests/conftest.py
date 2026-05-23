@@ -47,6 +47,10 @@ CREATE TABLE IF NOT EXISTS sync_log (
     id INTEGER PRIMARY KEY AUTOINCREMENT, synced_at INTEGER,
     mode TEXT, photos_fetched INTEGER, type TEXT DEFAULT 'photos'
 );
+CREATE TABLE IF NOT EXISTS photo_groups (
+    photo_id TEXT NOT NULL, group_id TEXT NOT NULL,
+    PRIMARY KEY (photo_id, group_id)
+);
 """
 
 FAKE_CREDS = {

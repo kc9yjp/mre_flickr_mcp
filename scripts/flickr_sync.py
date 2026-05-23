@@ -324,6 +324,8 @@ def sync_photo_groups(conn):
     user_nsid = creds["user_nsid"]
     groups = conn.execute("SELECT id FROM groups").fetchall()
 
+    # Full clear before re-population; a mid-sync failure leaves the table empty
+    # until the next successful sync (get_photo_contexts falls back to the API).
     conn.execute("DELETE FROM photo_groups")
     conn.commit()
 
@@ -338,7 +340,8 @@ def sync_photo_groups(conn):
                     "per_page": "500",
                     "page":     str(page),
                 })
-            except RuntimeError:
+            except RuntimeError as e:
+                print(f"  Warning: skipping group {group_id} ({e})")
                 break
             container = data.get("photos", {})
             pages = int(container.get("pages", 1))

@@ -230,7 +230,9 @@ async def _search_all_groups(args):
 async def _get_photo_contexts(args):
     photo_id = args["photo_id"]
     with get_db() as conn:
-        synced = conn.execute("SELECT COUNT(*) FROM photo_groups").fetchone()[0] > 0
+        synced = conn.execute(
+            "SELECT COUNT(*) FROM sync_log WHERE type='groups'"
+        ).fetchone()[0] > 0
         if synced:
             rows = conn.execute(
                 "SELECT g.id, g.name FROM photo_groups pg "
@@ -298,8 +300,8 @@ HANDLERS = {
     "join_group":        _join_group,
     "leave_group":       _leave_group,
     "get_group_photos":  _get_group_photos,
-    "search_all_groups":   _search_all_groups,
-    "get_photo_contexts":  _get_photo_contexts,
-    "get_group_stats":       _get_group_stats,
+    "search_all_groups":    _search_all_groups,
+    "get_photo_contexts":   _get_photo_contexts,
+    "get_group_stats":      _get_group_stats,
     "get_photo_group_count": _get_photo_group_count,
 }
