@@ -45,14 +45,15 @@ TOOLS = [
         name="sync",
         description=(
             "Sync Flickr data into the local database. "
-            "type controls what to sync: 'photos' (default), 'groups', 'contacts', 'albums', or 'all'. "
-            "Pass full=true to re-fetch all photos instead of just updates."
+            "type controls what to sync: 'photos' (public, default), 'private_photos' (non-public), "
+            "'groups', 'contacts', 'albums', or 'all'. "
+            "Pass full=true to re-fetch all public photos instead of just updates."
         ),
         inputSchema={
             "type": "object",
             "properties": {
-                "type": {"type": "string", "description": "What to sync: photos, groups, contacts, albums, or all (default: photos)"},
-                "full": {"type": "boolean", "description": "Re-fetch all photos instead of just updates (photos sync only)"},
+                "type": {"type": "string", "description": "What to sync: photos, private_photos, groups, contacts, albums, or all (default: photos)"},
+                "full": {"type": "boolean", "description": "Re-fetch all public photos instead of just updates (photos sync only)"},
             },
         },
     ),
@@ -74,21 +75,22 @@ async def _sync(args):
     scripts_dir = os.path.dirname(SYNC_SCRIPT)
     sync_type = args.get("type", "photos")
     script_map = {
-        "photos":   SYNC_SCRIPT,
-        "groups":   os.path.join(scripts_dir, "sync_groups.py"),
-        "contacts": os.path.join(scripts_dir, "sync_contacts.py"),
-        "albums":   os.path.join(scripts_dir, "sync_albums.py"),
+        "photos":         (SYNC_SCRIPT, []),
+        "private_photos": (SYNC_SCRIPT, ["--private"]),
+        "groups":         (os.path.join(scripts_dir, "sync_groups.py"),   []),
+        "contacts":       (os.path.join(scripts_dir, "sync_contacts.py"), []),
+        "albums":         (os.path.join(scripts_dir, "sync_albums.py"),   []),
     }
     if sync_type == "all":
         targets = list(script_map.items())
     elif sync_type in script_map:
         targets = [(sync_type, script_map[sync_type])]
     else:
-        return [TextContent(type="text", text=f"Unknown sync type '{sync_type}'. Use: photos, groups, contacts, albums, all.")]
+        return [TextContent(type="text", text=f"Unknown sync type '{sync_type}'. Use: photos, private_photos, groups, contacts, albums, all.")]
     results = []
     async with lock:
-        for label, path in targets:
-            extra = list(user_args)
+        for label, (path, extra_flags) in targets:
+            extra = list(user_args) + list(extra_flags)
             if label == "photos" and args.get("full"):
                 extra.append("--full")
             rc = await _run_sync_script(path, label, extra_args=extra or None, username=username)
@@ -196,6 +198,12 @@ async def _background_refresh():
                             SYNC_SCRIPT,
                             f"photos/{username}",
                             extra_args=user_args,
+                            username=username,
+                        )
+                        await _run_sync_script(
+                            SYNC_SCRIPT,
+                            f"private_photos/{username}",
+                            extra_args=user_args + ["--private"],
                             username=username,
                         )
                         await asyncio.gather(

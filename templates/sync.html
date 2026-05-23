@@ -13,7 +13,11 @@
       {% if sync_rows %}
         {% for row in sync_rows | sort(attribute='type') %}
         <tr data-sync-type="{{ row.type }}">
-          <td>{{ row.type | title }}</td>
+          <td>
+            {% if row.type == 'photos' %}Public Photos
+            {% elif row.type == 'private_photos' %}Private Photos
+            {% else %}{{ row.type | title }}{% endif %}
+          </td>
           <td class="sync-last">
             {% if row.last %}<time data-ts="{{ row.last }}">—</time>{% else %}—{% endif %}
           </td>
@@ -37,12 +41,13 @@
 <div class="card">
   <h2 class="card-title">Trigger sync</h2>
   <p class="card-hint">Syncs run in the background. The table above updates automatically.</p>
+  <p class="card-hint"><strong>Public Photos</strong> uses <code>flickr.people.getPublicPhotos</code> (incremental by default). <strong>Private Photos</strong> uses <code>flickr.people.getPhotos</code> filtered to non-public; always a full fetch.</p>
   <div class="sync-btn-row">
     <div class="sync-btn-group">
-      {% for stype in ["albums", "contacts", "groups", "photos"] %}
+      {% for stype, label in [("albums", "Albums"), ("contacts", "Contacts"), ("groups", "Groups"), ("photos", "Public Photos"), ("private_photos", "Private Photos")] %}
       <form class="sync-form" method="POST" action="/sync/{{ stype }}">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-        <button class="btn" {% if running %}disabled{% endif %} type="submit">{{ stype | title }}</button>
+        <button class="btn" {% if running %}disabled{% endif %} type="submit">{{ label }}</button>
       </form>
       {% endfor %}
     </div>

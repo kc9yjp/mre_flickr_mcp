@@ -27,7 +27,7 @@ API_URL = flickr_api.API_URL
 HTTP_TIMEOUT = flickr_api.HTTP_TIMEOUT
 PER_PAGE = 500
 
-EXTRAS = "description,date_upload,date_taken,last_update,tags,views,count_faves,count_comments,url_o,url_l,path_alias,media"
+EXTRAS = "description,date_upload,date_taken,last_update,tags,views,count_faves,count_comments,url_o,url_l,url_m,path_alias,media,license,safety_level,ispublic,isfriend,isfamily"
 
 # Aliases re-exported for sync_*.py backward compatibility
 load_env = flickr_api._load_env
@@ -46,14 +46,22 @@ def api_get(method, extra=None):
 # --- Database ---
 
 _MIGRATIONS = [
-    "ALTER TABLE photos ADD COLUMN favorites    INTEGER DEFAULT 0",
-    "ALTER TABLE photos ADD COLUMN comments     INTEGER DEFAULT 0",
-    "ALTER TABLE photos ADD COLUMN reviewed_at  INTEGER DEFAULT NULL",
-    "ALTER TABLE photos ADD COLUMN is_public    INTEGER DEFAULT 1",
-    "ALTER TABLE sync_log ADD COLUMN type       TEXT DEFAULT 'photos'",
-    "ALTER TABLE groups ADD COLUMN description  TEXT",
-    "ALTER TABLE groups ADD COLUMN keywords     TEXT",
+    "ALTER TABLE photos ADD COLUMN favorites     INTEGER DEFAULT 0",
+    "ALTER TABLE photos ADD COLUMN comments      INTEGER DEFAULT 0",
+    "ALTER TABLE photos ADD COLUMN reviewed_at   INTEGER DEFAULT NULL",
+    "ALTER TABLE photos ADD COLUMN is_public     INTEGER DEFAULT 1",
+    "ALTER TABLE sync_log ADD COLUMN type        TEXT DEFAULT 'photos'",
+    "ALTER TABLE groups ADD COLUMN description   TEXT",
+    "ALTER TABLE groups ADD COLUMN keywords      TEXT",
     "ALTER TABLE sync_log ADD COLUMN duration_seconds INTEGER",
+    # v9+: store additional API fields for richer queries
+    "ALTER TABLE photos ADD COLUMN isfriend      INTEGER DEFAULT 0",
+    "ALTER TABLE photos ADD COLUMN isfamily      INTEGER DEFAULT 0",
+    "ALTER TABLE photos ADD COLUMN media         TEXT DEFAULT 'photo'",
+    "ALTER TABLE photos ADD COLUMN path_alias    TEXT",
+    "ALTER TABLE photos ADD COLUMN license       INTEGER",
+    "ALTER TABLE photos ADD COLUMN safety_level  INTEGER",
+    "ALTER TABLE photos ADD COLUMN url_medium    TEXT",
 ]
 
 SCHEMA_VERSION = len(_MIGRATIONS)
@@ -164,8 +172,8 @@ def init_db(conn):
     _apply_migrations(conn)
 
 
-def last_sync_time(conn):
-    row = conn.execute("SELECT MAX(synced_at) FROM sync_log WHERE type = 'photos'").fetchone()
+def last_sync_time(conn, log_type="photos"):
+    row = conn.execute("SELECT MAX(synced_at) FROM sync_log WHERE type = ?", (log_type,)).fetchone()
     return row[0] if row and row[0] else None
 
 
@@ -184,11 +192,21 @@ def upsert_photo(conn, p, owner_nsid, synced_at):
     url_photopage = f"https://www.flickr.com/photos/{path_alias}/{p['id']}/"
     url_original = p.get("url_o") or p.get("url_l", "")
 
+    # Visibility: getPublicPhotos doesn't include ispublic; default to 1 (public).
+    is_public  = int(p.get("ispublic",  1) or 1)
+    is_friend  = int(p.get("isfriend",  0) or 0)
+    is_family  = int(p.get("isfamily",  0) or 0)
+    media      = p.get("media", "photo") or "photo"
+    license_id = int(p["license"]) if p.get("license") not in (None, "") else None
+    safety     = int(p["safety_level"]) if p.get("safety_level") not in (None, "") else None
+    url_medium = p.get("url_m") or None
+
     conn.execute("""
         INSERT INTO photos
             (id, title, description, date_taken, date_uploaded, last_updated,
-             url_photopage, url_original, tags, views, favorites, comments, synced_at, is_public)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+             url_photopage, url_original, tags, views, favorites, comments, synced_at,
+             is_public, isfriend, isfamily, media, path_alias, license, safety_level, url_medium)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
             title=excluded.title,
             description=excluded.description,
@@ -202,7 +220,14 @@ def upsert_photo(conn, p, owner_nsid, synced_at):
             favorites=excluded.favorites,
             comments=excluded.comments,
             synced_at=excluded.synced_at,
-            is_public=1
+            is_public=excluded.is_public,
+            isfriend=excluded.isfriend,
+            isfamily=excluded.isfamily,
+            media=excluded.media,
+            path_alias=excluded.path_alias,
+            license=excluded.license,
+            safety_level=excluded.safety_level,
+            url_medium=excluded.url_medium
     """, (
         p["id"],
         p.get("title", ""),
@@ -217,6 +242,7 @@ def upsert_photo(conn, p, owner_nsid, synced_at):
         int(p.get("count_faves", 0) or 0),
         int(p.get("count_comments", 0) or 0),
         synced_at,
+        is_public, is_friend, is_family, media, path_alias, license_id, safety, url_medium,
     ))
 
 
@@ -242,7 +268,7 @@ def fetch_all_public(user_nsid):
 
 
 def fetch_updated(since):
-    """Yield public photos updated after `since` (unix timestamp), paginated."""
+    """Yield all photos (public and private) updated after `since` (unix timestamp)."""
     page, pages = 1, 1
     while page <= pages:
         data = api_get("flickr.photos.recentlyUpdated", {
@@ -253,9 +279,32 @@ def fetch_updated(since):
         })
         result = data["photos"]
         pages = int(result["pages"])
-        public = [p for p in result["photo"] if int(p.get("ispublic", 0)) == 1]
-        print(f"  page {page}/{pages} ({len(public)} public of {len(result['photo'])} updated)")
-        yield from public
+        print(f"  page {page}/{pages} ({len(result['photo'])} updated photos)")
+        yield from result["photo"]
+        page += 1
+        if page <= pages:
+            time.sleep(0.5)
+
+
+def fetch_all_private(user_nsid):
+    """Yield every non-public photo for the authenticated user, paginated.
+
+    Uses flickr.people.getPhotos (requires auth) and filters client-side for
+    ispublic=0, covering friend-only, family-only, and completely private photos.
+    """
+    page, pages = 1, 1
+    while page <= pages:
+        data = api_get("flickr.people.getPhotos", {
+            "user_id": user_nsid,
+            "extras": EXTRAS,
+            "per_page": str(PER_PAGE),
+            "page": str(page),
+        })
+        result = data["photos"]
+        pages = int(result["pages"])
+        private = [p for p in result["photo"] if int(p.get("ispublic", 1)) == 0]
+        print(f"  page {page}/{pages} ({len(private)} private of {len(result['photo'])} total)")
+        yield from private
         page += 1
         if page <= pages:
             time.sleep(0.5)
@@ -389,17 +438,24 @@ def cmd_sync(args):
         init_db(conn)
 
         synced_at = int(time.time())
-        since = last_sync_time(conn)
 
-        if args.full or since is None:
-            if not args.full:
-                print("No previous sync found — running full sync.")
+        if args.private:
+            log_type = "private_photos"
             mode = "full"
-            photos = fetch_all_public(creds["user_nsid"])
+            print("Syncing private (non-public) photos.")
+            photos = fetch_all_private(creds["user_nsid"])
         else:
-            mode = "update"
-            print(f"Incremental sync since {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(since))}")
-            photos = fetch_updated(since)
+            log_type = "photos"
+            since = last_sync_time(conn)
+            if args.full or since is None:
+                if not args.full:
+                    print("No previous sync found — running full sync.")
+                mode = "full"
+                photos = fetch_all_public(creds["user_nsid"])
+            else:
+                mode = "update"
+                print(f"Incremental sync since {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(since))}")
+                photos = fetch_updated(since)
 
         total = 0
         for photo in photos:
@@ -410,11 +466,11 @@ def cmd_sync(args):
 
         conn.commit()
         conn.execute(
-            "INSERT INTO sync_log (synced_at, mode, photos_fetched, type) VALUES (?, ?, ?, 'photos')",
-            (synced_at, mode, total),
+            "INSERT INTO sync_log (synced_at, mode, photos_fetched, type) VALUES (?, ?, ?, ?)",
+            (synced_at, mode, total, log_type),
         )
         conn.commit()
-    print(f"Done. {total} photos synced ({mode}) to {target_db}.")
+    print(f"Done. {total} {log_type} synced ({mode}) to {target_db}.")
 
 
 # --- Entry point ---
@@ -423,6 +479,7 @@ def main():
     """Parse CLI arguments and run the photo sync."""
     parser = argparse.ArgumentParser(prog="flickr-sync", description="Sync Flickr photo metadata to SQLite")
     parser.add_argument("--full",     action="store_true", help="Full sync (ignore last sync timestamp)")
+    parser.add_argument("--private",  action="store_true", help="Sync private (non-public) photos instead of public photos")
     parser.add_argument("--create",   action="store_true", help="Create the database if it does not exist")
     parser.add_argument("--nsid",     help="Flickr user NSID for multi-user mode")
     parser.add_argument("--username", help="Username for per-user DB path (multi-user mode)")

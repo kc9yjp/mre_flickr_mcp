@@ -456,6 +456,7 @@ async def _trigger_full_sync(username: str, user_nsid: str, user_args: list[str]
         return
     async with lock:
         await _run_sync_script(SYNC_SCRIPT, f"photos/{username}", extra_args=user_args, username=username)
+        await _run_sync_script(SYNC_SCRIPT, f"private_photos/{username}", extra_args=user_args + ["--private"], username=username)
         await asyncio.gather(
             _run_sync_script(os.path.join(scripts_dir, "sync_contacts.py"), f"contacts/{username}", extra_args=user_args, username=username),
             _run_sync_script(os.path.join(scripts_dir, "sync_groups.py"),   f"groups/{username}",   extra_args=user_args, username=username),
@@ -541,11 +542,13 @@ async def route_sync_trigger(request: Request):
     username    = request.session.get("username", "")
     user_args   = ["--nsid", user_nsid, "--username", username] if user_nsid else []
 
+    # Maps sync type -> (script path, extra flags beyond user_args)
     script_map = {
-        "photos":   SYNC_SCRIPT,
-        "contacts": os.path.join(scripts_dir, "sync_contacts.py"),
-        "groups":   os.path.join(scripts_dir, "sync_groups.py"),
-        "albums":   os.path.join(scripts_dir, "sync_albums.py"),
+        "photos":         (SYNC_SCRIPT,                                       []),
+        "private_photos": (SYNC_SCRIPT,                                       ["--private"]),
+        "contacts":       (os.path.join(scripts_dir, "sync_contacts.py"),     []),
+        "groups":         (os.path.join(scripts_dir, "sync_groups.py"),       []),
+        "albums":         (os.path.join(scripts_dir, "sync_albums.py"),       []),
     }
 
     if sync_type not in script_map and sync_type != "all":
@@ -558,11 +561,13 @@ async def route_sync_trigger(request: Request):
     async def _run():
         async with lock:
             if sync_type == "all":
-                for label, path in script_map.items():
-                    await _run_sync_script(path, label, extra_args=user_args or None, username=username or None)
+                for label, (path, extra_flags) in script_map.items():
+                    args = (user_args + extra_flags) or None
+                    await _run_sync_script(path, label, extra_args=args, username=username or None)
             else:
-                await _run_sync_script(script_map[sync_type], sync_type,
-                                       extra_args=user_args or None, username=username or None)
+                path, extra_flags = script_map[sync_type]
+                args = (user_args + extra_flags) or None
+                await _run_sync_script(path, sync_type, extra_args=args, username=username or None)
 
     asyncio.create_task(_run())
     return RedirectResponse("/sync", status_code=303)
