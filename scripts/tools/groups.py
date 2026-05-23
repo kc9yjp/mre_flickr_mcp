@@ -36,12 +36,26 @@ TOOLS = [
     ),
     Tool(
         name="add_to_group",
-        description="Add a photo to a Flickr group pool.",
+        description=(
+            "Add a photo to a Flickr group pool. "
+            "If the daily posting limit is hit, the add is queued for automatic retry. "
+            "Use retry_at to control when the retry fires: named times (morning, lunchtime, "
+            "afternoon, evening, night, midnight) or HH:MM are resolved in Chicago time. "
+            "If the photo/group pair is already waiting in the queue, retry_at updates its schedule."
+        ),
         inputSchema={
             "type": "object",
             "properties": {
                 "photo_id": {"type": "string", "description": "Flickr photo ID"},
                 "group_id": {"type": "string", "description": "Flickr group NSID"},
+                "retry_at": {
+                    "type": "string",
+                    "description": (
+                        "When to retry if the daily limit is hit. Named times: morning (8am), "
+                        "lunchtime (12pm), afternoon (2pm), evening (6pm), night (9pm), midnight. "
+                        "Or HH:MM (24h, Chicago time). Defaults to midnight."
+                    ),
+                },
             },
             "required": ["photo_id", "group_id"],
         },
@@ -177,12 +191,65 @@ async def _set_group_keywords(args):
     return [TextContent(type="text", text=f"Keywords updated for group {group_id}.")]
 
 
+_RETRY_TZ = "America/Chicago"
+
+_NAMED_TIMES: dict[str, tuple[int, int]] = {
+    "midnight":  (0,  0),
+    "morning":   (8,  0),
+    "lunchtime": (12, 0),
+    "lunch":     (12, 0),
+    "afternoon": (14, 0),
+    "evening":   (18, 0),
+    "night":     (21, 0),
+}
+
+
 def _next_midnight_utc() -> int:
     """Unix timestamp for the start of tomorrow UTC."""
     now = datetime.datetime.now(datetime.timezone.utc)
     tomorrow = (now + datetime.timedelta(days=1)).date()
     return int(datetime.datetime(tomorrow.year, tomorrow.month, tomorrow.day,
                                  tzinfo=datetime.timezone.utc).timestamp())
+
+
+def _parse_retry_time(retry_at: str | None) -> int:
+    """Convert a named time or HH:MM string to a UTC Unix timestamp (next occurrence).
+
+    Times are resolved in Chicago time (_RETRY_TZ).  If the target time has
+    already passed today, the next day's instance is used.  Defaults to next
+    midnight Chicago time when input is None or unrecognised.
+    """
+    if retry_at is None:
+        return _parse_retry_time("midnight")
+
+    from zoneinfo import ZoneInfo
+    tz = ZoneInfo(_RETRY_TZ)
+    now_local = datetime.datetime.now(tz)
+    token = retry_at.lower().strip()
+
+    hour, minute = _NAMED_TIMES.get(token, (None, None))
+
+    if hour is None and ":" in token:
+        try:
+            h, m = token.split(":", 1)
+            hour, minute = int(h), int(m)
+        except ValueError:
+            return _next_midnight_utc()
+
+    if hour is None:
+        return _next_midnight_utc()
+
+    candidate = now_local.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    if candidate <= now_local:
+        candidate += datetime.timedelta(days=1)
+    return int(candidate.timestamp())
+
+
+def _fmt_chicago(ts: int) -> str:
+    """Format a Unix timestamp as a human-readable Chicago local time."""
+    from zoneinfo import ZoneInfo
+    dt = datetime.datetime.fromtimestamp(ts, ZoneInfo(_RETRY_TZ))
+    return dt.strftime("%Y-%m-%d %I:%M %p CT")
 
 
 def _flush_group_queue(conn) -> list[dict]:
@@ -232,6 +299,7 @@ def _flush_group_queue(conn) -> list[dict]:
 async def _add_to_group(args):
     photo_id = args["photo_id"]
     group_id = args["group_id"]
+    retry_at_str = args.get("retry_at")
     with get_db() as conn:
         _flush_group_queue(conn)
         try:
@@ -243,23 +311,28 @@ async def _add_to_group(args):
             return [TextContent(type="text", text=f"Photo {photo_id} added to group {group_id}.")]
         except FlickrAPIError as e:
             if e.code == 5:
+                retry_after = _parse_retry_time(retry_at_str)
                 existing = conn.execute(
                     "SELECT id FROM pending_group_adds WHERE photo_id=? AND group_id=? AND status='waiting'",
                     (photo_id, group_id),
                 ).fetchone()
-                if not existing:
-                    retry_after = _next_midnight_utc()
+                if existing:
+                    conn.execute(
+                        "UPDATE pending_group_adds SET retry_after=? WHERE id=?",
+                        (retry_after, existing["id"]),
+                    )
+                    action = "rescheduled"
+                else:
                     conn.execute(
                         "INSERT INTO pending_group_adds (photo_id, group_id, status, retry_after, queued_at) "
                         "VALUES (?, ?, 'waiting', ?, ?)",
                         (photo_id, group_id, retry_after, int(time.time())),
                     )
-                eta = datetime.datetime.fromtimestamp(
-                    _next_midnight_utc(), datetime.timezone.utc
-                ).strftime("%Y-%m-%d %H:%M UTC")
+                    action = "queued"
+                eta = _fmt_chicago(retry_after)
                 return [TextContent(type="text", text=(
                     f"Daily posting limit reached for group {group_id}. "
-                    f"Queued for retry after {eta}."
+                    f"{action.capitalize()} for retry at {eta}."
                 ))]
             raise
 
@@ -401,9 +474,7 @@ async def _get_group_queue(args):
     summary.setdefault("error", 0)
 
     def fmt_waiting(row):
-        eta = datetime.datetime.fromtimestamp(
-            row["retry_after"], datetime.timezone.utc
-        ).strftime("%Y-%m-%d %H:%M UTC") if row["retry_after"] else "anytime"
+        eta = _fmt_chicago(row["retry_after"]) if row["retry_after"] else "anytime"
         return {
             "photo_id": row["photo_id"],
             "photo_title": row["photo_title"],
