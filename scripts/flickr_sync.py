@@ -124,6 +124,12 @@ def init_db(conn):
             synced_at        INTEGER
         );
 
+        CREATE TABLE IF NOT EXISTS photo_groups (
+            photo_id TEXT NOT NULL,
+            group_id TEXT NOT NULL,
+            PRIMARY KEY (photo_id, group_id)
+        );
+
         CREATE TABLE IF NOT EXISTS contacts (
             id        TEXT PRIMARY KEY,
             username  TEXT,
@@ -310,6 +316,48 @@ def sync_group_descriptions(conn):
     conn.commit()
     print(f"  {updated} group descriptions fetched.")
     return updated
+
+
+def sync_photo_groups(conn):
+    """Populate photo_groups by fetching the user's photos from each group pool."""
+    creds = flickr_api._load_credentials()
+    user_nsid = creds["user_nsid"]
+    groups = conn.execute("SELECT id FROM groups").fetchall()
+
+    # Full clear before re-population; a mid-sync failure leaves the table empty
+    # until the next successful sync (get_photo_contexts falls back to the API).
+    conn.execute("DELETE FROM photo_groups")
+    conn.commit()
+
+    total = 0
+    for (group_id,) in groups:
+        page, pages = 1, 1
+        while page <= pages:
+            try:
+                data = flickr_api._api_get("flickr.groups.pools.getPhotos", {
+                    "group_id": group_id,
+                    "user_id":  user_nsid,
+                    "per_page": "500",
+                    "page":     str(page),
+                })
+            except RuntimeError as e:
+                print(f"  Warning: skipping group {group_id} ({e})")
+                break
+            container = data.get("photos", {})
+            pages = int(container.get("pages", 1))
+            for p in container.get("photo", []):
+                conn.execute(
+                    "INSERT OR IGNORE INTO photo_groups (photo_id, group_id) VALUES (?, ?)",
+                    (p["id"], group_id),
+                )
+                total += 1
+            conn.commit()
+            page += 1
+            if page <= pages:
+                time.sleep(0.15)
+
+    print(f"  {total} photo-group memberships synced.")
+    return total
 
 
 # --- Command ---

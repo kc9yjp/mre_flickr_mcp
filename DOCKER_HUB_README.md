@@ -2,7 +2,7 @@
 
 > **⚠️ Experimental project** — built with [Claude Code](https://claude.ai/code) via AI-assisted vibe coding. Functional, but use at your own risk.
 
-A Flickr [MCP (Model Context Protocol)](https://modelcontextprotocol.io/) server that lets AI clients like Claude Code search, update, and manage your Flickr photo library via natural language.
+A Flickr [MCP (Model Context Protocol)](https://modelcontextprotocol.io/) server that lets AI clients like Claude Code search, update, and manage your Flickr photo library via natural language — designed for ongoing portfolio maintenance.
 
 Built by [Mr. E Photos](https://www.flickr.com/photos/ejwettstein/) — source on [GitHub](https://github.com/kc9yjp/mre_flickr_mcp).
 

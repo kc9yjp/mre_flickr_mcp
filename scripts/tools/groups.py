@@ -102,6 +102,37 @@ TOOLS = [
             "required": ["query"],
         },
     ),
+    Tool(
+        name="get_photo_contexts",
+        description="Return all group pools and albums a photo currently belongs to. Use this before add_to_group to skip groups the photo is already in.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "photo_id": {"type": "string", "description": "Flickr photo ID"},
+            },
+            "required": ["photo_id"],
+        },
+    ),
+    Tool(
+        name="get_group_stats",
+        description="Show how many of your photos are in each group you've joined, ranked by photo count. Requires groups sync to have run.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "limit": {"type": "integer", "description": "Max groups to return (default 20)"},
+            },
+        },
+    ),
+    Tool(
+        name="get_photo_group_count",
+        description="List your photos ranked by how many groups they belong to. Useful for finding well-distributed or under-distributed photos. Requires groups sync to have run.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "limit": {"type": "integer", "description": "Max photos to return (default 20)"},
+            },
+        },
+    ),
 ]
 
 
@@ -133,11 +164,21 @@ async def _set_group_keywords(args):
 
 async def _add_to_group(args):
     flickr_api._api_post("flickr.groups.pools.add", {"photo_id": args["photo_id"], "group_id": args["group_id"]})
+    with get_db() as conn:
+        conn.execute(
+            "INSERT OR IGNORE INTO photo_groups (photo_id, group_id) VALUES (?, ?)",
+            (args["photo_id"], args["group_id"]),
+        )
     return [TextContent(type="text", text=f"Photo {args['photo_id']} added to group {args['group_id']}.")]
 
 
 async def _remove_from_group(args):
     flickr_api._api_post("flickr.groups.pools.remove", {"photo_id": args["photo_id"], "group_id": args["group_id"]})
+    with get_db() as conn:
+        conn.execute(
+            "DELETE FROM photo_groups WHERE photo_id=? AND group_id=?",
+            (args["photo_id"], args["group_id"]),
+        )
     return [TextContent(type="text", text=f"Photo {args['photo_id']} removed from group {args['group_id']}.")]
 
 
@@ -186,6 +227,71 @@ async def _search_all_groups(args):
     } for g in groups], indent=2))]
 
 
+async def _get_photo_contexts(args):
+    photo_id = args["photo_id"]
+    with get_db() as conn:
+        synced = conn.execute(
+            "SELECT COUNT(*) FROM sync_log WHERE type='groups'"
+        ).fetchone()[0] > 0
+        if synced:
+            rows = conn.execute(
+                "SELECT g.id, g.name FROM photo_groups pg "
+                "JOIN groups g ON pg.group_id = g.id WHERE pg.photo_id = ?",
+                (photo_id,),
+            ).fetchall()
+            # photo-album membership isn't tracked locally yet — fetch from API
+            try:
+                api_data = flickr_api._api_get("flickr.photos.getAllContexts", {"photo_id": photo_id})
+                sets = [{"id": s["id"], "title": s.get("title", "")} for s in api_data.get("set", [])]
+            except RuntimeError:
+                sets = []
+            return [TextContent(type="text", text=json.dumps({
+                "photo_id":    photo_id,
+                "source":      "local_db",
+                "group_pools": [{"id": r["id"], "title": r["name"]} for r in rows],
+                "albums":      sets,
+            }, indent=2))]
+    # No local data yet — fall back to API for everything
+    data = flickr_api._api_get("flickr.photos.getAllContexts", {"photo_id": photo_id})
+    pools = [{"id": p["id"], "title": p.get("title", "")} for p in data.get("pool", [])]
+    sets  = [{"id": s["id"], "title": s.get("title", "")} for s in data.get("set",  [])]
+    return [TextContent(type="text", text=json.dumps({
+        "photo_id":    photo_id,
+        "source":      "flickr_api",
+        "group_pools": pools,
+        "albums":      sets,
+        "note":        "Run 'sync groups' to enable faster local group lookups",
+    }, indent=2))]
+
+
+async def _get_group_stats(args):
+    limit = int(args.get("limit", 20))
+    with get_db() as conn:
+        rows = conn.execute(
+            "SELECT g.name, g.id, g.pool_count, g.members, COUNT(pg.photo_id) AS my_count "
+            "FROM groups g LEFT JOIN photo_groups pg ON g.id = pg.group_id "
+            "GROUP BY g.id ORDER BY my_count DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+    if not rows:
+        return [TextContent(type="text", text="No group data found. Run 'sync groups' first.")]
+    return [TextContent(type="text", text=json.dumps([dict(r) for r in rows], indent=2))]
+
+
+async def _get_photo_group_count(args):
+    limit = int(args.get("limit", 20))
+    with get_db() as conn:
+        rows = conn.execute(
+            "SELECT p.title, p.id, p.views, p.favorites, COUNT(pg.group_id) AS group_count "
+            "FROM photos p JOIN photo_groups pg ON p.id = pg.photo_id "
+            "GROUP BY p.id ORDER BY group_count DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+    if not rows:
+        return [TextContent(type="text", text="No photo-group data found. Run 'sync groups' first.")]
+    return [TextContent(type="text", text=json.dumps([dict(r) for r in rows], indent=2))]
+
+
 HANDLERS = {
     "find_groups":       _find_groups,
     "set_group_keywords": _set_group_keywords,
@@ -194,5 +300,8 @@ HANDLERS = {
     "join_group":        _join_group,
     "leave_group":       _leave_group,
     "get_group_photos":  _get_group_photos,
-    "search_all_groups": _search_all_groups,
+    "search_all_groups":    _search_all_groups,
+    "get_photo_contexts":   _get_photo_contexts,
+    "get_group_stats":      _get_group_stats,
+    "get_photo_group_count": _get_photo_group_count,
 }

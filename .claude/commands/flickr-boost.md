@@ -20,18 +20,19 @@ Find photos that qualify for view-count or fave-count threshold groups, and add 
 
 2. Use `search_photos` sorted by `favorites` or `views` to find qualifying candidates.
 
-3. For each selected group, suggest **1-2 photos maximum** that:
+3. For each candidate photo, call `get_photo_contexts` to retrieve its current group memberships. Skip any group the photo is already in — do not attempt to add it again.
+
+4. For each selected group, suggest **1-2 photos maximum** that:
    - Meet the threshold
    - Are a good stylistic fit for the group (landscape groups: no people/animals)
+   - Are not already a member of that group (per `get_photo_contexts`)
    - Have not been mentioned earlier in this conversation as already submitted
 
-4. Show the candidate photo title, views, faves, and photo page URL. Ask the user to confirm before adding.
-
-5. If Flickr returns "already in pool" — note it and move to the next candidate.
+5. Show the candidate photo title, views, faves, photo page URL, and which groups it's already in. Ask the user to confirm before adding.
 
 6. After adding, remind the user: **1-2 per group per day max** to stay within group rules and avoid spam flags.
 
 ## Notes
-- The local DB does not track group membership, so "already in pool" errors are expected and harmless.
+- Use `get_photo_contexts` to check group membership before every add — it returns both group pools and albums the photo belongs to.
 - For the landscape group (1000 views + 4 faves), skip any photo with people or animals as the main subject.
 - Do not add the same photo to more than 2-3 groups in a single session.

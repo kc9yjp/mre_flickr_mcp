@@ -274,6 +274,96 @@ class TestGroups:
 
 
 # ---------------------------------------------------------------------------
+# photo_groups: add/remove, get_photo_contexts, get_group_stats, get_photo_group_count
+# ---------------------------------------------------------------------------
+
+class TestPhotoGroups:
+    @pytest.mark.asyncio
+    async def test_add_to_group_writes_local_db(self, db, api_post):
+        import mcp_tools
+        api_post.return_value = {"stat": "ok"}
+        await mcp_tools._add_to_group({"photo_id": "photo1", "group_id": "group1@N00"})
+        row = db.execute(
+            "SELECT 1 FROM photo_groups WHERE photo_id='photo1' AND group_id='group1@N00'"
+        ).fetchone()
+        assert row is not None
+
+    @pytest.mark.asyncio
+    async def test_remove_from_group_deletes_local_db(self, db, api_post):
+        import mcp_tools
+        api_post.return_value = {"stat": "ok"}
+        db.execute("INSERT INTO photo_groups VALUES ('photo1', 'group1@N00')")
+        db.commit()
+        await mcp_tools._remove_from_group({"photo_id": "photo1", "group_id": "group1@N00"})
+        row = db.execute(
+            "SELECT 1 FROM photo_groups WHERE photo_id='photo1' AND group_id='group1@N00'"
+        ).fetchone()
+        assert row is None
+
+    @pytest.mark.asyncio
+    async def test_get_photo_contexts_local_db_path(self, db, api_get):
+        import mcp_tools
+        import time as _time
+        db.execute("INSERT INTO photo_groups VALUES ('photo1', 'group1@N00')")
+        db.execute("INSERT INTO sync_log VALUES (?,?,?,?,?)",
+                   (None, int(_time.time()), "full", 1, "groups"))
+        db.commit()
+        api_get.return_value = {"set": [{"id": "album1", "title": "My Album"}], "pool": []}
+        result = await mcp_tools._get_photo_contexts({"photo_id": "photo1"})
+        data = _json(result)
+        assert data["source"] == "local_db"
+        assert any(g["id"] == "group1@N00" for g in data["group_pools"])
+        assert any(a["id"] == "album1" for a in data["albums"])
+
+    @pytest.mark.asyncio
+    async def test_get_photo_contexts_api_fallback(self, db, api_get):
+        import mcp_tools
+        api_get.return_value = {
+            "pool": [{"id": "group1@N00", "title": "Landscape Lovers"}],
+            "set":  [{"id": "album1", "title": "My Album"}],
+        }
+        result = await mcp_tools._get_photo_contexts({"photo_id": "photo1"})
+        data = _json(result)
+        assert data["source"] == "flickr_api"
+        assert any(g["id"] == "group1@N00" for g in data["group_pools"])
+        assert any(a["id"] == "album1" for a in data["albums"])
+
+    @pytest.mark.asyncio
+    async def test_get_group_stats_happy_path(self, db):
+        import mcp_tools
+        db.execute("INSERT INTO photo_groups VALUES ('photo1', 'group1@N00')")
+        db.commit()
+        result = await mcp_tools._get_group_stats({})
+        rows = _json(result)
+        assert rows[0]["id"] == "group1@N00"
+        assert rows[0]["my_count"] == 1
+
+    @pytest.mark.asyncio
+    async def test_get_group_stats_empty(self, db):
+        import mcp_tools
+        result = await mcp_tools._get_group_stats({})
+        # groups exist but none have photos — still returns rows (count 0), not an error
+        rows = _json(result)
+        assert all(r["my_count"] == 0 for r in rows)
+
+    @pytest.mark.asyncio
+    async def test_get_photo_group_count_happy_path(self, db):
+        import mcp_tools
+        db.execute("INSERT INTO photo_groups VALUES ('photo1', 'group1@N00')")
+        db.commit()
+        result = await mcp_tools._get_photo_group_count({})
+        rows = _json(result)
+        assert rows[0]["id"] == "photo1"
+        assert rows[0]["group_count"] == 1
+
+    @pytest.mark.asyncio
+    async def test_get_photo_group_count_empty(self, db):
+        import mcp_tools
+        result = await mcp_tools._get_photo_group_count({})
+        assert "No photo-group data" in _text(result)
+
+
+# ---------------------------------------------------------------------------
 # protect_contact / find_unfollow_candidates
 # ---------------------------------------------------------------------------
 

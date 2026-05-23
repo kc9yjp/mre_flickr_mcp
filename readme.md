@@ -1,10 +1,10 @@
 # Flickr MCP Server
 
-A Flickr [MCP (Model Context Protocol)](https://modelcontextprotocol.io/) server that lets AI clients search, update, and manage your Flickr photo library via natural language.
+A Flickr [MCP (Model Context Protocol)](https://modelcontextprotocol.io/) server that lets AI clients search, update, and manage your Flickr photo library via natural language — designed for ongoing portfolio maintenance.
 
 - Search photos, find missing metadata, update titles/descriptions/tags
-- Add photos to albums and groups, manage contacts, suggest unfollows
-- Fetch stats, set geolocation, post comments, fave photos
+- Add photos to albums and groups, track group membership, manage contacts
+- Find weak performers, suggest unfollows, fetch stats, set geolocation, post comments
 
 > **Experimental** — built with [Claude Code](https://claude.ai/code). Functional, use at your own risk.  
 > Source: [github.com/kc9yjp/mre_flickr_mcp](https://github.com/kc9yjp/mre_flickr_mcp) · Docker: [hub.docker.com/repositories/ejwettstein](https://hub.docker.com/repositories/ejwettstein) · Author: [Mr. E Photos](https://www.flickr.com/photos/ejwettstein/)
