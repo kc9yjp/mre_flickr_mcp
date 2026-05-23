@@ -18,6 +18,7 @@ directly, receiving the target username as a CLI argument.
 
 import contextvars
 import os
+import pathlib
 import sqlite3
 from contextlib import contextmanager
 
@@ -25,11 +26,36 @@ from contextlib import contextmanager
 # Settings registry
 # ---------------------------------------------------------------------------
 
+def _detect_system_tz() -> str:
+    """Return the IANA timezone name from the container/host environment.
+
+    Tries in order: TZ env var → /etc/timezone → /etc/localtime symlink → UTC.
+    """
+    tz = os.environ.get("TZ", "").strip()
+    if tz:
+        return tz
+    try:
+        tz = pathlib.Path("/etc/timezone").read_text().strip()
+        if tz:
+            return tz
+    except OSError:
+        pass
+    try:
+        parts = pathlib.Path("/etc/localtime").resolve().parts
+        idx = next(i for i, p in enumerate(parts) if p == "zoneinfo")
+        tz = "/".join(parts[idx + 1:])
+        if tz:
+            return tz
+    except (OSError, StopIteration):
+        pass
+    return "UTC"
+
+
 SETTINGS_DEFAULTS: dict[str, dict] = {
     "group_queue_retry_tz": {
         "label":       "Retry timezone",
         "description": "IANA timezone used when resolving named retry times (e.g. America/Chicago, America/New_York, UTC).",
-        "default":     "America/Chicago",
+        "default":     _detect_system_tz(),
     },
     "group_queue_default_retry": {
         "label":       "Default retry time",
