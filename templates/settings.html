@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block content %}
+
+<h1>Settings</h1>
+
+{% if alert_ok %}
+<div class="alert alert-ok">{{ alert_ok }}</div>
+{% endif %}
+{% if alert_err %}
+<div class="alert alert-err">{{ alert_err }}</div>
+{% endif %}
+
+<form method="POST" action="/settings">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+
+  {% for s in settings %}
+  <div class="card settings-card">
+    <label class="settings-label" for="setting-{{ s.key }}">{{ s.label }}</label>
+    <p class="card-hint">{{ s.description }}</p>
+    <div class="settings-row">
+      <input
+        id="setting-{{ s.key }}"
+        class="settings-input"
+        type="text"
+        name="{{ s.key }}"
+        value="{{ s.value }}"
+        placeholder="{{ s.default }}"
+      >
+      <span class="settings-default">default: {{ s.default }}</span>
+    </div>
+  </div>
+  {% endfor %}
+
+  <div class="settings-actions">
+    <button class="btn" type="submit">Save settings</button>
+  </div>
+</form>
+
+{% endblock %}

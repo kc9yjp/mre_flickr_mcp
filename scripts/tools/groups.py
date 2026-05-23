@@ -191,6 +191,7 @@ async def _set_group_keywords(args):
     return [TextContent(type="text", text=f"Keywords updated for group {group_id}.")]
 
 
+# TODO: read _RETRY_TZ from DB settings key "group_queue_retry_tz" (see db.SETTINGS_DEFAULTS)
 _RETRY_TZ = "America/Chicago"
 
 _NAMED_TIMES: dict[str, tuple[int, int]] = {
@@ -220,6 +221,7 @@ def _parse_retry_time(retry_at: str | None) -> int:
     midnight Chicago time when input is None or unrecognised.
     """
     if retry_at is None:
+        # TODO: read default from DB settings key "group_queue_default_retry" (see db.SETTINGS_DEFAULTS)
         return _parse_retry_time("17:00")
 
     from zoneinfo import ZoneInfo

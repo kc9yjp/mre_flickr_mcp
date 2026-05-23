@@ -1,5 +1,15 @@
 """SQLite database access — single-user and multi-user aware.
 
+# TODO: migrate in-code constants to the settings table.  Each entry in
+# SETTINGS_DEFAULTS defines the key, human-readable label, description, and
+# default value.  Tool code should call get_setting(conn, key) instead of
+# hard-coded literals.  The /settings web page already reads and writes these
+# rows; the remaining work is wiring the reads into the affected modules:
+#   - scripts/tools/groups.py: _RETRY_TZ, default retry time in _parse_retry_time()
+#   - scripts/tools/sync.py:   REFRESH_INTERVAL
+#   - scripts/flickr_api.py:   HTTP_TIMEOUT, _API_MAX_RETRIES
+
+
 In multi-user mode, ``_current_user`` (a ContextVar) is set per SSE connection
 by the web layer. ``get_db()`` reads it automatically so tool handlers require no
 changes.  Sync scripts bypass the ContextVar and use ``get_db_for_user()``
@@ -10,6 +20,45 @@ import contextvars
 import os
 import sqlite3
 from contextlib import contextmanager
+
+# ---------------------------------------------------------------------------
+# Settings registry
+# ---------------------------------------------------------------------------
+
+SETTINGS_DEFAULTS: dict[str, dict] = {
+    "group_queue_retry_tz": {
+        "label":       "Retry timezone",
+        "description": "IANA timezone used when resolving named retry times (e.g. America/Chicago, America/New_York, UTC).",
+        "default":     "America/Chicago",
+    },
+    "group_queue_default_retry": {
+        "label":       "Default retry time",
+        "description": "Time of day to retry queued group adds when no retry_at is specified (HH:MM, 24-hour, in retry timezone).",
+        "default":     "17:00",
+    },
+    "sync_refresh_interval_hours": {
+        "label":       "Background sync interval (hours)",
+        "description": "How often the background task re-syncs each user's data.",
+        "default":     "12",
+    },
+}
+
+
+def get_setting(conn, key: str) -> str:
+    """Return the stored value for *key*, or the registered default."""
+    row = conn.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
+    if row:
+        return row[0]
+    return SETTINGS_DEFAULTS.get(key, {}).get("default", "")
+
+
+def set_setting(conn, key: str, value: str) -> None:
+    """Upsert *value* for *key* in the settings table."""
+    conn.execute(
+        "INSERT INTO settings (key, value) VALUES (?, ?) "
+        "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+        (key, value),
+    )
 
 # ---------------------------------------------------------------------------
 # Paths

@@ -58,6 +58,9 @@ CREATE TABLE IF NOT EXISTS pending_group_adds (
     error_msg TEXT, retry_after INTEGER,
     queued_at INTEGER NOT NULL, completed_at INTEGER
 );
+CREATE TABLE IF NOT EXISTS settings (
+    key TEXT PRIMARY KEY, value TEXT NOT NULL
+);
 """
 
 FAKE_CREDS = {

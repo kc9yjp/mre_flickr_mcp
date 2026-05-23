@@ -64,6 +64,7 @@ _MIGRATIONS = [
         queued_at    INTEGER NOT NULL,
         completed_at INTEGER
     )""",
+    "CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)",
 ]
 
 SCHEMA_VERSION = len(_MIGRATIONS)
@@ -179,6 +180,11 @@ def init_db(conn):
             retry_after  INTEGER,
             queued_at    INTEGER NOT NULL,
             completed_at INTEGER
+        );
+
+        CREATE TABLE IF NOT EXISTS settings (
+            key   TEXT PRIMARY KEY,
+            value TEXT NOT NULL
         );
     """)
     conn.commit()

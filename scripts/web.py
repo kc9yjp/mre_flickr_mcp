@@ -37,7 +37,7 @@ from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 from starlette.templating import Jinja2Templates
 
-from db import _current_user as _db_current_user, db_file, get_db
+from db import _current_user as _db_current_user, db_file, get_db, SETTINGS_DEFAULTS, get_setting, set_setting
 from flickr_api import (
     _CREDS_BASE, CREDENTIALS_FILE,
     credentials_file, _load_credentials, _save_credentials,
@@ -616,6 +616,85 @@ async def route_regen_key(request: Request):
     return RedirectResponse("/setup", status_code=303)
 
 
+async def route_settings(request: Request):
+    """GET: render settings form. POST: validate and save changed values."""
+    redir = _require_login(request)
+    if redir:
+        return redir
+
+    from db import get_db_for_user
+    db_username = request.session.get("username", "")
+    ctx = _base_ctx(request, "Settings")
+    alert_ok = alert_err = None
+
+    if request.method == "POST":
+        form = await request.form()
+        errors = []
+        updates = {}
+
+        tz_val = (form.get("group_queue_retry_tz") or "").strip()
+        if tz_val:
+            try:
+                from zoneinfo import ZoneInfo
+                ZoneInfo(tz_val)
+                updates["group_queue_retry_tz"] = tz_val
+            except Exception:
+                errors.append(f"Invalid timezone: {tz_val!r}. Use an IANA name like America/Chicago.")
+
+        retry_val = (form.get("group_queue_default_retry") or "").strip()
+        if retry_val:
+            parts = retry_val.split(":")
+            if len(parts) == 2 and all(p.isdigit() for p in parts) and 0 <= int(parts[0]) <= 23 and 0 <= int(parts[1]) <= 59:
+                updates["group_queue_default_retry"] = retry_val
+            else:
+                errors.append(f"Invalid time: {retry_val!r}. Use HH:MM in 24-hour format.")
+
+        interval_val = (form.get("sync_refresh_interval_hours") or "").strip()
+        if interval_val:
+            try:
+                h = int(interval_val)
+                if h < 1 or h > 168:
+                    raise ValueError
+                updates["sync_refresh_interval_hours"] = str(h)
+            except ValueError:
+                errors.append("Sync interval must be a whole number of hours between 1 and 168.")
+
+        if errors:
+            alert_err = " ".join(errors)
+        else:
+            try:
+                with get_db_for_user(db_username) as conn:
+                    for key, value in updates.items():
+                        set_setting(conn, key, value)
+                alert_ok = "Settings saved."
+            except Exception as e:
+                logging.exception("route_settings POST error")
+                alert_err = f"Save failed: {e}"
+
+    try:
+        with get_db_for_user(db_username) as conn:
+            settings = [
+                {
+                    "key":         key,
+                    "label":       meta["label"],
+                    "description": meta["description"],
+                    "default":     meta["default"],
+                    "value":       get_setting(conn, key),
+                }
+                for key, meta in SETTINGS_DEFAULTS.items()
+            ]
+    except Exception as e:
+        logging.warning("route_settings: could not load settings: %s", e)
+        settings = [
+            {"key": key, "label": meta["label"], "description": meta["description"],
+             "default": meta["default"], "value": meta["default"]}
+            for key, meta in SETTINGS_DEFAULTS.items()
+        ]
+
+    ctx.update({"settings": settings, "alert_ok": alert_ok, "alert_err": alert_err})
+    return templates.TemplateResponse(request, "settings.html", ctx)
+
+
 async def route_setup(request: Request):
     """Render the MCP client setup page with the user's personal API key."""
     redir = _require_login(request)
@@ -816,6 +895,7 @@ async def main_sse():
             Route("/sync/{type}",    endpoint=route_sync_trigger, methods=["POST"]),
             Route("/reset",          endpoint=route_reset_db, methods=["POST"]),
             Route("/regen-key",      endpoint=route_regen_key, methods=["POST"]),
+            Route("/settings",       endpoint=route_settings, methods=["GET", "POST"]),
             Route("/setup",          endpoint=route_setup),
             Route("/sse",            endpoint=_SSEHandler(sse)),
             Mount("/messages/",      app=sse.handle_post_message),
