@@ -9,6 +9,57 @@ Covers:
 
 ---
 
+## Browser control scripts
+
+Two utility scripts let Claude Code skills read from and navigate your browser
+on any platform — replacing the macOS-only `osascript`/Safari approach.
+
+They connect to a running Chrome, Chromium, or Edge instance via the
+[Chrome DevTools Protocol](https://chromedevtools.github.io/devtools-protocol/)
+on `localhost:9222`.
+
+### Start your browser with remote debugging
+
+```bash
+# macOS
+open -a "Google Chrome" --args --remote-debugging-port=9222
+
+# Linux
+google-chrome --remote-debugging-port=9222
+# or: chromium --remote-debugging-port=9222
+
+# Windows
+start chrome --remote-debugging-port=9222
+```
+
+You only need to do this once per browser session.  The port persists until you
+quit Chrome.
+
+### Get the current tab's URL
+
+```bash
+node playwright/scripts/browser-url.js
+# → https://www.flickr.com/photos/ejwettstein/54321/
+```
+
+Prefers the first open Flickr tab; falls back to the last open tab.
+
+### Navigate a tab to a URL
+
+```bash
+node playwright/scripts/browser-open.js https://www.flickr.com/photos/ejwettstein/54321/
+```
+
+Reuses the existing Flickr tab (or last tab) and brings it to the front.
+
+### Used by Claude Code skills
+
+The `/flickr-photo`, `/flickr-album`, `/flickr-comment`, `/flickr-hide`, and
+`/flickr-contacts` skills call these scripts instead of `osascript`, so they
+work on Linux and Windows as well as macOS.
+
+---
+
 ## Prerequisites
 
 - **Node.js 20+** for local runs

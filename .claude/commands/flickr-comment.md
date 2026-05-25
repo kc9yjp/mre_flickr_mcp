@@ -1,4 +1,5 @@
-Get the URL of the current Safari tab using osascript. Extract the Flickr photo ID from the URL.
+Get the URL of the current browser tab by running: `node playwright/scripts/browser-url.js`
+Extract the Flickr photo ID from the URL.
 
 Then do the following in order:
 
