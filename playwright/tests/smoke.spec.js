@@ -9,7 +9,7 @@ test('login page loads', async ({ page }) => {
 });
 
 test('unauthenticated / redirects to /login', async ({ page }) => {
-  const response = await page.goto('/');
+  await page.goto('/');
   expect(page.url()).toContain('/login');
 });
 
