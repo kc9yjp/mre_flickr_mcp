@@ -697,3 +697,33 @@ class TestFlushGroupQueue:
             flushed = _flush_group_queue(conn, force=True)
         assert len(flushed) == 1
         assert flushed[0]["result"] == "success"
+
+
+# ---------------------------------------------------------------------------
+# _background_refresh threshold
+# ---------------------------------------------------------------------------
+
+class TestBackgroundRefreshThreshold:
+    def test_threshold_within_bounds(self):
+        import random
+        from tools.sync import MIN_REFRESH_INTERVAL, REFRESH_INTERVAL
+        for last_sync in [0, 1000, 1700000000, 1748000000]:
+            threshold = random.Random(int(last_sync)).uniform(MIN_REFRESH_INTERVAL, REFRESH_INTERVAL)
+            assert MIN_REFRESH_INTERVAL <= threshold <= REFRESH_INTERVAL
+
+    def test_threshold_stable_for_same_seed(self):
+        import random
+        from tools.sync import MIN_REFRESH_INTERVAL, REFRESH_INTERVAL
+        last_sync = 1748000000
+        t1 = random.Random(int(last_sync)).uniform(MIN_REFRESH_INTERVAL, REFRESH_INTERVAL)
+        t2 = random.Random(int(last_sync)).uniform(MIN_REFRESH_INTERVAL, REFRESH_INTERVAL)
+        assert t1 == t2
+
+    def test_threshold_varies_across_seeds(self):
+        import random
+        from tools.sync import MIN_REFRESH_INTERVAL, REFRESH_INTERVAL
+        thresholds = {
+            random.Random(int(last_sync)).uniform(MIN_REFRESH_INTERVAL, REFRESH_INTERVAL)
+            for last_sync in range(1748000000, 1748000020)
+        }
+        assert len(thresholds) > 1

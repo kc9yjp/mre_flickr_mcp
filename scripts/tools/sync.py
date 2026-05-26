@@ -14,6 +14,7 @@ is not written by two concurrent processes.
 import asyncio
 import logging
 import os
+import random
 import sys
 import time
 
@@ -23,7 +24,9 @@ from db import DB_FILE, get_db, get_db_for_user, db_file
 from flickr_api import _all_known_users
 
 SYNC_SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "flickr_sync.py")
-REFRESH_INTERVAL = 43200  # 12 hours
+MIN_REFRESH_INTERVAL = 7200   # 2 hours — earliest a user can be re-synced
+REFRESH_INTERVAL = 43200      # 12 hours — hard maximum; always refresh by this point
+REFRESH_CHECK_INTERVAL = 600  # 10 minutes — how often the loop wakes to check
 
 _user_locks: dict[str, asyncio.Lock] = {}  # username -> per-user sync lock
 _active_syncs: dict[str, float] = {}       # label -> start timestamp
@@ -147,10 +150,11 @@ async def _run_sync_script(
 async def _background_refresh():
     """Periodically re-sync all registered users if their data is stale.
 
-    Iterates over every user found by ``flickr_api._all_known_users()`` and
-    checks the last photos sync time in their individual database.  If more than
-    ``REFRESH_INTERVAL`` seconds have passed, runs a full sync cycle for that
-    user.
+    Each user gets a stable random refresh threshold between MIN_REFRESH_INTERVAL
+    (2h) and REFRESH_INTERVAL (12h), seeded by their last sync time so the
+    threshold doesn't change between loop iterations.  The loop wakes at most
+    every REFRESH_CHECK_INTERVAL (10 min) so no user waits more than 10 minutes
+    past their due time.  Any user past the hard 12-hour max is always refreshed.
     """
     while True:
         try:
@@ -175,9 +179,16 @@ async def _background_refresh():
                         continue
 
                 age = time.time() - last_sync
-                if age >= REFRESH_INTERVAL:
+                # Stable random threshold per sync epoch: between 2h and 12h.
+                # Since user_threshold <= REFRESH_INTERVAL, any user with age >= 12h
+                # always satisfies age >= user_threshold and is always refreshed.
+                user_threshold = random.Random(int(last_sync)).uniform(
+                    MIN_REFRESH_INTERVAL, REFRESH_INTERVAL
+                )
+                if age >= user_threshold:
                     logging.info(
-                        "Background refresh for %s (last photos sync %.1fh ago)", username, age / 3600
+                        "Background refresh for %s (last photos sync %.1fh ago, threshold %.1fh)",
+                        username, age / 3600, user_threshold / 3600,
                     )
                     user_args = ["--nsid", nsid, "--username", username]
                     async with _get_user_lock(username):
@@ -214,17 +225,18 @@ async def _background_refresh():
                             username=username,
                         )
                 else:
-                    remaining = REFRESH_INTERVAL - age
+                    remaining = user_threshold - age
                     if remaining < sleep_for:
                         sleep_for = remaining
 
-            # If no users exist yet, fall back to polling every interval.
-            if not users:
-                sleep_for = REFRESH_INTERVAL
+            # Wake at most every REFRESH_CHECK_INTERVAL so no user waits long.
+            # This also handles the no-users case: sleep_for starts at REFRESH_INTERVAL
+            # and is capped here to REFRESH_CHECK_INTERVAL.
+            sleep_for = min(sleep_for, REFRESH_CHECK_INTERVAL)
 
         except Exception:
             logging.exception("Background refresh error")
-            sleep_for = REFRESH_INTERVAL
+            sleep_for = REFRESH_CHECK_INTERVAL
 
         await asyncio.sleep(sleep_for)
 

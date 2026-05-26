@@ -466,8 +466,9 @@ async def _trigger_full_sync(username: str, user_nsid: str, user_args: list[str]
 
 def _build_sync_rows(db_username: str) -> list[dict]:
     """Query sync_log and return rows enriched with active-sync status."""
+    import random
     from db import get_db_for_user
-    from tools.sync import REFRESH_INTERVAL
+    from tools.sync import MIN_REFRESH_INTERVAL, REFRESH_INTERVAL
 
     raw_rows = []
     try:
@@ -487,10 +488,9 @@ def _build_sync_rows(db_username: str) -> list[dict]:
     for r in raw_rows:
         stype = r["type"]
         last_ts = r["last"]
-        # Approximation: the background loop checks age >= REFRESH_INTERVAL, so
-        # last_ts + REFRESH_INTERVAL is a reasonable estimate but may lag slightly
-        # after a manual trigger (the loop wakes on its own schedule, not on demand).
-        next_ts = (last_ts + REFRESH_INTERVAL) if last_ts else None
+        # Mirror the background refresh logic: stable random threshold seeded by last_ts.
+        user_threshold = random.Random(int(last_ts)).uniform(MIN_REFRESH_INTERVAL, REFRESH_INTERVAL) if last_ts else REFRESH_INTERVAL
+        next_ts = (last_ts + user_threshold) if last_ts else None
         rows.append({
             "type": stype,
             "last": last_ts,
