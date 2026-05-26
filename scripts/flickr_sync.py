@@ -54,6 +54,17 @@ _MIGRATIONS = [
     "ALTER TABLE groups ADD COLUMN description  TEXT",
     "ALTER TABLE groups ADD COLUMN keywords     TEXT",
     "ALTER TABLE sync_log ADD COLUMN duration_seconds INTEGER",
+    """CREATE TABLE IF NOT EXISTS pending_group_adds (
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        photo_id     TEXT NOT NULL,
+        group_id     TEXT NOT NULL,
+        status       TEXT NOT NULL DEFAULT 'waiting',
+        error_msg    TEXT,
+        retry_after  INTEGER,
+        queued_at    INTEGER NOT NULL,
+        completed_at INTEGER
+    )""",
+    "CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)",
 ]
 
 SCHEMA_VERSION = len(_MIGRATIONS)
@@ -158,6 +169,22 @@ def init_db(conn):
             mode           TEXT,
             photos_fetched INTEGER,
             type           TEXT DEFAULT 'photos'
+        );
+
+        CREATE TABLE IF NOT EXISTS pending_group_adds (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            photo_id     TEXT NOT NULL,
+            group_id     TEXT NOT NULL,
+            status       TEXT NOT NULL DEFAULT 'waiting',
+            error_msg    TEXT,
+            retry_after  INTEGER,
+            queued_at    INTEGER NOT NULL,
+            completed_at INTEGER
+        );
+
+        CREATE TABLE IF NOT EXISTS settings (
+            key   TEXT PRIMARY KEY,
+            value TEXT NOT NULL
         );
     """)
     conn.commit()

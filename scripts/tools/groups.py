@@ -1,10 +1,14 @@
 """Group tool definitions and handlers."""
 
+import datetime
 import json
+import logging
+import time
 
 from mcp.types import TextContent, Tool
 
 import flickr_api
+from flickr_api import FlickrAPIError
 from db import get_db
 
 TOOLS = [
@@ -33,12 +37,26 @@ TOOLS = [
     ),
     Tool(
         name="add_to_group",
-        description="Add a photo to a Flickr group pool.",
+        description=(
+            "Add a photo to a Flickr group pool. "
+            "If the daily posting limit is hit, the add is queued for automatic retry. "
+            "Use retry_at to control when the retry fires: named times (morning, lunchtime, "
+            "afternoon, evening, night, midnight) or HH:MM are resolved in Chicago time. "
+            "If the photo/group pair is already waiting in the queue, retry_at updates its schedule."
+        ),
         inputSchema={
             "type": "object",
             "properties": {
                 "photo_id": {"type": "string", "description": "Flickr photo ID"},
                 "group_id": {"type": "string", "description": "Flickr group NSID"},
+                "retry_at": {
+                    "type": "string",
+                    "description": (
+                        "When to retry if the daily limit is hit. Named times: morning (8am), "
+                        "lunchtime (12pm), afternoon (2pm), evening (6pm), night (9pm), midnight. "
+                        "Or HH:MM (24h, Chicago time). Defaults to 5pm CT."
+                    ),
+                },
             },
             "required": ["photo_id", "group_id"],
         },
@@ -133,6 +151,18 @@ TOOLS = [
             },
         },
     ),
+    Tool(
+        name="get_group_queue",
+        description=(
+            "Show status of the pending group-add queue. "
+            "Returns counts for waiting, success, and error states, plus details of waiting and errored items. "
+            "Also flushes any waiting items whose retry window has passed."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {},
+        },
+    ),
 ]
 
 
@@ -162,14 +192,165 @@ async def _set_group_keywords(args):
     return [TextContent(type="text", text=f"Keywords updated for group {group_id}.")]
 
 
+# TODO: read _RETRY_TZ from DB settings key "group_queue_retry_tz" (see db.SETTINGS_DEFAULTS)
+_RETRY_TZ = "America/Chicago"
+
+_NAMED_TIMES: dict[str, tuple[int, int]] = {
+    "midnight":  (0,  0),
+    "morning":   (8,  0),
+    "lunchtime": (12, 0),
+    "lunch":     (12, 0),
+    "afternoon": (14, 0),
+    "evening":   (18, 0),
+    "night":     (21, 0),
+}
+
+
+def _next_midnight_utc() -> int:
+    """Unix timestamp for the start of tomorrow UTC."""
+    now = datetime.datetime.now(datetime.timezone.utc)
+    tomorrow = (now + datetime.timedelta(days=1)).date()
+    return int(datetime.datetime(tomorrow.year, tomorrow.month, tomorrow.day,
+                                 tzinfo=datetime.timezone.utc).timestamp())
+
+
+def _parse_retry_time(retry_at: str | None) -> int:
+    """Convert a named time or HH:MM string to a UTC Unix timestamp (next occurrence).
+
+    Times are resolved in Chicago time (_RETRY_TZ).  If the target time has
+    already passed today, the next day's instance is used.  Defaults to 5pm
+    Chicago time when *retry_at* is None; falls back to next midnight UTC for
+    unrecognised strings.
+    """
+    if retry_at is None:
+        # TODO: read default from DB settings key "group_queue_default_retry" (see db.SETTINGS_DEFAULTS)
+        return _parse_retry_time("17:00")
+
+    from zoneinfo import ZoneInfo
+    tz = ZoneInfo(_RETRY_TZ)
+    now_local = datetime.datetime.now(tz)
+    token = retry_at.lower().strip()
+
+    hour, minute = _NAMED_TIMES.get(token, (None, None))
+
+    if hour is None and ":" in token:
+        try:
+            h, m = token.split(":", 1)
+            hour, minute = int(h), int(m)
+            if not (0 <= hour <= 23 and 0 <= minute <= 59):
+                return _next_midnight_utc()
+        except ValueError:
+            return _next_midnight_utc()
+
+    if hour is None:
+        return _next_midnight_utc()
+
+    candidate = now_local.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    if candidate <= now_local:
+        candidate += datetime.timedelta(days=1)
+    return int(candidate.timestamp())
+
+
+def _fmt_chicago(ts: int) -> str:
+    """Format a Unix timestamp as a human-readable Chicago local time."""
+    from zoneinfo import ZoneInfo
+    dt = datetime.datetime.fromtimestamp(ts, ZoneInfo(_RETRY_TZ))
+    return dt.strftime("%Y-%m-%d %I:%M %p CT")
+
+
+def _flush_group_queue(conn, force: bool = False) -> list[dict]:
+    """Process waiting queue items whose retry_after has passed.
+
+    When *force* is True, all waiting items are retried regardless of schedule.
+    Returns a list of result dicts.
+    """
+    now = int(time.time())
+    if force:
+        rows = conn.execute(
+            "SELECT id, photo_id, group_id FROM pending_group_adds WHERE status='waiting'",
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT id, photo_id, group_id FROM pending_group_adds WHERE status='waiting' AND retry_after <= ?",
+            (now,),
+        ).fetchall()
+    flushed = []
+    for row in rows:
+        try:
+            flickr_api._api_post("flickr.groups.pools.add",
+                                 {"photo_id": row["photo_id"], "group_id": row["group_id"]})
+            conn.execute(
+                "UPDATE pending_group_adds SET status='success', completed_at=? WHERE id=?",
+                (now, row["id"]),
+            )
+            conn.execute(
+                "INSERT OR IGNORE INTO photo_groups (photo_id, group_id) VALUES (?, ?)",
+                (row["photo_id"], row["group_id"]),
+            )
+            flushed.append({"photo_id": row["photo_id"], "group_id": row["group_id"], "result": "success"})
+        except FlickrAPIError as e:
+            if e.code == 5:
+                conn.execute(
+                    "UPDATE pending_group_adds SET retry_after=? WHERE id=?",
+                    (_next_midnight_utc(), row["id"]),
+                )
+                flushed.append({"photo_id": row["photo_id"], "group_id": row["group_id"], "result": "still_limited"})
+            else:
+                conn.execute(
+                    "UPDATE pending_group_adds SET status='error', error_msg=?, completed_at=? WHERE id=?",
+                    (e.flickr_message, now, row["id"]),
+                )
+                flushed.append({"photo_id": row["photo_id"], "group_id": row["group_id"],
+                                "result": f"error: {e.flickr_message}"})
+        except RuntimeError as e:
+            logging.exception("Unexpected error flushing queue item photo=%s group=%s", row["photo_id"], row["group_id"])
+            conn.execute(
+                "UPDATE pending_group_adds SET status='error', error_msg=?, completed_at=? WHERE id=?",
+                (str(e), now, row["id"]),
+            )
+            flushed.append({"photo_id": row["photo_id"], "group_id": row["group_id"], "result": f"error: {e}"})
+    return flushed
+
+
 async def _add_to_group(args):
-    flickr_api._api_post("flickr.groups.pools.add", {"photo_id": args["photo_id"], "group_id": args["group_id"]})
+    photo_id = args["photo_id"]
+    group_id = args["group_id"]
+    retry_at_str = args.get("retry_at")
     with get_db() as conn:
-        conn.execute(
-            "INSERT OR IGNORE INTO photo_groups (photo_id, group_id) VALUES (?, ?)",
-            (args["photo_id"], args["group_id"]),
-        )
-    return [TextContent(type="text", text=f"Photo {args['photo_id']} added to group {args['group_id']}.")]
+        _flush_group_queue(conn)
+        try:
+            flickr_api._api_post("flickr.groups.pools.add", {"photo_id": photo_id, "group_id": group_id})
+            conn.execute(
+                "INSERT OR IGNORE INTO photo_groups (photo_id, group_id) VALUES (?, ?)",
+                (photo_id, group_id),
+            )
+            return [TextContent(type="text", text=f"Photo {photo_id} added to group {group_id}.")]
+        except FlickrAPIError as e:
+            if e.code == 5:
+                retry_after = _parse_retry_time(retry_at_str)
+                existing = conn.execute(
+                    "SELECT id FROM pending_group_adds WHERE photo_id=? AND group_id=? AND status='waiting'",
+                    (photo_id, group_id),
+                ).fetchone()
+                if existing:
+                    conn.execute(
+                        "UPDATE pending_group_adds SET retry_after=? WHERE id=?",
+                        (retry_after, existing["id"]),
+                    )
+                    action = "rescheduled"
+                else:
+                    conn.execute(
+                        "INSERT INTO pending_group_adds (photo_id, group_id, status, retry_after, queued_at) "
+                        "VALUES (?, ?, 'waiting', ?, ?)",
+                        (photo_id, group_id, retry_after, int(time.time())),
+                    )
+                    action = "queued"
+                eta = _fmt_chicago(retry_after)
+                return [TextContent(type="text", text=(
+                    f"Daily posting limit reached for group {group_id}. "
+                    f"{action.capitalize()} for retry at {eta}."
+                ))]
+            raise
 
 
 async def _remove_from_group(args):
@@ -278,6 +459,66 @@ async def _get_group_stats(args):
     return [TextContent(type="text", text=json.dumps([dict(r) for r in rows], indent=2))]
 
 
+async def _get_group_queue(args):
+    with get_db() as conn:
+        flushed = _flush_group_queue(conn)
+
+        waiting_rows = conn.execute(
+            "SELECT pga.photo_id, pga.group_id, g.name AS group_name, p.title AS photo_title, pga.retry_after "
+            "FROM pending_group_adds pga "
+            "LEFT JOIN groups g ON pga.group_id = g.id "
+            "LEFT JOIN photos p ON pga.photo_id = p.id "
+            "WHERE pga.status='waiting' ORDER BY pga.retry_after ASC",
+        ).fetchall()
+
+        error_rows = conn.execute(
+            "SELECT pga.photo_id, pga.group_id, g.name AS group_name, p.title AS photo_title, "
+            "pga.error_msg, pga.queued_at "
+            "FROM pending_group_adds pga "
+            "LEFT JOIN groups g ON pga.group_id = g.id "
+            "LEFT JOIN photos p ON pga.photo_id = p.id "
+            "WHERE pga.status='error' ORDER BY pga.queued_at DESC LIMIT 20",
+        ).fetchall()
+
+        counts = conn.execute(
+            "SELECT status, COUNT(*) AS n FROM pending_group_adds GROUP BY status"
+        ).fetchall()
+
+    summary = {row["status"]: row["n"] for row in counts}
+    summary.setdefault("waiting", 0)
+    summary.setdefault("success", 0)
+    summary.setdefault("error", 0)
+
+    def fmt_waiting(row):
+        eta = _fmt_chicago(row["retry_after"]) if row["retry_after"] else "anytime"
+        return {
+            "photo_id": row["photo_id"],
+            "photo_title": row["photo_title"],
+            "group_id": row["group_id"],
+            "group_name": row["group_name"],
+            "retry_after": eta,
+        }
+
+    def fmt_error(row):
+        return {
+            "photo_id": row["photo_id"],
+            "photo_title": row["photo_title"],
+            "group_id": row["group_id"],
+            "group_name": row["group_name"],
+            "error": row["error_msg"],
+        }
+
+    result = {
+        "summary": summary,
+        "waiting": [fmt_waiting(r) for r in waiting_rows],
+        "errors":  [fmt_error(r) for r in error_rows],
+    }
+    if flushed:
+        result["flushed_this_call"] = flushed
+
+    return [TextContent(type="text", text=json.dumps(result, indent=2))]
+
+
 async def _get_photo_group_count(args):
     limit = int(args.get("limit", 20))
     with get_db() as conn:
@@ -304,4 +545,5 @@ HANDLERS = {
     "get_photo_contexts":   _get_photo_contexts,
     "get_group_stats":      _get_group_stats,
     "get_photo_group_count": _get_photo_group_count,
+    "get_group_queue":      _get_group_queue,
 }
