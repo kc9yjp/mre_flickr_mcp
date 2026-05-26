@@ -1,5 +1,3 @@
-"""SQLite database access — single-user and multi-user aware.
-
 # TODO: migrate in-code constants to the settings table.  Each entry in
 # SETTINGS_DEFAULTS defines the key, human-readable label, description, and
 # default value.  Tool code should call get_setting(conn, key) instead of
@@ -9,6 +7,7 @@
 #   - scripts/tools/sync.py:   REFRESH_INTERVAL
 #   - scripts/flickr_api.py:   HTTP_TIMEOUT, _API_MAX_RETRIES
 
+"""SQLite database access — single-user and multi-user aware.
 
 In multi-user mode, ``_current_user`` (a ContextVar) is set per SSE connection
 by the web layer. ``get_db()`` reads it automatically so tool handlers require no

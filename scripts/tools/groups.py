@@ -217,8 +217,9 @@ def _parse_retry_time(retry_at: str | None) -> int:
     """Convert a named time or HH:MM string to a UTC Unix timestamp (next occurrence).
 
     Times are resolved in Chicago time (_RETRY_TZ).  If the target time has
-    already passed today, the next day's instance is used.  Defaults to next
-    midnight Chicago time when input is None or unrecognised.
+    already passed today, the next day's instance is used.  Defaults to 5pm
+    Chicago time when *retry_at* is None; falls back to next midnight UTC for
+    unrecognised strings.
     """
     if retry_at is None:
         # TODO: read default from DB settings key "group_queue_default_retry" (see db.SETTINGS_DEFAULTS)

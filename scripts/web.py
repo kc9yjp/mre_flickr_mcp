@@ -713,12 +713,6 @@ async def route_queue(request: Request):
         ctx["error"] = str(e)
         return templates.TemplateResponse(request, "queue.html", ctx)
 
-    import time as _time
-    now_ts = int(_time.time())
-    ready_count = sum(1 for r in waiting_rows if r["retry_at"] != "—" and
-                      # re-check: parse the row's retry_after from the raw query
-                      True)  # we just use waiting_rows count for simplicity
-
     ctx.update({
         "counts":       counts,
         "waiting_rows": waiting_rows,
