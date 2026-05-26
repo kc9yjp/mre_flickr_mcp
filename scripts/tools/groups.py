@@ -236,6 +236,8 @@ def _parse_retry_time(retry_at: str | None) -> int:
         try:
             h, m = token.split(":", 1)
             hour, minute = int(h), int(m)
+            if not (0 <= hour <= 23 and 0 <= minute <= 59):
+                return _next_midnight_utc()
         except ValueError:
             return _next_midnight_utc()
 

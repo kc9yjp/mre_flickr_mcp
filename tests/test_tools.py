@@ -362,6 +362,48 @@ class TestPhotoGroups:
         result = await mcp_tools._get_photo_group_count({})
         assert "No photo-group data" in _text(result)
 
+    @pytest.mark.asyncio
+    async def test_add_to_group_queues_on_daily_limit(self, db, api_post):
+        from flickr_api import FlickrAPIError
+        import mcp_tools
+        api_post.side_effect = FlickrAPIError(5, "Daily posting limit reached")
+        result = await mcp_tools._add_to_group({"photo_id": "photo1", "group_id": "group1@N00"})
+        assert "queued" in _text(result).lower()
+        row = db.execute(
+            "SELECT status FROM pending_group_adds WHERE photo_id='photo1' AND group_id='group1@N00'"
+        ).fetchone()
+        assert row is not None
+        assert row["status"] == "waiting"
+
+    @pytest.mark.asyncio
+    async def test_add_to_group_reschedules_if_already_queued(self, db, api_post):
+        from flickr_api import FlickrAPIError
+        import mcp_tools
+        old_retry = int(time.time()) + 1000
+        db.execute(
+            "INSERT INTO pending_group_adds (photo_id, group_id, status, retry_after, queued_at) "
+            "VALUES (?, ?, 'waiting', ?, ?)",
+            ("photo1", "group1@N00", old_retry, int(time.time())),
+        )
+        db.commit()
+        api_post.side_effect = FlickrAPIError(5, "Daily posting limit reached")
+        result = await mcp_tools._add_to_group(
+            {"photo_id": "photo1", "group_id": "group1@N00", "retry_at": "morning"}
+        )
+        assert "rescheduled" in _text(result).lower()
+        count = db.execute(
+            "SELECT COUNT(*) FROM pending_group_adds WHERE photo_id='photo1'"
+        ).fetchone()[0]
+        assert count == 1
+
+    @pytest.mark.asyncio
+    async def test_add_to_group_reraises_non_limit_errors(self, db, api_post):
+        from flickr_api import FlickrAPIError
+        import mcp_tools
+        api_post.side_effect = FlickrAPIError(2, "Unknown user")
+        with pytest.raises(FlickrAPIError):
+            await mcp_tools._add_to_group({"photo_id": "photo1", "group_id": "group1@N00"})
+
 
 # ---------------------------------------------------------------------------
 # protect_contact / find_unfollow_candidates
@@ -492,3 +534,166 @@ class TestFindWeakPhotos:
         result = await mcp_tools._find_weak_photos({"min_age_days": 0, "require_zero_favorites": True})
         photos = _json(result)
         assert not any(p["id"] == "photo1" for p in photos)
+
+
+# ---------------------------------------------------------------------------
+# _parse_retry_time
+# ---------------------------------------------------------------------------
+
+class TestParseRetryTime:
+    def _ct_hour_minute(self, ts: int) -> tuple[int, int]:
+        import datetime
+        from zoneinfo import ZoneInfo
+        dt = datetime.datetime.fromtimestamp(ts, ZoneInfo("America/Chicago"))
+        return dt.hour, dt.minute
+
+    def test_none_defaults_to_5pm_ct(self):
+        from tools.groups import _parse_retry_time
+        h, m = self._ct_hour_minute(_parse_retry_time(None))
+        assert h == 17 and m == 0
+
+    def test_named_morning(self):
+        from tools.groups import _parse_retry_time
+        h, m = self._ct_hour_minute(_parse_retry_time("morning"))
+        assert h == 8 and m == 0
+
+    def test_named_lunchtime(self):
+        from tools.groups import _parse_retry_time
+        h, m = self._ct_hour_minute(_parse_retry_time("lunchtime"))
+        assert h == 12 and m == 0
+
+    def test_named_evening(self):
+        from tools.groups import _parse_retry_time
+        h, m = self._ct_hour_minute(_parse_retry_time("evening"))
+        assert h == 18 and m == 0
+
+    def test_hhmm_parsing(self):
+        from tools.groups import _parse_retry_time
+        h, m = self._ct_hour_minute(_parse_retry_time("09:30"))
+        assert h == 9 and m == 30
+
+    def test_result_always_in_future(self):
+        from tools.groups import _parse_retry_time
+        now = int(time.time())
+        for t in [None, "morning", "afternoon", "09:00", "23:59"]:
+            assert _parse_retry_time(t) > now
+
+    def test_result_within_25_hours(self):
+        from tools.groups import _parse_retry_time
+        now = int(time.time())
+        limit = now + 25 * 3600
+        for t in [None, "morning", "afternoon", "09:00", "23:59", "00:01"]:
+            assert _parse_retry_time(t) <= limit
+
+    def test_unrecognised_falls_back_to_midnight_utc(self):
+        import datetime
+        from tools.groups import _parse_retry_time
+        ts = _parse_retry_time("garbage")
+        dt = datetime.datetime.fromtimestamp(ts, datetime.timezone.utc)
+        assert dt.hour == 0 and dt.minute == 0
+        assert ts > int(time.time())
+
+    def test_invalid_hhmm_falls_back_to_midnight_utc(self):
+        import datetime
+        from tools.groups import _parse_retry_time
+        ts = _parse_retry_time("25:00")
+        dt = datetime.datetime.fromtimestamp(ts, datetime.timezone.utc)
+        assert dt.hour == 0 and dt.minute == 0
+
+
+# ---------------------------------------------------------------------------
+# _flush_group_queue
+# ---------------------------------------------------------------------------
+
+class TestFlushGroupQueue:
+    def _conn(self):
+        from tests.conftest import make_db
+        return make_db()
+
+    def test_due_item_succeeds(self):
+        from tools.groups import _flush_group_queue
+        conn = self._conn()
+        now = int(time.time())
+        conn.execute(
+            "INSERT INTO pending_group_adds (photo_id, group_id, status, retry_after, queued_at) "
+            "VALUES (?, ?, 'waiting', ?, ?)",
+            ("photo1", "group1@N00", now - 60, now - 3600),
+        )
+        conn.commit()
+        with patch("flickr_api._api_post", return_value={"stat": "ok"}):
+            flushed = _flush_group_queue(conn)
+        assert len(flushed) == 1
+        assert flushed[0]["result"] == "success"
+        row = conn.execute("SELECT status FROM pending_group_adds").fetchone()
+        assert row["status"] == "success"
+        pg = conn.execute(
+            "SELECT 1 FROM photo_groups WHERE photo_id='photo1' AND group_id='group1@N00'"
+        ).fetchone()
+        assert pg is not None
+
+    def test_future_item_is_skipped(self):
+        from tools.groups import _flush_group_queue
+        conn = self._conn()
+        now = int(time.time())
+        conn.execute(
+            "INSERT INTO pending_group_adds (photo_id, group_id, status, retry_after, queued_at) "
+            "VALUES (?, ?, 'waiting', ?, ?)",
+            ("photo1", "group1@N00", now + 3600, now - 3600),
+        )
+        conn.commit()
+        with patch("flickr_api._api_post") as mock_post:
+            flushed = _flush_group_queue(conn)
+        assert flushed == []
+        mock_post.assert_not_called()
+        row = conn.execute("SELECT status FROM pending_group_adds").fetchone()
+        assert row["status"] == "waiting"
+
+    def test_still_limited_reschedules_to_next_midnight(self):
+        from flickr_api import FlickrAPIError
+        from tools.groups import _flush_group_queue
+        conn = self._conn()
+        now = int(time.time())
+        conn.execute(
+            "INSERT INTO pending_group_adds (photo_id, group_id, status, retry_after, queued_at) "
+            "VALUES (?, ?, 'waiting', ?, ?)",
+            ("photo1", "group1@N00", now - 60, now - 3600),
+        )
+        conn.commit()
+        with patch("flickr_api._api_post", side_effect=FlickrAPIError(5, "Daily limit")):
+            flushed = _flush_group_queue(conn)
+        assert flushed[0]["result"] == "still_limited"
+        row = conn.execute("SELECT status, retry_after FROM pending_group_adds").fetchone()
+        assert row["status"] == "waiting"
+        assert row["retry_after"] > now
+
+    def test_other_flickr_error_marks_error(self):
+        from flickr_api import FlickrAPIError
+        from tools.groups import _flush_group_queue
+        conn = self._conn()
+        now = int(time.time())
+        conn.execute(
+            "INSERT INTO pending_group_adds (photo_id, group_id, status, retry_after, queued_at) "
+            "VALUES (?, ?, 'waiting', ?, ?)",
+            ("photo1", "group1@N00", now - 60, now - 3600),
+        )
+        conn.commit()
+        with patch("flickr_api._api_post", side_effect=FlickrAPIError(2, "Unknown user")):
+            flushed = _flush_group_queue(conn)
+        assert "error" in flushed[0]["result"]
+        row = conn.execute("SELECT status FROM pending_group_adds").fetchone()
+        assert row["status"] == "error"
+
+    def test_force_processes_future_items(self):
+        from tools.groups import _flush_group_queue
+        conn = self._conn()
+        now = int(time.time())
+        conn.execute(
+            "INSERT INTO pending_group_adds (photo_id, group_id, status, retry_after, queued_at) "
+            "VALUES (?, ?, 'waiting', ?, ?)",
+            ("photo1", "group1@N00", now + 3600, now - 3600),
+        )
+        conn.commit()
+        with patch("flickr_api._api_post", return_value={"stat": "ok"}):
+            flushed = _flush_group_queue(conn, force=True)
+        assert len(flushed) == 1
+        assert flushed[0]["result"] == "success"
