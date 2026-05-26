@@ -1,0 +1,130 @@
+{% extends "base.html" %}
+{% block content %}
+
+<h1>Group Queue</h1>
+
+{% if alert_ok %}
+<div class="alert alert-ok">{{ alert_ok }}</div>
+{% endif %}
+{% if alert_err %}
+<div class="alert alert-err">{{ alert_err }}</div>
+{% endif %}
+
+{% if no_db %}
+<div class="alert alert-info">No database found. Run a sync first.</div>
+{% elif error %}
+<div class="alert alert-err">{{ error }}</div>
+{% else %}
+
+<div class="queue-summary">
+  <div class="queue-stat queue-stat-waiting">
+    <span class="queue-stat-n">{{ counts.waiting }}</span>
+    <span class="queue-stat-label">Waiting</span>
+  </div>
+  <div class="queue-stat queue-stat-success">
+    <span class="queue-stat-n">{{ counts.success }}</span>
+    <span class="queue-stat-label">Succeeded</span>
+  </div>
+  <div class="queue-stat queue-stat-error">
+    <span class="queue-stat-n">{{ counts.error }}</span>
+    <span class="queue-stat-label">Failed</span>
+  </div>
+</div>
+
+<div class="card">
+  <div class="queue-card-header">
+    <h2 class="card-title">Waiting</h2>
+    {% if waiting_rows %}
+    <div class="queue-actions">
+      <form method="POST" action="/queue">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="action" value="retry_ready">
+        <button class="btn btn-secondary" type="submit">Retry ready</button>
+      </form>
+      <form method="POST" action="/queue">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="action" value="retry_all">
+        <button class="btn" type="submit">Retry all now</button>
+      </form>
+    </div>
+    {% endif %}
+  </div>
+
+  {% if waiting_rows %}
+  <table class="queue-table">
+    <thead>
+      <tr>
+        <th>Photo</th>
+        <th>Group</th>
+        <th>Scheduled (CT)</th>
+        <th>Queued (CT)</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in waiting_rows %}
+      <tr>
+        <td><a href="{{ r.photo_url }}" target="_blank">{{ r.photo_title }}</a></td>
+        <td><a href="{{ r.group_url }}" target="_blank">{{ r.group_name }}</a></td>
+        <td class="queue-time">{{ r.retry_at }}</td>
+        <td class="queue-time queue-muted">{{ r.queued_at }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="card-hint">No items waiting.</p>
+  {% endif %}
+</div>
+
+{% if error_rows %}
+<div class="card">
+  <h2 class="card-title">Errors</h2>
+  <table class="queue-table">
+    <thead>
+      <tr>
+        <th>Photo</th>
+        <th>Group</th>
+        <th>Error</th>
+        <th>Queued (CT)</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in error_rows %}
+      <tr>
+        <td><a href="{{ r.photo_url }}" target="_blank">{{ r.photo_title }}</a></td>
+        <td><a href="{{ r.group_url }}" target="_blank">{{ r.group_name }}</a></td>
+        <td class="queue-error-msg">{{ r.error_msg }}</td>
+        <td class="queue-time queue-muted">{{ r.queued_at }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+
+{% if success_rows %}
+<div class="card">
+  <h2 class="card-title">Recent successes</h2>
+  <table class="queue-table">
+    <thead>
+      <tr>
+        <th>Photo</th>
+        <th>Group</th>
+        <th>Completed (CT)</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in success_rows %}
+      <tr>
+        <td><a href="{{ r.photo_url }}" target="_blank">{{ r.photo_title }}</a></td>
+        <td><a href="{{ r.group_url }}" target="_blank">{{ r.group_name }}</a></td>
+        <td class="queue-time queue-muted">{{ r.completed_at }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+
+{% endif %}
+{% endblock %}
