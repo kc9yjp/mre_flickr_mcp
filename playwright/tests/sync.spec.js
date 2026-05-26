@@ -8,12 +8,8 @@ const { test, expect } = require('@playwright/test');
 const path = require('path');
 const fs = require('fs');
 
-test.beforeAll(() => {
-  const sessionFile = path.join(__dirname, '..', '.auth', 'session.json');
-  if (!fs.existsSync(sessionFile)) {
-    test.skip(true, 'No session found — run `npm run login` first to authenticate.');
-  }
-});
+const sessionFile = path.join(__dirname, '..', '.auth', 'session.json');
+test.skip(!fs.existsSync(sessionFile), 'No session found — run `npm run login` first to authenticate.');
 
 test('sync page loads and shows trigger buttons', async ({ page }) => {
   await page.goto('/sync');
