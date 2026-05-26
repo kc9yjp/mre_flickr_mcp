@@ -2,6 +2,7 @@
 
 import datetime
 import json
+import logging
 import time
 
 from mcp.types import TextContent, Tool
@@ -302,6 +303,7 @@ def _flush_group_queue(conn, force: bool = False) -> list[dict]:
                 flushed.append({"photo_id": row["photo_id"], "group_id": row["group_id"],
                                 "result": f"error: {e.flickr_message}"})
         except RuntimeError as e:
+            logging.exception("Unexpected error flushing queue item photo=%s group=%s", row["photo_id"], row["group_id"])
             conn.execute(
                 "UPDATE pending_group_adds SET status='error', error_msg=?, completed_at=? WHERE id=?",
                 (str(e), now, row["id"]),

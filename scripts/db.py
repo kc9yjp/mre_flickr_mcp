@@ -63,7 +63,7 @@ SETTINGS_DEFAULTS: dict[str, dict] = {
     },
     "sync_refresh_interval_hours": {
         "label":       "Background sync interval (hours)",
-        "description": "How often the background task re-syncs each user's data.",
+        "description": "How often the background task re-syncs each user's data. Note: this setting is not yet wired in — the background refresh currently uses a fixed 12-hour interval regardless of this value.",
         "default":     "12",
     },
 }
