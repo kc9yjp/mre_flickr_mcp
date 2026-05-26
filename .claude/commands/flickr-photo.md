@@ -1,4 +1,5 @@
-Get the URL of the current Safari tab using osascript. Extract the Flickr photo ID from the URL.
+Get the URL of the current browser tab by running: `node playwright/scripts/browser-url.js`
+Extract the Flickr photo ID from the URL.
 
 Then do the following in order:
 
@@ -14,6 +15,6 @@ Then do the following in order:
 
 4. Search the user's groups using `find_groups` with 2-3 relevant keyword searches based on the photo's subject and location. Suggest the top 2-3 most relevant groups and ask the user to confirm before adding with `add_to_group`.
 
-5. Refresh the Safari tab by re-setting its URL to the photo page.
+5. Refresh the browser tab to the photo page by running: `node playwright/scripts/browser-open.js <photo-page-url>`
 
 Keep suggestions concise. Ask for confirmation at each step before taking action. Remember the user has an artsy bent and shoots in Chicago/Oak Park — factor in location context when suggesting tags and groups.

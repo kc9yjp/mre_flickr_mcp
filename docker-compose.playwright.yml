@@ -1,0 +1,31 @@
+# Docker Compose override — adds Playwright smoke tests against the running server.
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.playwright.yml \
+#     run --rm playwright
+#
+# The flickr-mcp service is given a healthcheck so the playwright service waits
+# until the web UI is actually accepting connections before running tests.
+
+services:
+  flickr-mcp:
+    healthcheck:
+      test:
+        - "CMD-SHELL"
+        - "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/login', timeout=3)\""
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+
+  playwright:
+    image: mcr.microsoft.com/playwright:v1.47.0-noble
+    working_dir: /playwright
+    volumes:
+      - ./playwright:/playwright
+    command: sh -c "npm install && npx playwright test"
+    depends_on:
+      flickr-mcp:
+        condition: service_healthy
+    environment:
+      - BASE_URL=http://flickr-mcp:8000

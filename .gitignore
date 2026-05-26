@@ -167,3 +167,9 @@ data/
 .mcp.json
 .mcp_servers.json
 .env
+
+# Playwright
+playwright/node_modules/
+playwright/test-results/
+playwright/playwright-report/
+playwright/.auth/

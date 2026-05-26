@@ -3,7 +3,7 @@ Find the next weak photo candidate using the `find_weak_photos` MCP tool (requir
 For the top unreviewed candidate:
 
 1. Fetch the image using `fetch_photo_image` so you can see it visually.
-2. Open it in Safari using osascript (navigate current tab, don't open new tab).
+2. Open it in the browser by running: `node playwright/scripts/browser-open.js <photo-page-url>`
 3. Give an honest visual assessment — look at composition, light, subject, and technical quality. Factor in the era it was shot (early smartphone photos get more latitude). Note what works and what doesn't.
 4. Give a clear recommendation: keep public or make private. Explain briefly why.
 5. Wait for the user to decide before taking any action.

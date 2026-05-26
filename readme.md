@@ -166,6 +166,35 @@ Note: stdio mode has no web UI — login and sync must be done via the SSE conta
 
 ---
 
+## Playwright tests
+
+A `playwright/` directory contains smoke tests and an interactive OAuth login
+helper.  They work against any running instance of the server.
+
+```bash
+cd playwright
+npm install
+npx playwright install --with-deps chromium
+
+# Smoke tests (no login required)
+npm test
+
+# Complete OAuth once to save a session, then run authenticated tests
+npm run login   # opens a browser — log in on Flickr, script saves session
+npm test        # now also runs sync/stats/setup page tests
+```
+
+To run the tests inside Docker against the running container:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.playwright.yml \
+  run --rm playwright
+```
+
+See [`playwright/README.md`](playwright/README.md) for details.
+
+---
+
 ## Resources
 
 - [Full tool list and local development](https://github.com/kc9yjp/mre_flickr_mcp)

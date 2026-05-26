@@ -1,0 +1,12 @@
+{
+  "name": "flickr-mcp-playwright",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "test": "playwright test",
+    "login": "playwright test tests/login.spec.js --headed --timeout=0"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.47.0"
+  }
+}
