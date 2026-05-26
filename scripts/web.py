@@ -665,8 +665,8 @@ async def route_queue(request: Request):
             "group_url":   f"https://www.flickr.com/groups/{r['group_id']}/pool/",
             "retry_at":    _fmt_chicago(r["retry_after"]) if r["retry_after"] else "—",
             "queued_at":   _fmt_chicago(r["queued_at"]),
-            "error_msg":   r.get("error_msg", ""),
-            "completed_at": _fmt_chicago(r["completed_at"]) if r.get("completed_at") else "—",
+            "error_msg":   r["error_msg"] or "",
+            "completed_at": _fmt_chicago(r["completed_at"]) if r["completed_at"] else "—",
         }
 
     try:
@@ -680,6 +680,7 @@ async def route_queue(request: Request):
 
             waiting_rows = [_row(r) for r in conn.execute(
                 "SELECT pga.id, pga.photo_id, pga.group_id, pga.retry_after, pga.queued_at, "
+                "       NULL AS error_msg, NULL AS completed_at, "
                 "       p.title AS photo_title, p.url_photopage AS photo_url, g.name AS group_name "
                 "FROM pending_group_adds pga "
                 "LEFT JOIN photos p ON pga.photo_id = p.id "
@@ -698,6 +699,7 @@ async def route_queue(request: Request):
 
             success_rows = [_row(r) for r in conn.execute(
                 "SELECT pga.id, pga.photo_id, pga.group_id, pga.queued_at, pga.completed_at, "
+                "       NULL AS error_msg, "
                 "       p.title AS photo_title, p.url_photopage AS photo_url, g.name AS group_name "
                 "FROM pending_group_adds pga "
                 "LEFT JOIN photos p ON pga.photo_id = p.id "
