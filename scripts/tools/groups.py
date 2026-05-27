@@ -180,6 +180,18 @@ TOOLS = [
             "properties": {},
         },
     ),
+    Tool(
+        name="remove_from_queue",
+        description="Remove a waiting item from the group-add queue by photo ID and group ID.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "photo_id": {"type": "string", "description": "Flickr photo ID"},
+                "group_id": {"type": "string", "description": "Flickr group NSID"},
+            },
+            "required": ["photo_id", "group_id"],
+        },
+    ),
 ]
 
 
@@ -580,6 +592,19 @@ async def _get_photo_group_count(args):
     return [TextContent(type="text", text=json.dumps([dict(r) for r in rows], indent=2))]
 
 
+async def _remove_from_queue(args):
+    photo_id = args["photo_id"]
+    group_id = args["group_id"]
+    with get_db() as conn:
+        deleted = conn.execute(
+            "DELETE FROM pending_group_adds WHERE photo_id=? AND group_id=? AND status='waiting'",
+            (photo_id, group_id),
+        ).rowcount
+    if deleted:
+        return [TextContent(type="text", text=f"Removed photo {photo_id} / group {group_id} from queue.")]
+    return [TextContent(type="text", text=f"No waiting queue entry found for photo {photo_id} / group {group_id}.")]
+
+
 HANDLERS = {
     "find_groups":       _find_groups,
     "set_group_keywords": _set_group_keywords,
@@ -593,4 +618,5 @@ HANDLERS = {
     "get_group_stats":      _get_group_stats,
     "get_photo_group_count": _get_photo_group_count,
     "get_group_queue":      _get_group_queue,
+    "remove_from_queue":    _remove_from_queue,
 }
