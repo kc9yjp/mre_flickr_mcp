@@ -634,25 +634,33 @@ async def route_queue(request: Request):
     if request.method == "POST":
         form = await request.form()
         action = form.get("action", "retry_ready")
-        force = (action == "retry_all")
         token = _ctx.set({"nsid": user_nsid, "username": db_username})
         try:
             with get_db_for_user(db_username) as conn:
-                flushed = _flush_group_queue(conn, force=force)
+                if action == "delete_item":
+                    item_id = form.get("item_id", "")
+                    deleted = conn.execute(
+                        "DELETE FROM pending_group_adds WHERE id=? AND status='waiting'",
+                        (item_id,),
+                    ).rowcount
+                    alert_ok = "Item removed from queue." if deleted else "Item not found or already processed."
+                else:
+                    force = (action == "retry_all")
+                    flushed = _flush_group_queue(conn, force=force)
+                    if flushed:
+                        ok  = sum(1 for r in flushed if r["result"] == "success")
+                        lim = sum(1 for r in flushed if r["result"] == "still_limited")
+                        err = sum(1 for r in flushed if r["result"].startswith("error"))
+                        parts = []
+                        if ok:  parts.append(f"{ok} added")
+                        if lim: parts.append(f"{lim} still limited")
+                        if err: parts.append(f"{err} errored")
+                        alert_ok = "Retry complete: " + ", ".join(parts) + "." if parts else "Nothing to retry."
         except Exception as e:
-            logging.exception("route_queue flush error")
-            alert_err = f"Retry failed: {e}"
+            logging.exception("route_queue action error")
+            alert_err = f"Action failed: {e}"
         finally:
             _ctx.reset(token)
-        if flushed and not alert_err:
-            ok  = sum(1 for r in flushed if r["result"] == "success")
-            lim = sum(1 for r in flushed if r["result"] == "still_limited")
-            err = sum(1 for r in flushed if r["result"].startswith("error"))
-            parts = []
-            if ok:  parts.append(f"{ok} added")
-            if lim: parts.append(f"{lim} still limited")
-            if err: parts.append(f"{err} errored")
-            alert_ok = "Retry complete: " + ", ".join(parts) + "." if parts else "Nothing to retry."
 
     def _row(r):
         return {
