@@ -632,18 +632,20 @@ async def route_queue(request: Request):
     flushed = []
 
     if request.method == "POST":
-        form = await request.form()
+        form = getattr(request.state, "form", None) or await request.form()
         action = form.get("action", "retry_ready")
         token = _ctx.set({"nsid": user_nsid, "username": db_username})
         try:
             with get_db_for_user(db_username) as conn:
                 if action == "delete_item":
                     item_id = form.get("item_id", "")
+                    logging.info("queue delete_item: item_id=%r form_keys=%r", item_id, list(form.keys()))
                     deleted = conn.execute(
-                        "DELETE FROM pending_group_adds WHERE id=? AND status='waiting'",
+                        "DELETE FROM pending_group_adds WHERE id=?",
                         (item_id,),
                     ).rowcount
-                    alert_ok = "Item removed from queue." if deleted else "Item not found or already processed."
+                    logging.info("queue delete_item: deleted=%d", deleted)
+                    alert_ok = "Item removed." if deleted else "Item not found."
                 else:
                     force = (action == "retry_all")
                     flushed = _flush_group_queue(conn, force=force)
@@ -746,7 +748,7 @@ async def route_settings(request: Request):
     alert_ok = alert_err = None
 
     if request.method == "POST":
-        form = await request.form()
+        form = getattr(request.state, "form", None) or await request.form()
         errors = []
         updates = {}
 
@@ -969,6 +971,9 @@ class CSRFMiddleware(BaseHTTPMiddleware):
             if not token_in_session or token_in_form != token_in_session:
                 logging.warning("CSRF validation failed for path %s", path)
                 return Response("CSRF validation failed", status_code=403)
+
+            # Cache parsed form so route handlers can read it after the body stream is consumed.
+            request.state.form = form_data
 
         return await call_next(request)
 

@@ -69,7 +69,8 @@
         <td class="queue-time">{{ r.retry_at }}</td>
         <td class="queue-time queue-muted">{{ r.queued_at }}</td>
         <td>
-          <form method="POST" action="/queue" style="margin:0">
+          <form method="POST" action="/queue" style="margin:0"
+                onsubmit="return confirm('Remove {{ r.photo_title }} from queue?')">
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
             <input type="hidden" name="action" value="delete_item">
             <input type="hidden" name="item_id" value="{{ r.id }}">
