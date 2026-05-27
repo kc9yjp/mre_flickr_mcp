@@ -42,7 +42,10 @@ TOOLS = [
             "If the daily posting limit is hit, the add is queued for automatic retry. "
             "Use retry_at to control when the retry fires: named times (morning, lunchtime, "
             "afternoon, evening, night, midnight) or HH:MM are resolved in Chicago time. "
-            "If the photo/group pair is already waiting in the queue, retry_at updates its schedule."
+            "If the photo/group pair is already waiting in the queue, retry_at updates its schedule. "
+            "Set queue=true to skip the immediate Flickr call and schedule the add for a future time — "
+            "useful for drip-posting one photo per day. Combine with days_offset to spread adds across days "
+            "(e.g. days_offset=2 with retry_at=morning schedules for morning two days from now)."
         ),
         inputSchema={
             "type": "object",
@@ -52,9 +55,23 @@ TOOLS = [
                 "retry_at": {
                     "type": "string",
                     "description": (
-                        "When to retry if the daily limit is hit. Named times: morning (8am), "
-                        "lunchtime (12pm), afternoon (2pm), evening (6pm), night (9pm), midnight. "
-                        "Or HH:MM (24h, Chicago time). Defaults to 5pm CT."
+                        "When to retry if the daily limit is hit, or when to fire if queue=true. "
+                        "Named times: morning (8am), lunchtime (12pm), afternoon (2pm), evening (6pm), "
+                        "night (9pm), midnight. Or HH:MM (24h, Chicago time). Defaults to 5pm CT."
+                    ),
+                },
+                "queue": {
+                    "type": "boolean",
+                    "description": (
+                        "If true, skip the immediate Flickr API call and schedule the add for a future time. "
+                        "Use with retry_at and days_offset for drip-posting across multiple days."
+                    ),
+                },
+                "days_offset": {
+                    "type": "integer",
+                    "description": (
+                        "Number of days from today to schedule the add (default 0 = today/tomorrow as needed). "
+                        "Use with queue=true to spread adds: days_offset=1 = tomorrow, days_offset=2 = day after, etc."
                     ),
                 },
             },
@@ -214,17 +231,19 @@ def _next_midnight_utc() -> int:
                                  tzinfo=datetime.timezone.utc).timestamp())
 
 
-def _parse_retry_time(retry_at: str | None) -> int:
-    """Convert a named time or HH:MM string to a UTC Unix timestamp (next occurrence).
+def _parse_retry_time(retry_at: str | None, days_offset: int = 0) -> int:
+    """Convert a named time or HH:MM string to a UTC Unix timestamp.
 
-    Times are resolved in Chicago time (_RETRY_TZ).  If the target time has
-    already passed today, the next day's instance is used.  Defaults to 5pm
+    Times are resolved in Chicago time (_RETRY_TZ).  If *days_offset* is 0 and
+    the target time has already passed today, the next day's instance is used.
+    If *days_offset* > 0, the result is always that many days from today at the
+    given time (regardless of whether it has passed today).  Defaults to 5pm
     Chicago time when *retry_at* is None; falls back to next midnight UTC for
     unrecognised strings.
     """
     if retry_at is None:
         # TODO: read default from DB settings key "group_queue_default_retry" (see db.SETTINGS_DEFAULTS)
-        return _parse_retry_time("17:00")
+        return _parse_retry_time("17:00", days_offset)
 
     from zoneinfo import ZoneInfo
     tz = ZoneInfo(_RETRY_TZ)
@@ -246,7 +265,9 @@ def _parse_retry_time(retry_at: str | None) -> int:
         return _next_midnight_utc()
 
     candidate = now_local.replace(hour=hour, minute=minute, second=0, microsecond=0)
-    if candidate <= now_local:
+    if days_offset > 0:
+        candidate += datetime.timedelta(days=days_offset)
+    elif candidate <= now_local:
         candidate += datetime.timedelta(days=1)
     return int(candidate.timestamp())
 
@@ -316,8 +337,34 @@ async def _add_to_group(args):
     photo_id = args["photo_id"]
     group_id = args["group_id"]
     retry_at_str = args.get("retry_at")
+    queue_immediately = bool(args.get("queue", False))
+    days_offset = int(args.get("days_offset", 0))
+
     with get_db() as conn:
         _flush_group_queue(conn)
+
+        if queue_immediately:
+            retry_after = _parse_retry_time(retry_at_str, days_offset)
+            existing = conn.execute(
+                "SELECT id FROM pending_group_adds WHERE photo_id=? AND group_id=? AND status='waiting'",
+                (photo_id, group_id),
+            ).fetchone()
+            if existing:
+                conn.execute(
+                    "UPDATE pending_group_adds SET retry_after=? WHERE id=?",
+                    (retry_after, existing["id"]),
+                )
+                action = "rescheduled"
+            else:
+                conn.execute(
+                    "INSERT INTO pending_group_adds (photo_id, group_id, status, retry_after, queued_at) "
+                    "VALUES (?, ?, 'waiting', ?, ?)",
+                    (photo_id, group_id, retry_after, int(time.time())),
+                )
+                action = "queued"
+            eta = _fmt_chicago(retry_after)
+            return [TextContent(type="text", text=f"Photo {photo_id} {action} for group {group_id} — scheduled for {eta}.")]
+
         try:
             flickr_api._api_post("flickr.groups.pools.add", {"photo_id": photo_id, "group_id": group_id})
             conn.execute(
@@ -327,7 +374,7 @@ async def _add_to_group(args):
             return [TextContent(type="text", text=f"Photo {photo_id} added to group {group_id}.")]
         except FlickrAPIError as e:
             if e.code == 5:
-                retry_after = _parse_retry_time(retry_at_str)
+                retry_after = _parse_retry_time(retry_at_str, days_offset)
                 existing = conn.execute(
                     "SELECT id FROM pending_group_adds WHERE photo_id=? AND group_id=? AND status='waiting'",
                     (photo_id, group_id),
