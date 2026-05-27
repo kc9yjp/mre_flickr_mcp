@@ -597,12 +597,12 @@ async def _remove_from_queue(args):
     group_id = args["group_id"]
     with get_db() as conn:
         deleted = conn.execute(
-            "DELETE FROM pending_group_adds WHERE photo_id=? AND group_id=? AND status='waiting'",
+            "DELETE FROM pending_group_adds WHERE photo_id=? AND group_id=?",
             (photo_id, group_id),
         ).rowcount
     if deleted:
         return [TextContent(type="text", text=f"Removed photo {photo_id} / group {group_id} from queue.")]
-    return [TextContent(type="text", text=f"No waiting queue entry found for photo {photo_id} / group {group_id}.")]
+    return [TextContent(type="text", text=f"No queue entry found for photo {photo_id} / group {group_id}.")]
 
 
 HANDLERS = {
