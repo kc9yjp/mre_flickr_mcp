@@ -639,12 +639,10 @@ async def route_queue(request: Request):
             with get_db_for_user(db_username) as conn:
                 if action == "delete_item":
                     item_id = form.get("item_id", "")
-                    logging.info("queue delete_item: item_id=%r form_keys=%r", item_id, list(form.keys()))
                     deleted = conn.execute(
                         "DELETE FROM pending_group_adds WHERE id=?",
                         (item_id,),
                     ).rowcount
-                    logging.info("queue delete_item: deleted=%d", deleted)
                     alert_ok = "Item removed." if deleted else "Item not found."
                 else:
                     force = (action == "retry_all")
