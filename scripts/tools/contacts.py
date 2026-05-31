@@ -164,9 +164,9 @@ async def _follow_contact(args):
     profile_url = f"https://www.flickr.com/people/{contact_id}/"
     try:
         flickr_api._api_post("flickr.contacts.add", {
-            "user_nsid": contact_id,
-            "friend":    str(is_friend),
-            "family":    str(is_family),
+            "user_id": contact_id,
+            "friend":  str(is_friend),
+            "family":  str(is_family),
         })
         # Fetch the user's display name to store locally
         try:
