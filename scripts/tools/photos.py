@@ -300,6 +300,18 @@ TOOLS = [
         },
     ),
     Tool(
+        name="get_photo_faves",
+        description="List users who have favorited a photo, with a flag indicating whether you follow each one.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "photo_id": {"type": "string", "description": "Flickr photo ID"},
+                "limit":    {"type": "integer", "description": "Max results (default 50)"},
+            },
+            "required": ["photo_id"],
+        },
+    ),
+    Tool(
         name="get_faves",
         description="List photos the authenticated user has favorited.",
         inputSchema={
@@ -733,6 +745,31 @@ async def _get_popular_photos(args):
     } for p in photos], indent=2))]
 
 
+async def _get_photo_faves(args):
+    photo_id = args["photo_id"]
+    limit = int(args.get("limit", 50))
+    data = flickr_api._api_get("flickr.photos.getFavorites", {
+        "photo_id": photo_id,
+        "per_page": str(limit),
+        "page":     "1",
+    })
+    persons = data.get("photo", {}).get("person", [])
+    nsids = {p["nsid"] for p in persons}
+    with get_db() as conn:
+        rows = conn.execute(
+            f"SELECT id FROM contacts WHERE id IN ({','.join('?' * len(nsids))})",
+            list(nsids),
+        ).fetchall() if nsids else []
+    following = {r[0] for r in rows}
+    return [TextContent(type="text", text=json.dumps([{
+        "nsid":         p["nsid"],
+        "username":     p.get("username", ""),
+        "realname":     p.get("realname", ""),
+        "profile_url":  f"https://www.flickr.com/people/{p['nsid']}/",
+        "you_follow":   p["nsid"] in following,
+    } for p in persons], indent=2))]
+
+
 async def _get_faves(args):
     creds = flickr_api._load_credentials()
     limit = int(args.get("limit", 20))
@@ -807,6 +844,7 @@ HANDLERS = {
     "get_person_info":      _get_person_info,
     "get_photostream_stats": _get_photostream_stats,
     "get_popular_photos":   _get_popular_photos,
+    "get_photo_faves":      _get_photo_faves,
     "get_faves":            _get_faves,
     "get_recent_activity":  _get_recent_activity,
 }
