@@ -661,8 +661,16 @@ async def _get_upload_status():
 
 
 async def _get_person_info(args):
-    import datetime
-    data = flickr_api._api_get("flickr.people.getInfo", {"user_id": args["user_id"]})
+    import datetime, re
+    user_id = args["user_id"]
+    # flickr.people.getInfo requires an NSID; resolve usernames first
+    if not re.match(r"^\d+@N\d+$", user_id):
+        try:
+            lookup = flickr_api._api_get("flickr.people.findByUsername", {"username": user_id})
+            user_id = lookup["user"]["nsid"]
+        except Exception:
+            raise RuntimeError(f"Could not resolve username '{user_id}' to a Flickr NSID")
+    data = flickr_api._api_get("flickr.people.getInfo", {"user_id": user_id})
     p = data.get("person", {})
     nsid = p.get("nsid", "")
 
