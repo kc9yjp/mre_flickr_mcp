@@ -158,7 +158,7 @@ async def _protect_contact(args):
 
 
 async def _follow_contact(args):
-    contact_id = args["contact_id"]
+    contact_id = flickr_api.resolve_user_id(args["contact_id"])
     is_friend = 1 if args.get("is_friend") else 0
     is_family = 1 if args.get("is_family") else 0
     profile_url = f"https://www.flickr.com/people/{contact_id}/"

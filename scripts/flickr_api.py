@@ -16,6 +16,7 @@ import hmac
 import json
 import logging
 import os
+import re
 import secrets
 import time
 import urllib.parse
@@ -307,3 +308,17 @@ def _api_post(method, extra=None):
         return p
 
     return _api_call("POST", method, _make_params)
+
+
+_NSID_RE = re.compile(r"^\d+@N\d+$")
+
+
+def resolve_user_id(user_id: str) -> str:
+    """Return a Flickr NSID for user_id, resolving usernames via the API if needed."""
+    if _NSID_RE.match(user_id):
+        return user_id
+    try:
+        data = _api_get("flickr.people.findByUsername", {"username": user_id})
+        return data["user"]["nsid"]
+    except Exception as e:
+        raise RuntimeError(f"Could not resolve username '{user_id}' to a Flickr NSID: {e}") from e
