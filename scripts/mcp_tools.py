@@ -58,7 +58,7 @@ from tools.photos import (  # noqa: E402, F401
     _set_visibility, _set_location, _remove_location, _set_safety_level,
     _set_content_type, _set_dates, _get_exif, _get_upload_status,
     _get_person_info, _get_photostream_stats, _get_popular_photos,
-    _get_faves, _get_recent_activity,
+    _get_photo_faves, _get_faves, _get_recent_activity,
 )
 from tools.albums import (  # noqa: E402, F401
     _find_albums, _get_album_photos, _add_to_album, _remove_from_album,
