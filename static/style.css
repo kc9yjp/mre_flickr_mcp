@@ -23,6 +23,9 @@ td { padding: 6px 10px; border-bottom: 1px solid #eee; }
 .btn:hover { background: #0052b4; }
 .btn-secondary { background: #6c757d; }
 .btn-secondary:hover { background: #5a6268; }
+.btn-danger { background: #dc3545; }
+.btn-danger:hover { background: #b02a37; }
+.btn-sm { padding: 4px 10px; font-size: .8rem; }
 .tag { display: inline-block; background: #e8f0ff; color: #0040a0; padding: 2px 8px;
        border-radius: 12px; font-size: .8rem; margin: 2px; }
 .alert { padding: 12px 18px; border-radius: 6px; margin-bottom: 16px; }

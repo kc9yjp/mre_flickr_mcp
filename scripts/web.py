@@ -632,27 +632,40 @@ async def route_queue(request: Request):
     flushed = []
 
     if request.method == "POST":
-        form = await request.form()
+        form = getattr(request.state, "form", None) or await request.form()
         action = form.get("action", "retry_ready")
-        force = (action == "retry_all")
         token = _ctx.set({"nsid": user_nsid, "username": db_username})
         try:
             with get_db_for_user(db_username) as conn:
-                flushed = _flush_group_queue(conn, force=force)
+                if action == "delete_item":
+                    try:
+                        item_id = int(form.get("item_id", ""))
+                    except (ValueError, TypeError):
+                        alert_err = "Invalid item ID."
+                        item_id = None
+                    if item_id is not None:
+                        deleted = conn.execute(
+                            "DELETE FROM pending_group_adds WHERE id=? AND status='waiting'",
+                            (item_id,),
+                        ).rowcount
+                        alert_ok = "Item removed." if deleted else "Item not found."
+                else:
+                    force = (action == "retry_all")
+                    flushed = _flush_group_queue(conn, force=force)
+                    if flushed:
+                        ok  = sum(1 for r in flushed if r["result"] == "success")
+                        lim = sum(1 for r in flushed if r["result"] == "still_limited")
+                        err = sum(1 for r in flushed if r["result"].startswith("error"))
+                        parts = []
+                        if ok:  parts.append(f"{ok} added")
+                        if lim: parts.append(f"{lim} still limited")
+                        if err: parts.append(f"{err} errored")
+                        alert_ok = "Retry complete: " + ", ".join(parts) + "." if parts else "Nothing to retry."
         except Exception as e:
-            logging.exception("route_queue flush error")
-            alert_err = f"Retry failed: {e}"
+            logging.exception("route_queue action error")
+            alert_err = f"Action failed: {e}"
         finally:
             _ctx.reset(token)
-        if flushed and not alert_err:
-            ok  = sum(1 for r in flushed if r["result"] == "success")
-            lim = sum(1 for r in flushed if r["result"] == "still_limited")
-            err = sum(1 for r in flushed if r["result"].startswith("error"))
-            parts = []
-            if ok:  parts.append(f"{ok} added")
-            if lim: parts.append(f"{lim} still limited")
-            if err: parts.append(f"{err} errored")
-            alert_ok = "Retry complete: " + ", ".join(parts) + "." if parts else "Nothing to retry."
 
     def _row(r):
         return {
@@ -738,7 +751,7 @@ async def route_settings(request: Request):
     alert_ok = alert_err = None
 
     if request.method == "POST":
-        form = await request.form()
+        form = getattr(request.state, "form", None) or await request.form()
         errors = []
         updates = {}
 
@@ -961,6 +974,9 @@ class CSRFMiddleware(BaseHTTPMiddleware):
             if not token_in_session or token_in_form != token_in_session:
                 logging.warning("CSRF validation failed for path %s", path)
                 return Response("CSRF validation failed", status_code=403)
+
+            # Cache parsed form so route handlers can read it after the body stream is consumed.
+            request.state.form = form_data
 
         return await call_next(request)
 
