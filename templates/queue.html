@@ -69,12 +69,13 @@
         <td class="queue-time">{{ r.retry_at }}</td>
         <td class="queue-time queue-muted">{{ r.queued_at }}</td>
         <td>
-          <form method="POST" action="/queue" style="margin:0"
-                onsubmit="return confirm('Remove {{ r.photo_title }} from queue?')">
+          <form method="POST" action="/queue" style="margin:0">
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
             <input type="hidden" name="action" value="delete_item">
             <input type="hidden" name="item_id" value="{{ r.id }}">
-            <button class="btn btn-danger btn-sm" type="submit">Remove</button>
+            <button class="btn btn-danger btn-sm" type="submit"
+                    data-title="{{ r.photo_title }}"
+                    onclick="return confirm('Remove ' + this.dataset.title + ' from queue?')">Remove</button>
           </form>
         </td>
       </tr>

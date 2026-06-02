@@ -638,12 +638,17 @@ async def route_queue(request: Request):
         try:
             with get_db_for_user(db_username) as conn:
                 if action == "delete_item":
-                    item_id = form.get("item_id", "")
-                    deleted = conn.execute(
-                        "DELETE FROM pending_group_adds WHERE id=?",
-                        (item_id,),
-                    ).rowcount
-                    alert_ok = "Item removed." if deleted else "Item not found."
+                    try:
+                        item_id = int(form.get("item_id", ""))
+                    except (ValueError, TypeError):
+                        alert_err = "Invalid item ID."
+                        item_id = None
+                    if item_id is not None:
+                        deleted = conn.execute(
+                            "DELETE FROM pending_group_adds WHERE id=? AND status='waiting'",
+                            (item_id,),
+                        ).rowcount
+                        alert_ok = "Item removed." if deleted else "Item not found."
                 else:
                     force = (action == "retry_all")
                     flushed = _flush_group_queue(conn, force=force)

@@ -597,7 +597,7 @@ async def _remove_from_queue(args):
     group_id = args["group_id"]
     with get_db() as conn:
         deleted = conn.execute(
-            "DELETE FROM pending_group_adds WHERE photo_id=? AND group_id=?",
+            "DELETE FROM pending_group_adds WHERE photo_id=? AND group_id=? AND status='waiting'",
             (photo_id, group_id),
         ).rowcount
     if deleted:
