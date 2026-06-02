@@ -747,13 +747,15 @@ async def _get_popular_photos(args):
 
 async def _get_photo_faves(args):
     photo_id = args["photo_id"]
-    limit = int(args.get("limit", 50))
+    limit = max(1, min(500, int(args.get("limit", 50))))
     data = flickr_api._api_get("flickr.photos.getFavorites", {
         "photo_id": photo_id,
         "per_page": str(limit),
         "page":     "1",
     })
-    persons = data.get("photo", {}).get("person", [])
+    photo_data = data.get("photo", {})
+    persons = photo_data.get("person", [])
+    total = int(photo_data.get("total", len(persons)))
     nsids = {p["nsid"] for p in persons}
     with get_db() as conn:
         rows = conn.execute(
@@ -761,13 +763,18 @@ async def _get_photo_faves(args):
             list(nsids),
         ).fetchall() if nsids else []
     following = {r[0] for r in rows}
-    return [TextContent(type="text", text=json.dumps([{
-        "nsid":         p["nsid"],
-        "username":     p.get("username", ""),
-        "realname":     p.get("realname", ""),
-        "profile_url":  f"https://www.flickr.com/people/{p['nsid']}/",
-        "you_follow":   p["nsid"] in following,
-    } for p in persons], indent=2))]
+    result = {
+        "total": total,
+        "showing": len(persons),
+        "faves": [{
+            "nsid":        p["nsid"],
+            "username":    p.get("username", ""),
+            "realname":    p.get("realname", ""),
+            "profile_url": f"https://www.flickr.com/people/{p.get('path_alias') or p['nsid']}/",
+            "you_follow":  p["nsid"] in following,
+        } for p in persons],
+    }
+    return [TextContent(type="text", text=json.dumps(result, indent=2))]
 
 
 async def _get_faves(args):
