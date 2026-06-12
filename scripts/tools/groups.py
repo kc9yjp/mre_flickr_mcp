@@ -170,13 +170,21 @@ TOOLS = [
 async def _find_groups(args):
     query = args.get("query", "")
     limit = int(args.get("limit", 10))
+    # Normalize query: replace hyphens/underscores with spaces, strip non-alphanumeric
+    import re as _re
+    normalized = _re.sub(r"[-_]", " ", query)
+    normalized = _re.sub(r"[^\w\s]", "", normalized).strip()
     pat = f"%{query}%"
+    npat = f"%{normalized}%"
     with get_db() as conn:
         rows = conn.execute(
             "SELECT id, name, members, pool_count FROM groups "
-            "WHERE name LIKE ? OR description LIKE ? OR keywords LIKE ? "
+            "WHERE name LIKE ? OR name LIKE ? "
+            "   OR description LIKE ? OR description LIKE ? "
+            "   OR keywords LIKE ? OR keywords LIKE ? "
+            "   OR auto_keywords LIKE ? OR auto_keywords LIKE ? "
             "ORDER BY members DESC LIMIT ?",
-            (pat, pat, pat, limit),
+            (pat, npat, pat, npat, pat, npat, pat, npat, limit),
         ).fetchall()
     if not rows:
         return [TextContent(type="text", text=f"No groups found matching '{query}'. Run sync to populate groups.")]
