@@ -143,7 +143,8 @@ TOOLS = [
         inputSchema={
             "type": "object",
             "properties": {
-                "photo_id": {"type": "string", "description": "Flickr photo ID"},
+                "photo_id":  {"type": "string",  "description": "Flickr photo ID"},
+                "force_api": {"type": "boolean", "description": "Skip local DB and fetch live from Flickr API (default false)"},
             },
             "required": ["photo_id"],
         },
@@ -469,11 +470,12 @@ async def _search_all_groups(args):
 
 async def _get_photo_contexts(args):
     photo_id = args["photo_id"]
+    force_api = args.get("force_api", False)
     with get_db() as conn:
         synced = conn.execute(
             "SELECT COUNT(*) FROM sync_log WHERE type='groups'"
         ).fetchone()[0] > 0
-        if synced:
+        if synced and not force_api:
             rows = conn.execute(
                 "SELECT g.id, g.name FROM photo_groups pg "
                 "JOIN groups g ON pg.group_id = g.id WHERE pg.photo_id = ?",
