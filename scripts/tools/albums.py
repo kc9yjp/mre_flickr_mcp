@@ -72,13 +72,14 @@ TOOLS = [
     ),
     Tool(
         name="edit_album",
-        description="Rename an album or update its description.",
+        description="Rename an album, update its description, or set its cover photo.",
         inputSchema={
             "type": "object",
             "properties": {
-                "album_id":    {"type": "string", "description": "Flickr photoset ID"},
-                "title":       {"type": "string", "description": "New title"},
-                "description": {"type": "string", "description": "New description"},
+                "album_id":         {"type": "string", "description": "Flickr photoset ID"},
+                "title":            {"type": "string", "description": "New title"},
+                "description":      {"type": "string", "description": "New description"},
+                "primary_photo_id": {"type": "string", "description": "Photo ID to use as the album cover"},
             },
             "required": ["album_id"],
         },
@@ -163,8 +164,14 @@ async def _edit_album(args):
     title = args.get("title", row["title"] if row else "")
     description = args.get("description", row["description"] if row else "")
     flickr_api._api_post("flickr.photosets.editMeta", {"photoset_id": album_id, "title": title, "description": description})
+    primary_photo_id = args.get("primary_photo_id")
+    if primary_photo_id:
+        flickr_api._api_post("flickr.photosets.setPrimaryPhoto", {"photoset_id": album_id, "photo_id": primary_photo_id})
     with get_db() as conn:
-        conn.execute("UPDATE albums SET title=?, description=? WHERE id=?", (title, description, album_id))
+        if primary_photo_id:
+            conn.execute("UPDATE albums SET title=?, description=?, primary_photo_id=? WHERE id=?", (title, description, primary_photo_id, album_id))
+        else:
+            conn.execute("UPDATE albums SET title=?, description=? WHERE id=?", (title, description, album_id))
     return [TextContent(type="text", text=f"Album {album_id} updated.")]
 
 
