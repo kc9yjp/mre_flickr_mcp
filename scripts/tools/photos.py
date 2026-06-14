@@ -328,8 +328,7 @@ TOOLS = [
         inputSchema={
             "type": "object",
             "properties": {
-                "timeframe": {"type": "string", "description": "Time window: 'day' or 'week' (default: day)"},
-                "limit":     {"type": "integer", "description": "Max items (default 20)"},
+                "timeframe": {"type": "string", "description": "Time window in Flickr format: hours ('4h', '12h') or days ('1d', '7d'). Default: '1d'. Max: '7d'."},
             },
         },
     ),
@@ -800,11 +799,11 @@ async def _get_faves(args):
 
 
 async def _get_recent_activity(args):
-    timeframe = args.get("timeframe", "day")
-    if timeframe not in ("day", "week"):
-        timeframe = "day"
-    limit = int(args.get("limit", 20))
-    data = flickr_api._api_get("flickr.activity.userPhotos", {"timeframe": timeframe, "per_page": str(limit)})
+    timeframe = args.get("timeframe", "1d")
+    import re as _re
+    if not _re.match(r"^\d+[dh]$", timeframe):
+        timeframe = "1d"
+    data = flickr_api._api_get("flickr.activity.userPhotos", {"timeframe": timeframe, "per_page": "50"})
     items = data.get("items", {}).get("item", [])
     results = []
     for item in items:
@@ -823,7 +822,7 @@ async def _get_recent_activity(args):
                 "date":        datetime.fromtimestamp(int(ts)).strftime("%Y-%m-%d %H:%M") if ts else "",
                 "value":       event.get("_content", ""),
             })
-    return [TextContent(type="text", text=json.dumps(results[:limit], indent=2))]
+    return [TextContent(type="text", text=json.dumps(results, indent=2))]
 
 
 HANDLERS = {
