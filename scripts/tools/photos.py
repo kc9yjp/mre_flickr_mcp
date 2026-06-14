@@ -483,10 +483,12 @@ async def _fetch_photo_image(args):
 async def _get_photo_comments(args):
     data = flickr_api._api_get("flickr.photos.comments.getList", {"photo_id": args["photo_id"]})
     comments = [{
-        "author":    c["authorname"],
-        "date":      datetime.fromtimestamp(int(c["datecreate"])).strftime("%Y-%m-%d"),
-        "comment":   c["_content"],
-        "permalink": c["permalink"],
+        "author":      c["authorname"],
+        "author_nsid": c["author"],
+        "author_url":  f"https://www.flickr.com/photos/{c['author']}/",
+        "date":        datetime.fromtimestamp(int(c["datecreate"])).strftime("%Y-%m-%d"),
+        "comment":     c["_content"],
+        "permalink":   c["permalink"],
     } for c in data.get("comments", {}).get("comment", [])]
     if not comments:
         return [TextContent(type="text", text="No comments found.")]
