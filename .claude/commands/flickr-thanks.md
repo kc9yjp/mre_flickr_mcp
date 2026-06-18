@@ -6,7 +6,7 @@ Review recent comments on your photos and ensure each one has a reply.
 
 3. For each photo with comments, call `get_photo_comments` to get the full comment thread.
 
-4. For each comment thread, check whether you (ejwettstein / nsid 45293338@N00) have already replied. A reply counts if any comment in the thread by you appears *after* the commenter's comment.
+4. For each comment thread, check whether you have already replied by looking for any comment with `author_nsid == "45293338@N00"` that appears *after* the commenter's comment.
 
 5. For comments that have **no reply yet**, present them one at a time:
    - Show: photo title, commenter username, comment text
