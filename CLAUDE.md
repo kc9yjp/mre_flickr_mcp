@@ -140,10 +140,18 @@ sync_log          — type, mode, photos_fetched, synced_at
 
 ## Skills (Claude Code slash commands)
 
-- `/flickr-photo` — process a photo from the current Safari tab: suggest metadata, update, add to groups/albums
-- `/flickr-fave` — fave the current Safari photo immediately, then suggest a comment
+- `/flickr-photo` — process a photo from the current browser tab: suggest metadata, update, add to groups/albums
+- `/flickr-fave` — suggest a comment with any input given, wait for confirm comment and suggest fave
 - `/flickr-hide` — find weak photos, review visually, make private or update and keep
 - `/flickr-sync` — trigger syncs via the web UI and report results
+
+## Browser Interaction
+
+When interacting with the browser:
+- **Always ask the user** before taking browser-based actions
+- **Remember user preferences** across sessions
+- **Preferred setup:** macOS Safari withy cli, Chrome DevTools, or something else (suggest)
+- Use browser context to enhance photo workflows (e.g., detecting current Flickr page, extracting metadata)
 
 ## Resources
 

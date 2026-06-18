@@ -15,7 +15,9 @@ defaults (``~/.flickr_mcp/credentials.json`` and ``data/flickr.db``).
 """
 
 import argparse
+import html
 import os
+import re
 import sqlite3
 import sys
 import time
@@ -65,6 +67,7 @@ _MIGRATIONS = [
         completed_at INTEGER
     )""",
     "CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)",
+    "ALTER TABLE groups ADD COLUMN auto_keywords TEXT",
 ]
 
 SCHEMA_VERSION = len(_MIGRATIONS)
@@ -290,6 +293,57 @@ def fetch_updated(since):
 
 # --- Groups ---
 
+_KW_STOP = {
+    "a", "an", "the", "and", "or", "of", "in", "for", "to", "is", "are",
+    "be", "as", "at", "by", "it", "its", "on", "no", "not", "all", "any",
+    "our", "my", "your", "we", "you", "me", "us", "am", "was", "do", "go",
+    "only", "more", "from", "with", "that", "this", "can", "will", "has",
+    "have", "had", "just", "been", "also", "if", "but", "so", "up", "out",
+    "into", "than", "then", "when", "where", "who", "what", "how", "here",
+    "there", "some", "such", "even", "very", "too", "most", "well", "new",
+    "like", "one", "two", "per", "now", "use", "yes", "may",
+    # flickr-specific noise
+    "flickr", "photo", "photos", "picture", "pictures", "image", "images",
+    "pic", "pics", "group", "pool", "please", "welcome", "add", "post",
+    "feel", "free", "share", "join", "member", "members", "rule", "rules",
+}
+
+
+def generate_group_keywords(name: str, description: str = "") -> str:
+    """Derive searchable keywords from a group name and description."""
+    name_text = html.unescape(name or "")
+    desc_text = html.unescape(description or "")[:600]
+
+    # Split on hyphens/underscores so "wabi-sabi" → ["wabi", "sabi"]
+    combined = re.sub(r"[-_]", " ", name_text + " " + desc_text)
+    # Extract lowercase alpha words of 3+ chars
+    words = re.findall(r"[a-z]{3,}", combined.lower())
+
+    seen: set[str] = set()
+    result: list[str] = []
+    for w in words:
+        if w not in _KW_STOP and w not in seen:
+            seen.add(w)
+            result.append(w)
+
+    return " ".join(result[:60])
+
+
+def populate_group_keywords(conn) -> int:
+    """Regenerate auto_keywords for all groups from name + description."""
+    # Unpack positionally so this works whether or not the connection has
+    # row_factory set. The sync-script path (cmd_sync) uses a bare connection,
+    # where row["name"] would raise "tuple indices must be integers".
+    rows = conn.execute("SELECT id, name, description FROM groups").fetchall()
+    updated = 0
+    for gid, name, description in rows:
+        kw = generate_group_keywords(name or "", description or "")
+        conn.execute("UPDATE groups SET auto_keywords=? WHERE id=?", (kw, gid))
+        updated += 1
+    conn.commit()
+    return updated
+
+
 def sync_groups(conn):
     creds = flickr_api._load_credentials()
     page, pages = 1, 1
@@ -317,6 +371,7 @@ def sync_groups(conn):
         pages = int(data["groups"].get("pages", 1))
         page += 1
     conn.commit()
+    populate_group_keywords(conn)
     print(f"  {total} groups synced.")
     return total
 
@@ -341,6 +396,8 @@ def sync_group_descriptions(conn):
         updated += 1
         time.sleep(0.15)
     conn.commit()
+    if updated:
+        populate_group_keywords(conn)
     print(f"  {updated} group descriptions fetched.")
     return updated
 

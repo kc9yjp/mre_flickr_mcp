@@ -143,7 +143,8 @@ TOOLS = [
         inputSchema={
             "type": "object",
             "properties": {
-                "photo_id": {"type": "string", "description": "Flickr photo ID"},
+                "photo_id":  {"type": "string",  "description": "Flickr photo ID"},
+                "force_api": {"type": "boolean", "description": "Skip local DB and fetch live from Flickr API (default false)"},
             },
             "required": ["photo_id"],
         },
@@ -198,13 +199,21 @@ TOOLS = [
 async def _find_groups(args):
     query = args.get("query", "")
     limit = int(args.get("limit", 10))
+    # Normalize query: replace hyphens/underscores with spaces, strip non-alphanumeric
+    import re as _re
+    normalized = _re.sub(r"[-_]", " ", query)
+    normalized = _re.sub(r"[^\w\s]", "", normalized).strip()
     pat = f"%{query}%"
+    npat = f"%{normalized}%"
     with get_db() as conn:
         rows = conn.execute(
             "SELECT id, name, members, pool_count FROM groups "
-            "WHERE name LIKE ? OR description LIKE ? OR keywords LIKE ? "
+            "WHERE name LIKE ? OR name LIKE ? "
+            "   OR description LIKE ? OR description LIKE ? "
+            "   OR keywords LIKE ? OR keywords LIKE ? "
+            "   OR auto_keywords LIKE ? OR auto_keywords LIKE ? "
             "ORDER BY members DESC LIMIT ?",
-            (pat, pat, pat, limit),
+            (pat, npat, pat, npat, pat, npat, pat, npat, limit),
         ).fetchall()
     if not rows:
         return [TextContent(type="text", text=f"No groups found matching '{query}'. Run sync to populate groups.")]
@@ -469,11 +478,12 @@ async def _search_all_groups(args):
 
 async def _get_photo_contexts(args):
     photo_id = args["photo_id"]
+    force_api = args.get("force_api", False)
     with get_db() as conn:
         synced = conn.execute(
             "SELECT COUNT(*) FROM sync_log WHERE type='groups'"
         ).fetchone()[0] > 0
-        if synced:
+        if synced and not force_api:
             rows = conn.execute(
                 "SELECT g.id, g.name FROM photo_groups pg "
                 "JOIN groups g ON pg.group_id = g.id WHERE pg.photo_id = ?",
