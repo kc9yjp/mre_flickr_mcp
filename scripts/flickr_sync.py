@@ -331,11 +331,14 @@ def generate_group_keywords(name: str, description: str = "") -> str:
 
 def populate_group_keywords(conn) -> int:
     """Regenerate auto_keywords for all groups from name + description."""
+    # Unpack positionally so this works whether or not the connection has
+    # row_factory set. The sync-script path (cmd_sync) uses a bare connection,
+    # where row["name"] would raise "tuple indices must be integers".
     rows = conn.execute("SELECT id, name, description FROM groups").fetchall()
     updated = 0
-    for row in rows:
-        kw = generate_group_keywords(row["name"] or "", row["description"] or "")
-        conn.execute("UPDATE groups SET auto_keywords=? WHERE id=?", (kw, row["id"]))
+    for gid, name, description in rows:
+        kw = generate_group_keywords(name or "", description or "")
+        conn.execute("UPDATE groups SET auto_keywords=? WHERE id=?", (kw, gid))
         updated += 1
     conn.commit()
     return updated
