@@ -505,13 +505,16 @@ class TestComments:
         api_get.return_value = {
             "stat": "ok",
             "comments": {"comment": [
-                {"authorname": "alice", "datecreate": "1700000000",
+                {"authorname": "alice", "author": "11111111@N00",
+                 "datecreate": "1700000000",
                  "_content": "Nice!", "permalink": "https://flickr.com/p/1"},
             ]},
         }
         result = await mcp_tools._get_photo_comments({"photo_id": "photo1"})
         comments = _json(result)
         assert comments[0]["author"] == "alice"
+        assert comments[0]["author_nsid"] == "11111111@N00"
+        assert comments[0]["author_url"] == "https://www.flickr.com/photos/11111111@N00/"
         assert comments[0]["comment"] == "Nice!"
 
 

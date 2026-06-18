@@ -26,8 +26,25 @@ def _migrate_all_user_dbs() -> None:
     exist before any tool handler tries to use them, even if the user hasn't run
     a sync since upgrading.
     """
+    import sqlite3
     from flickr_sync import _apply_migrations
-    from db import db_file, get_db_for_user
+    from db import db_file, get_db_for_user, DB_FILE
+
+    # Legacy single-user database (data/flickr.db). In single-user / local
+    # installs this is the live DB that get_db() falls back to when no user
+    # context is set, but it is not covered by _all_known_users(), so its
+    # migrations would otherwise never run — leaving read-path tools (e.g.
+    # find_groups querying auto_keywords) broken until the next sync.
+    if os.path.exists(DB_FILE):
+        try:
+            conn = sqlite3.connect(DB_FILE)
+            try:
+                _apply_migrations(conn)
+            finally:
+                conn.close()
+            logging.debug("Migrations applied for legacy DB %s", DB_FILE)
+        except Exception:
+            logging.exception("Startup migration failed for legacy DB %s", DB_FILE)
 
     for user in _all_known_users():
         path = db_file(user["username"])
