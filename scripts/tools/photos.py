@@ -29,7 +29,8 @@ TOOLS = [
                 "sort_by":   {"type": "string", "enum": ["date_taken", "views", "favorites", "date_uploaded"], "default": "date_taken"},
                 "order":     {"type": "string", "enum": ["asc", "desc"], "default": "desc"},
                 "limit":     {"type": "integer", "description": "Max results (default 50, max 200)"},
-                "incomplete": {"type": "boolean", "description": "Only return photos missing a title, description, or tags"},
+                "incomplete":   {"type": "boolean", "description": "Only return photos missing a title, description, or tags"},
+                "min_comments": {"type": "integer", "description": "Only return photos with at least this many comments"},
             },
         },
     ),
@@ -323,6 +324,16 @@ TOOLS = [
         },
     ),
     Tool(
+        name="get_photos_with_comments",
+        description="Return photos that have at least one comment, sorted by most recently uploaded. Returns only id, title, url_photopage, and comment count — use get_photo_comments to fetch the full thread for each.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "limit": {"type": "integer", "description": "Max results (default 50, max 200)"},
+            },
+        },
+    ),
+    Tool(
         name="get_recent_activity",
         description="Show recent comments and faves on the user's photos.",
         inputSchema={
@@ -355,6 +366,9 @@ async def _search_photos(args):
             OR (tags IS NULL OR tags = '')
             OR (description IS NULL OR description = '')
         )""")
+    if args.get("min_comments") is not None:
+        conditions.append("comments >= ?")
+        params.append(int(args["min_comments"]))
     where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
     sort_by = args.get("sort_by", "date_taken")
     if sort_by not in ("date_taken", "views", "favorites", "date_uploaded"):
@@ -800,6 +814,16 @@ async def _get_faves(args):
     }, indent=2))]
 
 
+async def _get_photos_with_comments(args):
+    limit = min(int(args.get("limit", 50)), 200)
+    with get_db() as conn:
+        rows = conn.execute(
+            "SELECT id, title, url_photopage, comments FROM photos WHERE comments > 0 ORDER BY date_uploaded DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+    return [TextContent(type="text", text=json.dumps([dict(r) for r in rows], indent=2))]
+
+
 async def _get_recent_activity(args):
     timeframe = args.get("timeframe", "1d")
     import re as _re
@@ -854,5 +878,6 @@ HANDLERS = {
     "get_popular_photos":   _get_popular_photos,
     "get_photo_faves":      _get_photo_faves,
     "get_faves":            _get_faves,
+    "get_photos_with_comments": _get_photos_with_comments,
     "get_recent_activity":  _get_recent_activity,
 }

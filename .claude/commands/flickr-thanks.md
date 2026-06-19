@@ -1,10 +1,10 @@
 Review recent comments on your photos and ensure each one has a reply.
 
-Note: `get_recent_activity` only tracks activity on recently *uploaded* photos and is unreliable — do not use it. Instead, query the local DB directly.
+Note: `get_recent_activity` is unreliable — do not use it.
 
-1. Call `search_photos` with `sort_by="date_uploaded"`, `limit=100` to get the 100 most recently uploaded photos. Filter client-side to those with `comments > 0`. Also call `search_photos` with `sort_by="date_taken"`, `limit=100` as a second pass to catch older photos that may have received new comments. Deduplicate by photo ID.
+1. Call `get_photos_with_comments` (limit=50) to get photos that have comments, sorted by most recently uploaded. This returns minimal data: id, title, url_photopage, comment count.
 
-2. For each photo with `comments > 0`, call `get_photo_comments` to get the full comment thread.
+2. For each photo, call `get_photo_comments` to get the full comment thread.
 
 3. For each comment thread, check whether you have already replied by looking for any comment with `author_nsid == "45293338@N00"` that appears *after* the commenter's comment. Skip photos where all comments already have a reply.
 
