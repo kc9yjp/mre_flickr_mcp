@@ -1,6 +1,6 @@
 Review private photos from oldest to newest and decide which ones to publish.
 
-Use `search_photos` with `is_public=false`, `sort_by=date_taken`, `order=asc`, `limit=50` to get the oldest private photos. Skip any already reviewed this session.
+Use `search_photos` with `is_public=false`, `sort_by=random`, `limit=50` to get a random batch of private photos. Skip any already reviewed this session.
 
 For each candidate:
 
