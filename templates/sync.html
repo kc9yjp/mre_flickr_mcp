@@ -50,6 +50,14 @@
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <button class="btn btn-lg" {% if running %}disabled{% endif %} type="submit">Sync All</button>
     </form>
+    <form class="sync-form" method="POST" action="/sync/photos?full=1">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <button class="btn" {% if running %}disabled{% endif %} type="submit">Full Photo Sync</button>
+    </form>
+    <form class="sync-form" method="POST" action="/sync/backfill">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <button class="btn" {% if running %}disabled{% endif %} type="submit" title="Walk entire upload history in 90-day windows. Resumable if interrupted.">Backfill All Photos</button>
+    </form>
   </div>
 </div>
 

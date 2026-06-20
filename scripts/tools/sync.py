@@ -45,13 +45,15 @@ TOOLS = [
         name="sync",
         description=(
             "Sync Flickr data into the local database. "
-            "type controls what to sync: 'photos' (default), 'groups', 'contacts', 'albums', or 'all'. "
-            "Pass full=true to re-fetch all photos instead of just updates."
+            "type controls what to sync: 'photos' (default), 'groups', 'contacts', 'albums', 'all', or 'backfill'. "
+            "Pass full=true to re-fetch all photos instead of just updates. "
+            "Use type='backfill' to walk the full upload history in date-range windows — "
+            "this is the only way to get all photos when the account has more than ~4000."
         ),
         inputSchema={
             "type": "object",
             "properties": {
-                "type": {"type": "string", "description": "What to sync: photos, groups, contacts, albums, or all (default: photos)"},
+                "type": {"type": "string", "description": "What to sync: photos, groups, contacts, albums, all, or backfill (default: photos)"},
                 "full": {"type": "boolean", "description": "Re-fetch all photos instead of just updates (photos sync only)"},
             },
         },
@@ -79,18 +81,26 @@ async def _sync(args):
         "contacts": os.path.join(scripts_dir, "sync_contacts.py"),
         "albums":   os.path.join(scripts_dir, "sync_albums.py"),
     }
-    if sync_type == "all":
+    if sync_type == "backfill":
+        targets = [("photos", SYNC_SCRIPT)]
+        backfill = True
+    elif sync_type == "all":
         targets = list(script_map.items())
+        backfill = False
     elif sync_type in script_map:
         targets = [(sync_type, script_map[sync_type])]
+        backfill = False
     else:
-        return [TextContent(type="text", text=f"Unknown sync type '{sync_type}'. Use: photos, groups, contacts, albums, all.")]
+        return [TextContent(type="text", text=f"Unknown sync type '{sync_type}'. Use: photos, groups, contacts, albums, all, backfill.")]
     results = []
     async with lock:
         for label, path in targets:
             extra = list(user_args)
-            if label == "photos" and args.get("full"):
-                extra.append("--full")
+            if label == "photos":
+                if backfill:
+                    extra.append("--backfill")
+                elif args.get("full"):
+                    extra.append("--full")
             rc = await _run_sync_script(path, label, extra_args=extra or None, username=username)
             status = "completed" if rc == 0 else "failed"
             results.append(f"{label}: {status}")

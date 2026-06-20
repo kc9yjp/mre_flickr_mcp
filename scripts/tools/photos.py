@@ -26,11 +26,12 @@ TOOLS = [
                 "tags":      {"type": "string", "description": "Tag (partial match)"},
                 "date_from": {"type": "string", "description": "Earliest date taken, YYYY-MM-DD"},
                 "date_to":   {"type": "string", "description": "Latest date taken, YYYY-MM-DD"},
-                "sort_by":   {"type": "string", "enum": ["date_taken", "views", "favorites", "date_uploaded"], "default": "date_taken"},
+                "sort_by":   {"type": "string", "enum": ["date_taken", "views", "favorites", "date_uploaded", "random"], "default": "date_taken"},
                 "order":     {"type": "string", "enum": ["asc", "desc"], "default": "desc"},
                 "limit":     {"type": "integer", "description": "Max results (default 50, max 200)"},
                 "incomplete":   {"type": "boolean", "description": "Only return photos missing a title, description, or tags"},
                 "min_comments": {"type": "integer", "description": "Only return photos with at least this many comments"},
+                "is_public":    {"type": "boolean", "description": "Filter by visibility: true=public only, false=private only, omit=all"},
             },
         },
     ),
@@ -159,8 +160,9 @@ TOOLS = [
     Tool(
         name="find_weak_photos",
         description=(
-            "Rank public photos by a weakness score combining low views-per-day, "
-            "zero favorites, and zero comments. Use to find candidates for making private."
+            "Rank photos by a weakness score combining low views-per-day, "
+            "zero favorites, and zero comments. By default returns public photos only; "
+            "set include_private=true to include private photos as well."
         ),
         inputSchema={
             "type": "object",
@@ -169,6 +171,7 @@ TOOLS = [
                 "min_age_days":           {"type": "integer", "description": "Min days since upload (default 30)"},
                 "require_zero_favorites": {"type": "boolean", "description": "Only include photos with 0 favorites"},
                 "review_cooldown_days":   {"type": "integer", "description": "Skip photos reviewed within this many days (default 60)"},
+                "include_private":        {"type": "boolean", "description": "Include private photos (default false)"},
             },
         },
     ),
@@ -369,15 +372,22 @@ async def _search_photos(args):
     if args.get("min_comments") is not None:
         conditions.append("comments >= ?")
         params.append(int(args["min_comments"]))
+    if "is_public" in args:
+        conditions.append("is_public = ?")
+        params.append(1 if args["is_public"] else 0)
     where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
     sort_by = args.get("sort_by", "date_taken")
-    if sort_by not in ("date_taken", "views", "favorites", "date_uploaded"):
-        sort_by = "date_taken"
-    order = "ASC" if args.get("order", "desc") == "asc" else "DESC"
+    if sort_by == "random":
+        order_clause = "RANDOM()"
+    else:
+        if sort_by not in ("date_taken", "views", "favorites", "date_uploaded"):
+            sort_by = "date_taken"
+        order = "ASC" if args.get("order", "desc") == "asc" else "DESC"
+        order_clause = f"{sort_by} {order}"
     limit = min(int(args.get("limit", 50)), 200)
     with get_db() as conn:
         rows = conn.execute(
-            f"SELECT * FROM photos {where} ORDER BY {sort_by} {order} LIMIT ?",
+            f"SELECT * FROM photos {where} ORDER BY {order_clause} LIMIT ?",
             params + [limit],
         ).fetchall()
     return [TextContent(type="text", text=json.dumps([dict(r) for r in rows], indent=2))]
@@ -552,6 +562,7 @@ async def _find_weak_photos(args):
     min_age_days = int(args.get("min_age_days", 30))
     require_zero_faves = 1 if args.get("require_zero_favorites") else 0
     review_cooldown_days = int(args.get("review_cooldown_days", 60))
+    include_private = 1 if args.get("include_private") else 0
     sql = """
         WITH scored AS (
             SELECT id, title, tags, date_taken, date_uploaded, views, favorites, comments,
@@ -572,13 +583,13 @@ async def _find_weak_photos(args):
             WHERE date_uploaded IS NOT NULL
               AND date_uploaded < (strftime('%s','now') - ? * 86400)
               AND (reviewed_at IS NULL OR reviewed_at < (strftime('%s','now') - ? * 86400))
-              AND (is_public IS NULL OR is_public != 0)
+              AND (? OR is_public = 1)
               AND (? = 0 OR favorites = 0)
         )
         SELECT * FROM scored ORDER BY weakness_score DESC LIMIT ?
     """
     with get_db() as conn:
-        rows = conn.execute(sql, (min_age_days, review_cooldown_days, require_zero_faves, limit)).fetchall()
+        rows = conn.execute(sql, (min_age_days, review_cooldown_days, include_private, require_zero_faves, limit)).fetchall()
         ids = [r["id"] for r in rows]
         if ids:
             conn.execute(

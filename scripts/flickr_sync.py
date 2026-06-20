@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Sync public Flickr photo metadata to a local SQLite database.
+"""Sync Flickr photo metadata (public and private) to a local SQLite database.
 
 Usage (single-user):
     python scripts/flickr_sync.py          # incremental (since last sync)
@@ -29,7 +29,7 @@ API_URL = flickr_api.API_URL
 HTTP_TIMEOUT = flickr_api.HTTP_TIMEOUT
 PER_PAGE = 500
 
-EXTRAS = "description,date_upload,date_taken,last_update,tags,views,count_faves,count_comments,url_o,url_l,path_alias,media"
+EXTRAS = "description,date_upload,date_taken,last_update,tags,views,count_faves,count_comments,url_o,url_l,path_alias,media,ispublic"
 
 # Aliases re-exported for sync_*.py backward compatibility
 load_env = flickr_api._load_env
@@ -214,11 +214,13 @@ def upsert_photo(conn, p, owner_nsid, synced_at):
     url_photopage = f"https://www.flickr.com/photos/{path_alias}/{p['id']}/"
     url_original = p.get("url_o") or p.get("url_l", "")
 
+    is_public = int(p.get("ispublic", 1))
+
     conn.execute("""
         INSERT INTO photos
             (id, title, description, date_taken, date_uploaded, last_updated,
              url_photopage, url_original, tags, views, favorites, comments, synced_at, is_public)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
             title=excluded.title,
             description=excluded.description,
@@ -232,7 +234,7 @@ def upsert_photo(conn, p, owner_nsid, synced_at):
             favorites=excluded.favorites,
             comments=excluded.comments,
             synced_at=excluded.synced_at,
-            is_public=1
+            is_public=excluded.is_public
     """, (
         p["id"],
         p.get("title", ""),
@@ -247,16 +249,20 @@ def upsert_photo(conn, p, owner_nsid, synced_at):
         int(p.get("count_faves", 0) or 0),
         int(p.get("count_comments", 0) or 0),
         synced_at,
+        is_public,
     ))
+
+
+BACKFILL_WINDOW_DAYS = 90  # each date-range chunk; 90 days ≈ safe under Flickr's ~4k cap
 
 
 # --- Fetch iterators ---
 
-def fetch_all_public(user_nsid):
-    """Yield every public photo for the authenticated user, paginated."""
+def fetch_all_photos(user_nsid):
+    """Yield every photo (public and private) for the authenticated user, paginated."""
     page, pages = 1, 1
     while page <= pages:
-        data = api_get("flickr.people.getPublicPhotos", {
+        data = api_get("flickr.people.getPhotos", {
             "user_id": user_nsid,
             "extras": EXTRAS,
             "per_page": str(PER_PAGE),
@@ -271,8 +277,12 @@ def fetch_all_public(user_nsid):
             time.sleep(0.5)  # stay within rate limits
 
 
+# Keep old name as an alias so any external callers aren't broken
+fetch_all_public = fetch_all_photos
+
+
 def fetch_updated(since):
-    """Yield public photos updated after `since` (unix timestamp), paginated."""
+    """Yield all photos (public and private) updated after `since` (unix timestamp), paginated."""
     page, pages = 1, 1
     while page <= pages:
         data = api_get("flickr.photos.recentlyUpdated", {
@@ -283,12 +293,68 @@ def fetch_updated(since):
         })
         result = data["photos"]
         pages = int(result["pages"])
-        public = [p for p in result["photo"] if int(p.get("ispublic", 0)) == 1]
-        print(f"  page {page}/{pages} ({len(public)} public of {len(result['photo'])} updated)")
-        yield from public
+        photos = result["photo"]
+        public_count = sum(1 for p in photos if int(p.get("ispublic", 0)) == 1)
+        print(f"  page {page}/{pages} ({public_count} public, {len(photos) - public_count} private of {len(photos)} updated)")
+        yield from photos
         page += 1
         if page <= pages:
             time.sleep(0.5)
+
+
+def fetch_backfill(user_nsid, conn):
+    """Walk the full upload history in 90-day windows to bypass Flickr's page cap.
+
+    Uses flickr.photos.search with date-range filters so each window stays well
+    under the ~4000-result ceiling.  Progress is checkpointed in the settings
+    table after each window so an interrupted run can resume mid-stream.
+
+    Yields (photo_dict, window_end_timestamp) for each photo.
+    """
+    from db import get_setting, set_setting
+
+    checkpoint = get_setting(conn, "backfill_checkpoint")
+    start_ts = int(checkpoint) if checkpoint else 0  # 0 = beginning of Flickr time
+
+    now = int(time.time())
+    window_seconds = BACKFILL_WINDOW_DAYS * 86400
+
+    t = start_ts
+    while t < now:
+        t_end = min(t + window_seconds, now)
+        page, pages = 1, 1
+        window_count = 0
+        while page <= pages:
+            data = api_get("flickr.photos.search", {
+                "user_id":        user_nsid,
+                "min_upload_date": str(t),
+                "max_upload_date": str(t_end),
+                "extras":         EXTRAS,
+                "per_page":       str(PER_PAGE),
+                "page":           str(page),
+                "sort":           "date-posted-asc",
+            })
+            result = data["photos"]
+            pages = int(result["pages"])
+            photos = result["photo"]
+            for p in photos:
+                yield p, t_end
+                window_count += 1
+            page += 1
+            if page <= pages:
+                time.sleep(0.5)
+
+        from_str = time.strftime("%Y-%m-%d", time.localtime(t))
+        to_str   = time.strftime("%Y-%m-%d", time.localtime(t_end))
+        print(f"  {from_str} → {to_str}: {window_count} photos")
+
+        set_setting(conn, "backfill_checkpoint", str(t_end + 1))
+        conn.commit()
+        t = t_end + 1
+
+    # Clear checkpoint on successful completion
+    conn.execute("DELETE FROM settings WHERE key='backfill_checkpoint'")
+    conn.commit()
 
 
 # --- Groups ---
@@ -473,24 +539,35 @@ def cmd_sync(args):
         init_db(conn)
 
         synced_at = int(time.time())
-        since = last_sync_time(conn)
 
-        if args.full or since is None:
-            if not args.full:
-                print("No previous sync found — running full sync.")
-            mode = "full"
-            photos = fetch_all_public(creds["user_nsid"])
+        if args.backfill:
+            mode = "backfill"
+            print("Backfill sync: walking full upload history in 90-day windows…")
+            total = 0
+            for photo, window_end in fetch_backfill(creds["user_nsid"], conn):
+                upsert_photo(conn, photo, creds["user_nsid"], synced_at)
+                total += 1
+                if total % 500 == 0:
+                    conn.commit()
+                    print(f"  {total} photos upserted so far…")
         else:
-            mode = "update"
-            print(f"Incremental sync since {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(since))}")
-            photos = fetch_updated(since)
+            since = last_sync_time(conn)
+            if args.full or since is None:
+                if not args.full:
+                    print("No previous sync found — running full sync.")
+                mode = "full"
+                photos = fetch_all_photos(creds["user_nsid"])
+            else:
+                mode = "update"
+                print(f"Incremental sync since {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(since))}")
+                photos = fetch_updated(since)
 
-        total = 0
-        for photo in photos:
-            upsert_photo(conn, photo, creds["user_nsid"], synced_at)
-            total += 1
-            if total % 100 == 0:
-                conn.commit()
+            total = 0
+            for photo in photos:
+                upsert_photo(conn, photo, creds["user_nsid"], synced_at)
+                total += 1
+                if total % 100 == 0:
+                    conn.commit()
 
         conn.commit()
         conn.execute(
@@ -507,6 +584,7 @@ def main():
     """Parse CLI arguments and run the photo sync."""
     parser = argparse.ArgumentParser(prog="flickr-sync", description="Sync Flickr photo metadata to SQLite")
     parser.add_argument("--full",     action="store_true", help="Full sync (ignore last sync timestamp)")
+    parser.add_argument("--backfill", action="store_true", help="Walk full upload history in date-range windows (bypasses Flickr page cap)")
     parser.add_argument("--create",   action="store_true", help="Create the database if it does not exist")
     parser.add_argument("--nsid",     help="Flickr user NSID for multi-user mode")
     parser.add_argument("--username", help="Username for per-user DB path (multi-user mode)")

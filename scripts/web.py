@@ -548,21 +548,32 @@ async def route_sync_trigger(request: Request):
         "albums":   os.path.join(scripts_dir, "sync_albums.py"),
     }
 
-    if sync_type not in script_map and sync_type != "all":
+    if sync_type not in script_map and sync_type not in ("all", "backfill"):
         return RedirectResponse("/sync", status_code=303)
 
     lock = _get_user_lock(username or "_single_user")
     if lock.locked():
         return RedirectResponse("/sync", status_code=303)
 
+    is_full = request.query_params.get("full") == "1"
+    is_backfill = sync_type == "backfill"
+    if is_backfill:
+        photo_args = list(user_args) + ["--backfill"]
+    else:
+        photo_args = list(user_args) + (["--full"] if is_full else [])
+
     async def _run():
         async with lock:
             if sync_type == "all":
                 for label, path in script_map.items():
-                    await _run_sync_script(path, label, extra_args=user_args or None, username=username or None)
+                    extra = photo_args if label == "photos" else (user_args or None)
+                    await _run_sync_script(path, label, extra_args=extra or None, username=username or None)
+            elif is_backfill:
+                await _run_sync_script(SYNC_SCRIPT, "photos", extra_args=photo_args or None, username=username or None)
             else:
+                extra = photo_args if sync_type == "photos" else (user_args or None)
                 await _run_sync_script(script_map[sync_type], sync_type,
-                                       extra_args=user_args or None, username=username or None)
+                                       extra_args=extra or None, username=username or None)
 
     asyncio.create_task(_run())
     return RedirectResponse("/sync", status_code=303)
