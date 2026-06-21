@@ -172,6 +172,7 @@ TOOLS = [
                 "require_zero_favorites": {"type": "boolean", "description": "Only include photos with 0 favorites"},
                 "review_cooldown_days":   {"type": "integer", "description": "Skip photos reviewed within this many days (default 60)"},
                 "include_private":        {"type": "boolean", "description": "Include private photos (default false)"},
+                "sort":                   {"type": "string", "enum": ["weakness_score", "random"], "description": "Sort order: weakness_score (default) or random"},
             },
         },
     ),
@@ -591,7 +592,8 @@ async def _find_weak_photos(args):
     require_zero_faves = 1 if args.get("require_zero_favorites") else 0
     review_cooldown_days = int(args.get("review_cooldown_days", 60))
     include_private = 1 if args.get("include_private") else 0
-    sql = """
+    order_clause = "RANDOM()" if args.get("sort") == "random" else "weakness_score DESC"
+    sql = f"""
         WITH scored AS (
             SELECT id, title, tags, date_taken, date_uploaded, views, favorites, comments,
                    url_photopage,
@@ -614,7 +616,7 @@ async def _find_weak_photos(args):
               AND (? OR is_public = 1)
               AND (? = 0 OR favorites = 0)
         )
-        SELECT * FROM scored ORDER BY weakness_score DESC LIMIT ?
+        SELECT * FROM scored ORDER BY {order_clause} LIMIT ?
     """
     with get_db() as conn:
         rows = conn.execute(sql, (min_age_days, review_cooldown_days, include_private, require_zero_faves, limit)).fetchall()
