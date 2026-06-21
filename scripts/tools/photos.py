@@ -346,6 +346,34 @@ TOOLS = [
             },
         },
     ),
+    Tool(
+        name="add_to_keeper_list",
+        description="Add a photo to the keeper list — a local list of public photos worth preserving even if weak on stats.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "photo_id": {"type": "string", "description": "Flickr photo ID"},
+                "note":     {"type": "string", "description": "Optional reason or note"},
+            },
+            "required": ["photo_id"],
+        },
+    ),
+    Tool(
+        name="get_keeper_list",
+        description="List all photos in the keeper list, with title, URL, and note.",
+        inputSchema={"type": "object", "properties": {}},
+    ),
+    Tool(
+        name="remove_from_keeper_list",
+        description="Remove a photo from the keeper list.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "photo_id": {"type": "string", "description": "Flickr photo ID"},
+            },
+            "required": ["photo_id"],
+        },
+    ),
 ]
 
 
@@ -862,6 +890,50 @@ async def _get_recent_activity(args):
     return [TextContent(type="text", text=json.dumps(results, indent=2))]
 
 
+async def _add_to_keeper_list(args):
+    photo_id = args.get("photo_id", "").strip()
+    note = args.get("note", "").strip()
+    if not photo_id:
+        return [TextContent(type="text", text="photo_id is required.")]
+    import time as _time
+    with get_db() as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO keeper_list (photo_id, note, added_at) VALUES (?, ?, ?)",
+            (photo_id, note or None, int(_time.time())),
+        )
+    return [TextContent(type="text", text=f"Photo {photo_id} added to keeper list.")]
+
+
+async def _get_keeper_list(args):
+    with get_db() as conn:
+        rows = conn.execute(
+            """SELECT k.photo_id, p.title, p.url_photopage, k.note, k.added_at
+               FROM keeper_list k
+               LEFT JOIN photos p ON p.id = k.photo_id
+               ORDER BY k.added_at DESC"""
+        ).fetchall()
+    result = [
+        {
+            "photo_id":    r[0],
+            "title":       r[1] or "",
+            "url":         r[2] or f"https://www.flickr.com/photos/ejwettstein/{r[0]}/",
+            "note":        r[3] or "",
+            "added_at":    r[4],
+        }
+        for r in rows
+    ]
+    return [TextContent(type="text", text=json.dumps(result, indent=2))]
+
+
+async def _remove_from_keeper_list(args):
+    photo_id = args.get("photo_id", "").strip()
+    if not photo_id:
+        return [TextContent(type="text", text="photo_id is required.")]
+    with get_db() as conn:
+        conn.execute("DELETE FROM keeper_list WHERE photo_id = ?", (photo_id,))
+    return [TextContent(type="text", text=f"Photo {photo_id} removed from keeper list.")]
+
+
 HANDLERS = {
     "search_photos":        _search_photos,
     "get_photo":            _get_photo,
@@ -891,4 +963,7 @@ HANDLERS = {
     "get_faves":            _get_faves,
     "get_photos_with_comments": _get_photos_with_comments,
     "get_recent_activity":  _get_recent_activity,
+    "add_to_keeper_list":   _add_to_keeper_list,
+    "get_keeper_list":      _get_keeper_list,
+    "remove_from_keeper_list": _remove_from_keeper_list,
 }

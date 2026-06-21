@@ -68,6 +68,11 @@ _MIGRATIONS = [
     )""",
     "CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)",
     "ALTER TABLE groups ADD COLUMN auto_keywords TEXT",
+    """CREATE TABLE IF NOT EXISTS keeper_list (
+        photo_id TEXT PRIMARY KEY,
+        note     TEXT,
+        added_at INTEGER NOT NULL
+    )""",
 ]
 
 SCHEMA_VERSION = len(_MIGRATIONS)
@@ -188,6 +193,12 @@ def init_db(conn):
         CREATE TABLE IF NOT EXISTS settings (
             key   TEXT PRIMARY KEY,
             value TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS keeper_list (
+            photo_id TEXT PRIMARY KEY,
+            note     TEXT,
+            added_at INTEGER NOT NULL
         );
     """)
     conn.commit()
