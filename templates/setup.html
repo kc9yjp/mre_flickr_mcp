@@ -12,7 +12,9 @@
 
 <div class="card">
   <p class="card-intro">
-    The MCP server speaks SSE at <code>{{ sse_url }}</code>.
+    The MCP server supports two HTTP transports on the same port:
+    <strong>Streamable HTTP</strong> at <code>{{ mcp_url }}</code> (recommended, MCP spec 2025-03-26+)
+    and <strong>SSE</strong> at <code>{{ sse_url }}</code> (legacy, for older clients).
     Pick your client below for the exact config snippet.
   </p>
 
@@ -27,9 +29,14 @@
   </div>
 
   <div id="tab-claude-code" class="tab-pane active">
-    <p>Add to <code>.mcp.json</code> in your project root, or <code>~/.claude/mcp.json</code> for all projects.</p>
+    <p>Add to <code>.mcp.json</code> in your project root, or <code>~/.claude/mcp.json</code> for all projects.
+       Uses the Streamable HTTP transport (<code>"type": "http"</code>), supported in Claude Code 1.9+.</p>
     {{ pre_snippet("snip-cc", snippets.claude_code) }}
     {% if mcp_api_key %}<p class="api-key-note">This snippet includes your personal API key. Keep it private.</p>{% endif %}
+    <details class="file-hint">
+      <summary>Legacy SSE snippet (older Claude Code versions)</summary>
+      {{ pre_snippet("snip-cc-sse", snippets.claude_code_sse) }}
+    </details>
   </div>
 
   <div id="tab-claude-desktop" class="tab-pane">
@@ -44,7 +51,7 @@
     <p>Add to <code>~/.cursor/mcp.json</code> (global) or <code>.cursor/mcp.json</code> in your project.</p>
     {{ pre_snippet("snip-cursor", snippets.cursor) }}
     {% if mcp_api_key %}<p class="api-key-note">This snippet includes your personal API key. Keep it private.</p>{% endif %}
-    <p class="file-hint">Cursor detects SSE servers from the <code>url</code> field automatically &mdash; no <code>type</code> needed.</p>
+    <p class="file-hint">Cursor auto-detects the transport from the URL &mdash; no <code>type</code> needed.</p>
   </div>
 
   <div id="tab-windsurf" class="tab-pane">
@@ -65,22 +72,22 @@
     <ol class="setup-steps">
       <li>Go to <strong>Admin &rarr; Settings &rarr; Tools</strong></li>
       <li>Click <strong>Add Tool Server</strong></li>
-      <li>Enter the server URL:</li>
+      <li>Enter the Streamable HTTP server URL:</li>
     </ol>
-    {{ pre_snippet("snip-webui", sse_url) }}
+    {{ pre_snippet("snip-webui", mcp_url) }}
     {% if mcp_api_key %}<p class="api-key-note">Enter your personal API key in the Authorization field.</p>{% endif %}
     <p class="file-hint">Ollama does not support MCP natively &mdash; use Open WebUI as the agent layer on top of Ollama.</p>
   </div>
 
   <div id="tab-stdio" class="tab-pane">
-    <p>For MCP clients that require stdio transport. Your MCP client spawns a fresh container on demand using <code>docker run -i --rm</code> &mdash; it does <em>not</em> connect to the running SSE server.</p>
-    <p><strong>One-time setup required:</strong> start the SSE server (<code>docker compose up -d</code>), log in at <a href="/login">{{ base_url }}/login</a>, then return here to copy this snippet. After that the SSE server can be stopped &mdash; credentials are stored in a Docker volume that the stdio container mounts automatically.</p>
+    <p>For MCP clients that require stdio transport. Your MCP client spawns a fresh container on demand using <code>docker run -i --rm</code> &mdash; it does <em>not</em> connect to the running server.</p>
+    <p><strong>One-time setup required:</strong> start the server (<code>docker compose up -d</code>), log in at <a href="/login">{{ base_url }}/login</a>, then return here to copy this snippet. After that the server can be stopped &mdash; credentials are stored in a Docker volume that the stdio container mounts automatically.</p>
     {{ pre_snippet("snip-stdio", snippets.stdio) }}
     {% if mcp_api_key %}<p class="api-key-note">This snippet includes your Flickr API credentials and personal MCP API key. Keep it private.</p>{% endif %}
-    <p class="file-hint">Stdio mode has no web UI &mdash; use <a href="/login">login</a> and <a href="/sync">sync</a> via the SSE server.</p>
+    <p class="file-hint">Stdio mode has no web UI &mdash; use <a href="/login">login</a> and <a href="/sync">sync</a> via the web server.</p>
     <details class="file-hint">
       <summary>Exec into a running container instead (advanced)</summary>
-      <p>If the SSE container is already running you can attach to it directly, though this is not how MCP clients normally work &mdash; they expect to spawn the process, not attach to one.</p>
+      <p>If the container is already running you can attach to it directly, though this is not how MCP clients normally work &mdash; they expect to spawn the process, not attach to one.</p>
       {{ pre_snippet("snip-stdio-exec", snippets.stdio_exec) }}
     </details>
   </div>
