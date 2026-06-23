@@ -921,6 +921,22 @@ async def route_setup(request: Request):
 
 # --- SSE handler and API key middleware ---
 
+def _bind_user_ctx(scope) -> object | None:
+    """Read user_nsid from ASGI scope state set by ApiKeyMiddleware and bind
+    _db_current_user for the duration of the request. Returns the ContextVar
+    token to pass to _db_current_user.reset(), or None if no user was resolved."""
+    state = scope.get("state") or {}
+    user_nsid = state.get("user_nsid") if isinstance(state, dict) else getattr(state, "user_nsid", None)
+    if not user_nsid:
+        return None
+    try:
+        creds = _load_credentials(nsid=user_nsid)
+        return _db_current_user.set({"nsid": user_nsid, "username": creds.get("username", user_nsid)})
+    except Exception as e:
+        logging.error("MCP handler: failed to load credentials for %s: %s", user_nsid, e)
+        return None
+
+
 class _SSEHandler:
     """ASGI handler for the MCP SSE endpoint.
 
@@ -933,22 +949,7 @@ class _SSEHandler:
         self._sse = sse_transport
 
     async def __call__(self, scope, receive, send):
-        state = scope.get("state") or {}
-        if isinstance(state, dict):
-            user_nsid = state.get("user_nsid")
-        else:
-            user_nsid = getattr(state, "user_nsid", None)
-        token = None
-        if user_nsid:
-            try:
-                creds = _load_credentials(nsid=user_nsid)
-                user_ctx = {
-                    "nsid":     user_nsid,
-                    "username": creds.get("username", user_nsid),
-                }
-                token = _db_current_user.set(user_ctx)
-            except Exception as e:
-                logging.error("SSE handler: failed to load credentials for %s: %s", user_nsid, e)
+        token = _bind_user_ctx(scope)
         try:
             async with self._sse.connect_sse(scope, receive, send) as streams:
                 await server.run(streams[0], streams[1], server.create_initialization_options())
@@ -968,24 +969,7 @@ class _StreamableHTTPHandler:
     async def __call__(self, scope, receive, send):
         from mcp.server.streamable_http import StreamableHTTPServerTransport
 
-        state = scope.get("state") or {}
-        if isinstance(state, dict):
-            user_nsid = state.get("user_nsid")
-        else:
-            user_nsid = getattr(state, "user_nsid", None)
-
-        token = None
-        if user_nsid:
-            try:
-                creds = _load_credentials(nsid=user_nsid)
-                user_ctx = {
-                    "nsid":     user_nsid,
-                    "username": creds.get("username", user_nsid),
-                }
-                token = _db_current_user.set(user_ctx)
-            except Exception as e:
-                logging.error("Streamable HTTP handler: failed to load credentials for %s: %s", user_nsid, e)
-
+        token = _bind_user_ctx(scope)
         try:
             transport = StreamableHTTPServerTransport(mcp_session_id=None)
 
@@ -1015,7 +999,7 @@ class ApiKeyMiddleware(BaseHTTPMiddleware):
 
     async def dispatch(self, request: Request, call_next):
         path = request.url.path
-        if path.startswith("/sse") or path.startswith("/messages") or path.startswith("/mcp"):
+        if path.startswith("/sse") or path.startswith("/messages") or path == "/mcp":
             key = request.headers.get("X-API-Key", "")
             if not key:
                 auth = request.headers.get("Authorization", "")
@@ -1031,7 +1015,7 @@ class CSRFMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         if request.method == "POST":
             path = request.url.path
-            if path.startswith("/sse") or path.startswith("/messages") or path.startswith("/mcp"):
+            if path.startswith("/sse") or path.startswith("/messages") or path == "/mcp":
                 return await call_next(request)
 
             form_data = await request.form()
