@@ -976,12 +976,23 @@ class _StreamableHTTPHandler:
             async def _run_server(*, task_status=anyio.TASK_STATUS_IGNORED):
                 async with transport.connect() as (read_stream, write_stream):
                     task_status.started()
-                    await server.run(read_stream, write_stream, server.create_initialization_options())
+                    await server.run(
+                        read_stream,
+                        write_stream,
+                        server.create_initialization_options(),
+                        stateless=True,  # safe for concurrent per-request use
+                    )
 
             async with anyio.create_task_group() as tg:
                 await tg.start(_run_server)
-                await transport.handle_request(scope, receive, send)
-                tg.cancel_scope.cancel()
+                try:
+                    await transport.handle_request(scope, receive, send)
+                finally:
+                    # handle_request awaits every send() call before returning,
+                    # so the response is fully committed here.  Cancel the server
+                    # loop, which is now waiting for a next message that will
+                    # never arrive on a stateless connection.
+                    tg.cancel_scope.cancel()
         finally:
             if token is not None:
                 _db_current_user.reset(token)
