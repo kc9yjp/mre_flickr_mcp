@@ -27,6 +27,7 @@ import pathlib
 import time
 import urllib.parse
 import uuid
+import anyio
 import requests
 from starlette.applications import Starlette
 from starlette.middleware import Middleware
@@ -837,6 +838,7 @@ async def route_setup(request: Request):
 
     base = str(request.base_url).rstrip("/")
     sse_url = f"{base}/sse"
+    mcp_url = f"{base}/mcp"
 
     user_nsid   = request.session.get("user_nsid", "")
     mcp_api_key = ""
@@ -848,15 +850,21 @@ async def route_setup(request: Request):
 
     headers = {"Authorization": f"Bearer {mcp_api_key}"} if mcp_api_key else {}
 
-    claude_code_cfg = {"mcpServers": {"flickr": {"type": "sse", "url": sse_url}}}
+    # Streamable HTTP (new, preferred) — type "http" in Claude Code ≥ 1.9
+    claude_code_cfg = {"mcpServers": {"flickr": {"type": "http", "url": mcp_url}}}
     if headers:
         claude_code_cfg["mcpServers"]["flickr"]["headers"] = headers
 
-    cursor_cfg = {"mcpServers": {"flickr": {"url": sse_url}}}
+    # SSE (legacy) — kept for clients that don't yet support Streamable HTTP
+    claude_code_sse_cfg = {"mcpServers": {"flickr": {"type": "sse", "url": sse_url}}}
+    if headers:
+        claude_code_sse_cfg["mcpServers"]["flickr"]["headers"] = headers
+
+    cursor_cfg = {"mcpServers": {"flickr": {"url": mcp_url}}}
     if headers:
         cursor_cfg["mcpServers"]["flickr"]["headers"] = headers
 
-    opencode_cfg = {"mcp": {"flickr": {"type": "remote", "url": sse_url}}}
+    opencode_cfg = {"mcp": {"flickr": {"type": "remote", "url": mcp_url}}}
     if headers:
         opencode_cfg["mcp"]["flickr"]["headers"] = headers
 
@@ -888,21 +896,23 @@ async def route_setup(request: Request):
     )
 
     snippets = {
-        "claude_code":    json.dumps(claude_code_cfg, indent=2),
-        "claude_desktop": json.dumps(claude_code_cfg, indent=2),
-        "cursor":         json.dumps(cursor_cfg, indent=2),
-        "windsurf":       json.dumps(cursor_cfg, indent=2),
-        "opencode":       json.dumps(opencode_cfg, indent=2),
-        "stdio":          json.dumps(stdio_cfg, indent=2),
-        "stdio_exec":     stdio_exec_cmd,
+        "claude_code":     json.dumps(claude_code_cfg, indent=2),
+        "claude_code_sse": json.dumps(claude_code_sse_cfg, indent=2),
+        "claude_desktop":  json.dumps(claude_code_cfg, indent=2),
+        "cursor":          json.dumps(cursor_cfg, indent=2),
+        "windsurf":        json.dumps(cursor_cfg, indent=2),
+        "opencode":        json.dumps(opencode_cfg, indent=2),
+        "stdio":           json.dumps(stdio_cfg, indent=2),
+        "stdio_exec":      stdio_exec_cmd,
     }
 
     ctx = _base_ctx(request, "Setup")
     ctx.update({
-        "sse_url":   sse_url,
-        "base_url":  base,
+        "sse_url":     sse_url,
+        "mcp_url":     mcp_url,
+        "base_url":    base,
         "mcp_api_key": mcp_api_key,
-        "snippets":  snippets,
+        "snippets":    snippets,
     })
     return templates.TemplateResponse(request, "setup.html", ctx)
 
@@ -910,6 +920,22 @@ async def route_setup(request: Request):
 
 
 # --- SSE handler and API key middleware ---
+
+def _bind_user_ctx(scope) -> object | None:
+    """Read user_nsid from ASGI scope state set by ApiKeyMiddleware and bind
+    _db_current_user for the duration of the request. Returns the ContextVar
+    token to pass to _db_current_user.reset(), or None if no user was resolved."""
+    state = scope.get("state") or {}
+    user_nsid = state.get("user_nsid") if isinstance(state, dict) else getattr(state, "user_nsid", None)
+    if not user_nsid:
+        return None
+    try:
+        creds = _load_credentials(nsid=user_nsid)
+        return _db_current_user.set({"nsid": user_nsid, "username": creds.get("username", user_nsid)})
+    except Exception as e:
+        logging.error("MCP handler: failed to load credentials for %s: %s", user_nsid, e)
+        return None
+
 
 class _SSEHandler:
     """ASGI handler for the MCP SSE endpoint.
@@ -923,22 +949,7 @@ class _SSEHandler:
         self._sse = sse_transport
 
     async def __call__(self, scope, receive, send):
-        state = scope.get("state") or {}
-        if isinstance(state, dict):
-            user_nsid = state.get("user_nsid")
-        else:
-            user_nsid = getattr(state, "user_nsid", None)
-        token = None
-        if user_nsid:
-            try:
-                creds = _load_credentials(nsid=user_nsid)
-                user_ctx = {
-                    "nsid":     user_nsid,
-                    "username": creds.get("username", user_nsid),
-                }
-                token = _db_current_user.set(user_ctx)
-            except Exception as e:
-                logging.error("SSE handler: failed to load credentials for %s: %s", user_nsid, e)
+        token = _bind_user_ctx(scope)
         try:
             async with self._sse.connect_sse(scope, receive, send) as streams:
                 await server.run(streams[0], streams[1], server.create_initialization_options())
@@ -947,19 +958,59 @@ class _SSEHandler:
                 _db_current_user.reset(token)
 
 
+class _StreamableHTTPHandler:
+    """ASGI handler for the MCP Streamable HTTP endpoint.
+
+    Creates a fresh stateless transport per request. Sets ``db._current_user``
+    from the API key resolved by ``ApiKeyMiddleware`` so all tool calls operate
+    on the correct per-user database and credentials.
+    """
+
+    async def __call__(self, scope, receive, send):
+        from mcp.server.streamable_http import StreamableHTTPServerTransport
+
+        token = _bind_user_ctx(scope)
+        try:
+            transport = StreamableHTTPServerTransport(mcp_session_id=None)
+
+            async def _run_server(*, task_status=anyio.TASK_STATUS_IGNORED):
+                async with transport.connect() as (read_stream, write_stream):
+                    task_status.started()
+                    await server.run(
+                        read_stream,
+                        write_stream,
+                        server.create_initialization_options(),
+                        stateless=True,  # safe for concurrent per-request use
+                    )
+
+            async with anyio.create_task_group() as tg:
+                await tg.start(_run_server)
+                try:
+                    await transport.handle_request(scope, receive, send)
+                finally:
+                    # handle_request awaits every send() call before returning,
+                    # so the response is fully committed here.  Cancel the server
+                    # loop, which is now waiting for a next message that will
+                    # never arrive on a stateless connection.
+                    tg.cancel_scope.cancel()
+        finally:
+            if token is not None:
+                _db_current_user.reset(token)
+
+
 class ApiKeyMiddleware(BaseHTTPMiddleware):
     """Validate MCP API keys and attach the resolved user NSID to request state.
 
-    Every request to ``/sse`` or ``/messages`` must carry a valid API key via
-    the ``X-API-Key`` header or ``Authorization: Bearer`` header.  The key is
-    looked up in ``_api_key_registry`` (populated at startup and on each login)
-    and the matched NSID is stored in ``request.state.user_nsid`` for the SSE
-    handler to consume.
+    Every request to ``/sse``, ``/messages``, or ``/mcp`` must carry a valid
+    API key via the ``X-API-Key`` header or ``Authorization: Bearer`` header.
+    The key is looked up in ``_api_key_registry`` (populated at startup and on
+    each login) and the matched NSID is stored in ``request.state.user_nsid``
+    for the transport handlers to consume.
     """
 
     async def dispatch(self, request: Request, call_next):
         path = request.url.path
-        if path.startswith("/sse") or path.startswith("/messages"):
+        if path.startswith("/sse") or path.startswith("/messages") or path == "/mcp":
             key = request.headers.get("X-API-Key", "")
             if not key:
                 auth = request.headers.get("Authorization", "")
@@ -975,7 +1026,7 @@ class CSRFMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         if request.method == "POST":
             path = request.url.path
-            if path.startswith("/sse") or path.startswith("/messages"):
+            if path.startswith("/sse") or path.startswith("/messages") or path == "/mcp":
                 return await call_next(request)
 
             form_data = await request.form()
@@ -1037,6 +1088,7 @@ async def main_sse():
             Route("/setup",          endpoint=route_setup),
             Route("/sse",            endpoint=_SSEHandler(sse)),
             Mount("/messages/",      app=sse.handle_post_message),
+            Route("/mcp",            endpoint=_StreamableHTTPHandler()),
             Mount("/static",         app=StaticFiles(directory=str(_PROJECT_ROOT / "static")), name="static"),
         ],
     )
