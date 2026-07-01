@@ -480,15 +480,18 @@ def sync_group_descriptions(conn):
 
 
 def sync_photo_groups(conn):
-    """Populate photo_groups by fetching the user's photos from each group pool."""
+    """Populate photo_groups by fetching the user's photos from each group pool.
+
+    The DELETE and all INSERTs happen in a single transaction so that readers
+    (MCP tool handlers) see the old state via WAL until the final commit.
+    The caller (sync_groups.py) holds the outer commit, so intermediate
+    commits are intentionally omitted.
+    """
     creds = flickr_api._load_credentials()
     user_nsid = creds["user_nsid"]
     groups = conn.execute("SELECT id FROM groups").fetchall()
 
-    # Full clear before re-population; a mid-sync failure leaves the table empty
-    # until the next successful sync (get_photo_contexts falls back to the API).
     conn.execute("DELETE FROM photo_groups")
-    conn.commit()
 
     total = 0
     for (group_id,) in groups:
@@ -512,7 +515,6 @@ def sync_photo_groups(conn):
                     (p["id"], group_id),
                 )
                 total += 1
-            conn.commit()
             page += 1
             if page <= pages:
                 time.sleep(0.15)
