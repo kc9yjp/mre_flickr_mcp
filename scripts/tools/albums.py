@@ -165,6 +165,8 @@ async def _edit_album(args):
     album_id = args["album_id"]
     with get_db() as conn:
         row = conn.execute("SELECT title, description FROM albums WHERE id = ?", (album_id,)).fetchone()
+    if row is None and "title" not in args:
+        return [TextContent(type="text", text=f"Album {album_id} not found in local database. Provide a title to proceed, or run 'sync albums' first.")]
     title = args.get("title", row["title"] if row else "")
     description = args.get("description", row["description"] if row else "")
     flickr_api._api_post("flickr.photosets.editMeta", {"photoset_id": album_id, "title": title, "description": description})
