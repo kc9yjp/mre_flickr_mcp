@@ -215,8 +215,11 @@ async def _find_groups(args):
             "ORDER BY members DESC LIMIT ?",
             (pat, npat, pat, npat, pat, npat, pat, npat, limit),
         ).fetchall()
-    if not rows:
-        return [TextContent(type="text", text=f"No groups found matching '{query}'. Run sync to populate groups.")]
+        if not rows:
+            count = conn.execute("SELECT COUNT(*) FROM groups").fetchone()[0]
+            if count == 0:
+                return [TextContent(type="text", text="No groups found. Run 'sync groups' first via the web UI or the sync tool.")]
+            return [TextContent(type="text", text=f"No groups match '{query}'.")]
     return [TextContent(type="text", text=json.dumps([dict(r) for r in rows], indent=2))]
 
 

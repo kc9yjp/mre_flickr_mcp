@@ -108,7 +108,11 @@ async def _find_albums(args):
             (f"%{query}%", limit),
         ).fetchall()
     if not rows:
-        return [TextContent(type="text", text=f"No albums found matching '{query}'. Visit /sync to run an albums sync first.")]
+        with get_db() as conn:
+            count = conn.execute("SELECT COUNT(*) FROM albums").fetchone()[0]
+        if count == 0:
+            return [TextContent(type="text", text="No albums found. Run 'sync albums' first via the web UI or the sync tool.")]
+        return [TextContent(type="text", text=f"No albums match '{query}'.")]
     return [TextContent(type="text", text=json.dumps([dict(r) for r in rows], indent=2))]
 
 
