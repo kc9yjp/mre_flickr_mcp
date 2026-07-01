@@ -496,7 +496,8 @@ async def _get_photo_contexts(args):
             try:
                 api_data = flickr_api._api_get("flickr.photos.getAllContexts", {"photo_id": photo_id})
                 sets = [{"id": s["id"], "title": s.get("title", "")} for s in api_data.get("set", [])]
-            except RuntimeError:
+            except RuntimeError as e:
+                logging.warning("get_photo_contexts: failed to fetch album contexts for photo %s: %s", photo_id, e)
                 sets = []
             return [TextContent(type="text", text=json.dumps({
                 "photo_id":    photo_id,
