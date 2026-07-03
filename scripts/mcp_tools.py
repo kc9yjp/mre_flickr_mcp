@@ -1,5 +1,6 @@
 """MCP server instance, tool definitions, and tool dispatch."""
 
+import asyncio
 import logging
 
 from mcp.server import Server
@@ -27,6 +28,10 @@ _HANDLERS: dict = {}
 for _mod in _ALL_MODULES:
     _HANDLERS.update(_mod.HANDLERS)
 
+# Sync tools use loop-bound asyncio primitives (subprocesses, per-user Locks
+# shared with the background refresh) and must stay on the main event loop.
+_MAIN_LOOP_HANDLERS = frozenset(sync_tools.HANDLERS)
+
 
 @server.list_tools()
 async def list_tools():
@@ -42,7 +47,13 @@ async def call_tool(name: str, arguments: dict):
     if handler is None:
         return [TextContent(type="text", text=f"Unknown tool: {name}")]
     try:
-        return await handler(arguments)
+        if name in _MAIN_LOOP_HANDLERS:
+            return await handler(arguments)
+        # Handlers do blocking sqlite/HTTP work; run them in a worker thread so
+        # one slow call can't stall the shared event loop for every session.
+        # asyncio.to_thread copies the contextvars context, so _current_user
+        # still resolves inside the thread.
+        return await asyncio.to_thread(lambda: asyncio.run(handler(arguments)))
     except (FileNotFoundError, RuntimeError) as e:
         return [TextContent(type="text", text=str(e))]
     except Exception as e:
