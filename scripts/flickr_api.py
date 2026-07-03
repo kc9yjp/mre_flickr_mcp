@@ -252,7 +252,10 @@ def _api_call(verb: str, method: str, params_factory) -> dict:
         if not resp.ok:
             raise RuntimeError(f"Flickr API HTTP {resp.status_code} ({method})")
 
-        data = resp.json()
+        try:
+            data = resp.json()
+        except ValueError:
+            raise RuntimeError(f"Flickr API returned non-JSON response ({method}): {resp.text[:200]!r}")
         if data.get("stat") != "ok":
             raise FlickrAPIError(data.get("code", 0), data.get("message", "unknown"))
         return data
