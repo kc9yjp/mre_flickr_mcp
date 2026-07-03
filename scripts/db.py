@@ -133,6 +133,21 @@ def _connect(path):
     return conn
 
 
+def like_pattern(term: str) -> str:
+    """Return a %-wrapped LIKE pattern with %, _ and \\ escaped.
+
+    Use together with ``LIKE ? ESCAPE '\\'`` so user input can't act as
+    wildcards.
+    """
+    escaped = term.replace("\\", "\\\\").replace("%", r"\%").replace("_", r"\_")
+    return f"%{escaped}%"
+
+
+def table_empty(conn, table: str) -> bool:
+    """True if *table* has no rows.  *table* must be a trusted literal."""
+    return conn.execute(f"SELECT NOT EXISTS(SELECT 1 FROM {table})").fetchone()[0] == 1
+
+
 # ---------------------------------------------------------------------------
 # Context managers
 # ---------------------------------------------------------------------------

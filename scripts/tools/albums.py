@@ -6,7 +6,7 @@ import time
 from mcp.types import TextContent, Tool
 
 import flickr_api
-from db import get_db
+from db import get_db, like_pattern, table_empty
 
 TOOLS = [
     Tool(
@@ -104,15 +104,13 @@ async def _find_albums(args):
     with get_db() as conn:
         rows = conn.execute(
             "SELECT id, title, description, count_photos, count_views FROM albums "
-            "WHERE title LIKE ? ORDER BY title LIMIT ?",
-            (f"%{query}%", limit),
+            "WHERE title LIKE ? ESCAPE '\\' ORDER BY title LIMIT ?",
+            (like_pattern(query), limit),
         ).fetchall()
-    if not rows:
-        with get_db() as conn:
-            count = conn.execute("SELECT COUNT(*) FROM albums").fetchone()[0]
-        if count == 0:
-            return [TextContent(type="text", text="No albums found. Run 'sync albums' first via the web UI or the sync tool.")]
-        return [TextContent(type="text", text=f"No albums match '{query}'.")]
+        if not rows:
+            if table_empty(conn, "albums"):
+                return [TextContent(type="text", text="No albums found. Run 'sync albums' first via the web UI or the sync tool.")]
+            return [TextContent(type="text", text=f"No albums match '{query}'.")]
     return [TextContent(type="text", text=json.dumps([dict(r) for r in rows], indent=2))]
 
 

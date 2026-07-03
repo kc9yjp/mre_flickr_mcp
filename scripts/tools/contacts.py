@@ -6,7 +6,7 @@ import time
 from mcp.types import TextContent, Tool
 
 import flickr_api
-from db import get_db
+from db import get_db, table_empty
 
 TOOLS = [
     Tool(
@@ -131,8 +131,10 @@ async def _find_unfollow_candidates(args):
     """
     with get_db() as conn:
         rows = conn.execute(sql, (require_zero, limit)).fetchall()
-    if not rows:
-        return [TextContent(type="text", text="No contacts found. Visit /sync to run a contacts sync first.")]
+        if not rows:
+            if table_empty(conn, "contacts"):
+                return [TextContent(type="text", text="No contacts found. Visit /sync to run a contacts sync first.")]
+            return [TextContent(type="text", text="No unfollow candidates match the current filters (all contacts are protected or have engagement).")]
     results = [{
         "contact_id":       r["id"],
         "username":         r["username"],

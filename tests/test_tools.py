@@ -214,7 +214,21 @@ class TestAlbums:
     async def test_find_albums_no_match(self, db):
         import mcp_tools
         result = await mcp_tools._find_albums({"query": "xyz"})
-        assert "No albums" in _text(result)
+        assert "No albums match 'xyz'." in _text(result)
+
+    @pytest.mark.asyncio
+    async def test_find_albums_empty_table(self, db):
+        import mcp_tools
+        db.execute("DELETE FROM albums")
+        db.commit()
+        result = await mcp_tools._find_albums({"query": "xyz"})
+        assert "Run 'sync albums' first" in _text(result)
+
+    @pytest.mark.asyncio
+    async def test_find_albums_like_wildcards_escaped(self, db):
+        import mcp_tools
+        result = await mcp_tools._find_albums({"query": "%"})
+        assert "No albums match" in _text(result)
 
     @pytest.mark.asyncio
     async def test_get_album_photos(self, db, creds, api_get):
@@ -256,7 +270,21 @@ class TestGroups:
     async def test_find_groups_no_match(self, db):
         import mcp_tools
         result = await mcp_tools._find_groups({"query": "zzz"})
-        assert "No groups" in _text(result)
+        assert "No groups match 'zzz'." in _text(result)
+
+    @pytest.mark.asyncio
+    async def test_find_groups_empty_table(self, db):
+        import mcp_tools
+        db.execute("DELETE FROM groups")
+        db.commit()
+        result = await mcp_tools._find_groups({"query": "zzz"})
+        assert "Run 'sync groups' first" in _text(result)
+
+    @pytest.mark.asyncio
+    async def test_find_groups_underscore_not_wildcard(self, db):
+        import mcp_tools
+        result = await mcp_tools._find_groups({"query": "Land_cape"})
+        assert "No groups match" in _text(result)
 
     @pytest.mark.asyncio
     async def test_set_group_keywords(self, db):

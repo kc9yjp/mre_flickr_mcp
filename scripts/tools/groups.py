@@ -9,7 +9,7 @@ from mcp.types import TextContent, Tool
 
 import flickr_api
 from flickr_api import FlickrAPIError
-from db import get_db
+from db import get_db, like_pattern, table_empty
 
 TOOLS = [
     Tool(
@@ -203,21 +203,21 @@ async def _find_groups(args):
     import re as _re
     normalized = _re.sub(r"[-_]", " ", query)
     normalized = _re.sub(r"[^\w\s]", "", normalized).strip()
-    pat = f"%{query}%"
-    npat = f"%{normalized}%"
+    pat = like_pattern(query)
+    # An empty normalized query would produce a match-everything pattern.
+    npat = like_pattern(normalized) if normalized else pat
     with get_db() as conn:
         rows = conn.execute(
             "SELECT id, name, members, pool_count FROM groups "
-            "WHERE name LIKE ? OR name LIKE ? "
-            "   OR description LIKE ? OR description LIKE ? "
-            "   OR keywords LIKE ? OR keywords LIKE ? "
-            "   OR auto_keywords LIKE ? OR auto_keywords LIKE ? "
+            "WHERE name LIKE ? ESCAPE '\\' OR name LIKE ? ESCAPE '\\' "
+            "   OR description LIKE ? ESCAPE '\\' OR description LIKE ? ESCAPE '\\' "
+            "   OR keywords LIKE ? ESCAPE '\\' OR keywords LIKE ? ESCAPE '\\' "
+            "   OR auto_keywords LIKE ? ESCAPE '\\' OR auto_keywords LIKE ? ESCAPE '\\' "
             "ORDER BY members DESC LIMIT ?",
             (pat, npat, pat, npat, pat, npat, pat, npat, limit),
         ).fetchall()
         if not rows:
-            count = conn.execute("SELECT COUNT(*) FROM groups").fetchone()[0]
-            if count == 0:
+            if table_empty(conn, "groups"):
                 return [TextContent(type="text", text="No groups found. Run 'sync groups' first via the web UI or the sync tool.")]
             return [TextContent(type="text", text=f"No groups match '{query}'.")]
     return [TextContent(type="text", text=json.dumps([dict(r) for r in rows], indent=2))]
@@ -601,8 +601,10 @@ async def _get_photo_group_count(args):
             "GROUP BY p.id ORDER BY group_count DESC LIMIT ?",
             (limit,),
         ).fetchall()
-    if not rows:
-        return [TextContent(type="text", text="No photo-group data found. Run 'sync groups' first.")]
+        if not rows:
+            if table_empty(conn, "photo_groups"):
+                return [TextContent(type="text", text="No photo-group data found. Run 'sync groups' first.")]
+            return [TextContent(type="text", text="No synced photos with group memberships found (run a photo sync if photos are missing locally).")]
     return [TextContent(type="text", text=json.dumps([dict(r) for r in rows], indent=2))]
 
 
