@@ -493,18 +493,23 @@ async def _get_photo_contexts(args):
                 (photo_id,),
             ).fetchall()
             # photo-album membership isn't tracked locally yet — fetch from API
+            albums_error = None
             try:
                 api_data = flickr_api._api_get("flickr.photos.getAllContexts", {"photo_id": photo_id})
                 sets = [{"id": s["id"], "title": s.get("title", "")} for s in api_data.get("set", [])]
             except RuntimeError as e:
                 logging.warning("get_photo_contexts: failed to fetch album contexts for photo %s: %s", photo_id, e)
                 sets = []
-            return [TextContent(type="text", text=json.dumps({
+                albums_error = f"Album lookup failed ({e}); 'albums' does NOT mean the photo is in no albums."
+            payload = {
                 "photo_id":    photo_id,
                 "source":      "local_db",
                 "group_pools": [{"id": r["id"], "title": r["name"]} for r in rows],
                 "albums":      sets,
-            }, indent=2))]
+            }
+            if albums_error:
+                payload["albums_error"] = albums_error
+            return [TextContent(type="text", text=json.dumps(payload, indent=2))]
     # No local data yet — fall back to API for everything
     data = flickr_api._api_get("flickr.photos.getAllContexts", {"photo_id": photo_id})
     pools = [{"id": p["id"], "title": p.get("title", "")} for p in data.get("pool", [])]
