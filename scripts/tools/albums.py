@@ -163,21 +163,42 @@ async def _create_album(args):
 
 async def _edit_album(args):
     album_id = args["album_id"]
-    with get_db() as conn:
-        row = conn.execute("SELECT title, description FROM albums WHERE id = ?", (album_id,)).fetchone()
-    if row is None and "title" not in args:
-        return [TextContent(type="text", text=f"Album {album_id} not found in local database. Provide a title to proceed, or run 'sync albums' first.")]
-    title = args.get("title", row["title"] if row else "")
-    description = args.get("description", row["description"] if row else "")
-    flickr_api._api_post("flickr.photosets.editMeta", {"photoset_id": album_id, "title": title, "description": description})
+    title = args.get("title")
+    description = args.get("description")
     primary_photo_id = args.get("primary_photo_id")
+
+    if "title" in args and not (title or "").strip():
+        return [TextContent(type="text", text="Album title cannot be empty.")]
+    if title is None and description is None and not primary_photo_id:
+        return [TextContent(type="text", text="Nothing to update: provide title, description, or primary_photo_id.")]
+
+    edits_meta = title is not None or description is not None
+    if edits_meta:
+        if title is None or description is None:
+            # editMeta always sets both fields, so fill the omitted one from the
+            # live album — the local cache may be stale or missing entirely.
+            creds = flickr_api._load_credentials()
+            data = flickr_api._api_get("flickr.photosets.getInfo", {"photoset_id": album_id, "user_id": creds["user_nsid"]})
+            ps = data.get("photoset", {})
+            if title is None:
+                title = (ps.get("title") or {}).get("_content", "") if isinstance(ps.get("title"), dict) else (ps.get("title") or "")
+            if description is None:
+                description = (ps.get("description") or {}).get("_content", "") if isinstance(ps.get("description"), dict) else (ps.get("description") or "")
+        flickr_api._api_post("flickr.photosets.editMeta", {"photoset_id": album_id, "title": title, "description": description})
     if primary_photo_id:
         flickr_api._api_post("flickr.photosets.setPrimaryPhoto", {"photoset_id": album_id, "photo_id": primary_photo_id})
+
     with get_db() as conn:
-        if primary_photo_id:
-            conn.execute("UPDATE albums SET title=?, description=?, primary_photo_id=? WHERE id=?", (title, description, primary_photo_id, album_id))
-        else:
-            conn.execute("UPDATE albums SET title=?, description=? WHERE id=?", (title, description, album_id))
+        if edits_meta:
+            conn.execute("""
+                INSERT INTO albums (id, title, description, primary_photo_id, count_photos, count_views, synced_at)
+                VALUES (?, ?, ?, ?, 0, 0, ?)
+                ON CONFLICT(id) DO UPDATE SET title=excluded.title, description=excluded.description,
+                    primary_photo_id=COALESCE(excluded.primary_photo_id, albums.primary_photo_id),
+                    synced_at=excluded.synced_at
+            """, (album_id, title, description, primary_photo_id, int(time.time())))
+        elif primary_photo_id:
+            conn.execute("UPDATE albums SET primary_photo_id=? WHERE id=?", (primary_photo_id, album_id))
     return [TextContent(type="text", text=f"Album {album_id} updated.")]
 
 
