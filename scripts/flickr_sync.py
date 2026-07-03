@@ -482,19 +482,21 @@ def sync_group_descriptions(conn):
 def sync_photo_groups(conn):
     """Populate photo_groups by fetching the user's photos from each group pool.
 
-    The DELETE and all INSERTs happen in a single transaction so that readers
-    (MCP tool handlers) see the old state via WAL until the final commit.
-    The caller (sync_groups.py) holds the outer commit, so intermediate
-    commits are intentionally omitted.
+    The whole crawl happens in memory first, then the table is updated in one
+    short write transaction (committed by the caller), so the write lock is
+    never held across network calls.  Rows are replaced per group: a group
+    whose pool fetch fails keeps its previous memberships instead of being
+    wiped by a partial sync.
     """
     creds = flickr_api._load_credentials()
     user_nsid = creds["user_nsid"]
     groups = conn.execute("SELECT id FROM groups").fetchall()
 
-    conn.execute("DELETE FROM photo_groups")
-
-    total = 0
+    fetched = []   # (group_id, [(photo_id, group_id), ...]) for each group fetched in full
+    failed = 0
     for (group_id,) in groups:
+        rows = []
+        ok = True
         page, pages = 1, 1
         while page <= pages:
             try:
@@ -505,20 +507,33 @@ def sync_photo_groups(conn):
                     "page":     str(page),
                 })
             except RuntimeError as e:
-                print(f"  Warning: skipping group {group_id} ({e})")
+                print(f"  Warning: keeping existing memberships for group {group_id} ({e})")
+                failed += 1
+                ok = False
                 break
             container = data.get("photos", {})
             pages = int(container.get("pages", 1))
             for p in container.get("photo", []):
-                conn.execute(
-                    "INSERT OR IGNORE INTO photo_groups (photo_id, group_id) VALUES (?, ?)",
-                    (p["id"], group_id),
-                )
-                total += 1
+                rows.append((p["id"], group_id))
             page += 1
             if page <= pages:
                 time.sleep(0.15)
+        if ok:
+            fetched.append((group_id, rows))
 
+    conn.execute("DELETE FROM photo_groups WHERE group_id NOT IN (SELECT id FROM groups)")
+    total = 0
+    for group_id, rows in fetched:
+        conn.execute("DELETE FROM photo_groups WHERE group_id = ?", (group_id,))
+        conn.executemany(
+            "INSERT OR IGNORE INTO photo_groups (photo_id, group_id) VALUES (?, ?)",
+            rows,
+        )
+        total += len(rows)
+
+    if failed:
+        print(f"  Warning: {failed} of {len(groups)} group pools could not be fetched; "
+              f"their previous memberships were kept.")
     print(f"  {total} photo-group memberships synced.")
     return total
 
