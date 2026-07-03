@@ -119,6 +119,21 @@ any changes to tool handler call sites.
 
 
 # ---------------------------------------------------------------------------
+# Connection helpers
+# ---------------------------------------------------------------------------
+
+def _connect(path):
+    """Shared connection factory for all MCP tool DB access.
+
+    sqlite3.connect's default timeout=5.0 already installs a 5000ms busy
+    handler, so no explicit busy_timeout PRAGMA is needed.
+    """
+    conn = sqlite3.connect(path)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+# ---------------------------------------------------------------------------
 # Context managers
 # ---------------------------------------------------------------------------
 
@@ -132,10 +147,7 @@ def db():
     path = db_file(user["username"]) if user else DB_FILE
     if not os.path.exists(path):
         raise FileNotFoundError("Database not found. Visit http://localhost:8000/sync to run a sync.")
-    conn = sqlite3.connect(path)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA busy_timeout=5000")
-    return conn
+    return _connect(path)
 
 
 @contextmanager
@@ -153,9 +165,7 @@ def get_db():
         raise FileNotFoundError(
             f"Database not found for {who}. Visit http://localhost:8000/sync to run a sync."
         )
-    conn = sqlite3.connect(path)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA busy_timeout=5000")
+    conn = _connect(path)
     try:
         yield conn
         conn.commit()
@@ -177,9 +187,7 @@ def get_db_for_user(username: str):
     """
     path = db_file(username)
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    conn = sqlite3.connect(path)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA busy_timeout=5000")
+    conn = _connect(path)
     try:
         yield conn
         conn.commit()
