@@ -19,12 +19,12 @@ def get_request_token(api_key, api_secret):
     
     resp = requests.get(REQUEST_TOKEN_URL, params=params)
     if resp.status_code != 200:
-        print(f"Error: {resp.status_code} - {resp.text}", file=sys.stderr)
+        print(f"Error: {resp.status_code}", file=sys.stderr)
         sys.exit(1)
     
     data = dict(urllib.parse.parse_qsl(resp.text))
     if data.get("oauth_callback_confirmed") != "true":
-        print(f"Callback not confirmed: {resp.text}", file=sys.stderr)
+        print("Callback not confirmed", file=sys.stderr)
         sys.exit(1)
     
     return data["oauth_token"], data["oauth_token_secret"]
@@ -54,7 +54,7 @@ if __name__ == "__main__":
         
         resp = requests.get(ACCESS_TOKEN_URL, params=params)
         if resp.status_code != 200:
-            print(f"Error: {resp.status_code} - {resp.text}", file=sys.stderr)
+            print(f"Error: {resp.status_code}", file=sys.stderr)
             sys.exit(1)
         
         data = dict(urllib.parse.parse_qsl(resp.text))

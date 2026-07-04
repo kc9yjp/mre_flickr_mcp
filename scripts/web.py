@@ -104,7 +104,7 @@ def _load_api_key_registry() -> None:
             if key and nsid:
                 new_registry[key] = nsid
         except Exception as e:
-            logging.warning("Failed to load API key from %s: %s", cpath, e)
+            logging.warning("Failed to load API key from %s: %s", cpath, type(e).__name__)
     _api_key_registry.clear()
     _api_key_registry.update(new_registry)
     logging.debug("API key registry: %d user(s) loaded", len(_api_key_registry))
@@ -276,14 +276,14 @@ async def route_login_start(request: Request):
         resp = requests.get(_FLICKR_REQUEST_TOKEN_URL, params=params, timeout=15)
         resp.raise_for_status()
     except Exception as e:
-        return _login_error(request, f"Failed to get request token: {e}")
+        return _login_error(request, "Failed to get request token. Check your Flickr API credentials.")
 
     token_data = dict(urllib.parse.parse_qsl(resp.text))
     oauth_token = token_data.get("oauth_token")
     oauth_token_secret = token_data.get("oauth_token_secret")
 
     if not oauth_token:
-        return _login_error(request, f"Flickr returned no token: {resp.text[:200]}")
+        return _login_error(request, "Flickr returned no token in the request token response.")
 
     cutoff = time.time() - _PENDING_OAUTH_TTL
     stale = [t for t, (_, ts) in _pending_oauth.items() if ts < cutoff]
@@ -338,7 +338,7 @@ async def route_oauth_callback(request: Request):
     fullname            = token_data.get("fullname", "")
 
     if not access_token:
-        logging.error("No access token in Flickr response: %s", resp.text[:200])
+        logging.error("No access token in Flickr response")
         return RedirectResponse("/login?msg=err")
 
     # Preserve an existing API key so MCP clients don't break on re-login.
@@ -347,7 +347,7 @@ async def route_oauth_callback(request: Request):
         existing = _load_credentials(nsid=user_nsid)
         mcp_api_key = existing.get("mcp_api_key")
     except Exception as e:
-        logging.debug("No existing credentials for %s (first login): %s", user_nsid, e)
+        logging.debug("No existing credentials for %s (first login): %s", user_nsid, type(e).__name__)
     if not mcp_api_key:
         mcp_api_key = str(uuid.uuid4())
 
@@ -846,7 +846,7 @@ async def route_setup(request: Request):
         try:
             mcp_api_key = _load_credentials(nsid=user_nsid).get("mcp_api_key", "")
         except Exception as e:
-            logging.warning("Could not load credentials for setup page (%s): %s", user_nsid, e)
+            logging.warning("Could not load credentials for setup page (%s): %s", user_nsid, type(e).__name__)
 
     headers = {"Authorization": f"Bearer {mcp_api_key}"} if mcp_api_key else {}
 
@@ -932,8 +932,8 @@ def _bind_user_ctx(scope) -> object | None:
     try:
         creds = _load_credentials(nsid=user_nsid)
         return _db_current_user.set({"nsid": user_nsid, "username": creds.get("username", user_nsid)})
-    except Exception as e:
-        logging.error("MCP handler: failed to load credentials for %s: %s", user_nsid, e)
+    except Exception:
+        logging.error("MCP handler: failed to load credentials for %s", user_nsid)
         return None
 
 

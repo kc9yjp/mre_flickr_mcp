@@ -228,10 +228,10 @@ def _api_call(verb: str, method: str, params_factory) -> dict:
         except requests.exceptions.RequestException as e:
             if attempt < _API_MAX_RETRIES - 1:
                 wait = 2 ** attempt
-                logging.warning("%s %s failed (%s), retrying in %ds", verb, method, e, wait)
+                logging.warning("%s %s failed, retrying in %ds", verb, method, wait)
                 time.sleep(wait)
                 continue
-            raise RuntimeError(f"Flickr API request failed ({method}): {e}")
+            raise RuntimeError(f"Flickr API request failed ({method})") from e
 
         if resp.status_code == 429:
             if attempt < _API_MAX_RETRIES - 1:
@@ -324,4 +324,4 @@ def resolve_user_id(user_id: str) -> str:
         data = _api_get("flickr.people.findByUsername", {"username": user_id})
         return data["user"]["nsid"]
     except Exception as e:
-        raise RuntimeError(f"Could not resolve username '{user_id}' to a Flickr NSID: {e}") from e
+        raise RuntimeError(f"Could not resolve username '{user_id}' to a Flickr NSID") from e
