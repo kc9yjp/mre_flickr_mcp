@@ -715,6 +715,7 @@ async def route_queue(request: Request):
 
             error_rows = [_row(r) for r in conn.execute(
                 "SELECT pga.id, pga.photo_id, pga.group_id, pga.queued_at, pga.completed_at, pga.error_msg, "
+                "       NULL AS retry_after, "
                 "       p.title AS photo_title, p.url_photopage AS photo_url, g.name AS group_name "
                 "FROM pending_group_adds pga "
                 "LEFT JOIN photos p ON pga.photo_id = p.id "
@@ -724,7 +725,7 @@ async def route_queue(request: Request):
 
             success_rows = [_row(r) for r in conn.execute(
                 "SELECT pga.id, pga.photo_id, pga.group_id, pga.queued_at, pga.completed_at, "
-                "       NULL AS error_msg, "
+                "       NULL AS error_msg, NULL AS retry_after, "
                 "       p.title AS photo_title, p.url_photopage AS photo_url, g.name AS group_name "
                 "FROM pending_group_adds pga "
                 "LEFT JOIN photos p ON pga.photo_id = p.id "
