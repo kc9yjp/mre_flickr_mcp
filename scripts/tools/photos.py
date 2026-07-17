@@ -788,16 +788,27 @@ async def _get_popular_photos(args):
     limit = int(args.get("limit", 20))
     data = flickr_api._api_get("flickr.photos.getPopular", {
         "user_id":  creds["user_nsid"],
-        "sort":     sort,
+        # getPopular's sort token for favorites is "faves"; unknown tokens
+        # silently fall back to the default "interesting" sort
+        "sort":     "faves" if sort == "favorites" else sort,
         "per_page": str(limit),
         "extras":   "views,date_taken",
     })
     photos = data.get("photos", {}).get("photo", [])
+    ids = [p["id"] for p in photos]
+    with get_db() as conn:
+        rows = conn.execute(
+            f"SELECT id, favorites, comments FROM photos WHERE id IN ({','.join('?' * len(ids))})",
+            ids,
+        ).fetchall() if ids else []
+    counts = {r["id"]: r for r in rows}
     return [TextContent(type="text", text=json.dumps([{
-        "id":    p["id"],
-        "title": p.get("title", ""),
-        "views": p.get("views", 0),
-        "url":   f"https://www.flickr.com/photos/{p.get('owner', '')}/{p['id']}/",
+        "id":        p["id"],
+        "title":     p.get("title", ""),
+        "views":     p.get("views", 0),
+        "favorites": counts[p["id"]]["favorites"] if p["id"] in counts else None,
+        "comments":  counts[p["id"]]["comments"] if p["id"] in counts else None,
+        "url":       f"https://www.flickr.com/photos/{p.get('owner', '')}/{p['id']}/",
     } for p in photos], indent=2))]
 
 
