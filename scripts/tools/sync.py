@@ -20,6 +20,7 @@ import time
 
 from mcp.types import TextContent, Tool
 
+import db
 from db import DB_FILE, get_db, get_db_for_user, db_file
 from flickr_api import _all_known_users
 
@@ -157,6 +158,22 @@ async def _run_sync_script(
         _active_syncs.pop(label, None)
 
 
+def _flush_queue_for_user(user: dict) -> list[dict]:
+    """Flush due pending group adds for one user with their context set.
+
+    Timed queue items (add_to_group queue=true / rate-limit retries) have no
+    other executor; the background loop calls this on every wake so scheduled
+    adds actually post without waiting for the next interactive tool call.
+    """
+    from tools.groups import _flush_group_queue
+    token = db._current_user.set(user)
+    try:
+        with get_db_for_user(user["username"]) as conn:
+            return _flush_group_queue(conn)
+    finally:
+        db._current_user.reset(token)
+
+
 async def _background_refresh():
     """Periodically re-sync all registered users if their data is stale.
 
@@ -176,6 +193,16 @@ async def _background_refresh():
                 nsid = user["nsid"]
                 username = user["username"]
                 upath = db_file(username)
+                if os.path.exists(upath):
+                    try:
+                        flushed = await asyncio.to_thread(_flush_queue_for_user, user)
+                        for r in flushed:
+                            logging.info(
+                                "Group-add queue: %s photo %s -> group %s: %s",
+                                username, r["photo_id"], r["group_id"], r["result"],
+                            )
+                    except Exception:
+                        logging.exception("Group-add queue flush failed for %s", username)
                 if not os.path.exists(upath):
                     last_sync = 0
                 else:
