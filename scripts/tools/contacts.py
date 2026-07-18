@@ -78,6 +78,31 @@ TOOLS = [
             },
         },
     ),
+    Tool(
+        name="find_follow_candidates",
+        description=(
+            "List people who faved or commented on your photos that you don't currently follow, "
+            "ranked by engagement (faves + comments). Excludes the never-follow list."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "limit": {"type": "integer", "description": "Max results (default 20)"},
+            },
+        },
+    ),
+    Tool(
+        name="add_to_never_follow",
+        description="Add a contact to the never-follow list so they never appear as a follow candidate.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "contact_id": {"type": "string", "description": "Flickr NSID of the contact"},
+                "reason":     {"type": "string", "description": "Optional reason for excluding"},
+            },
+            "required": ["contact_id"],
+        },
+    ),
 ]
 
 
@@ -230,6 +255,43 @@ async def _get_contact_uploads(args):
     } for p in photos], indent=2))]
 
 
+async def _find_follow_candidates(args):
+    limit = int(args.get("limit", 20))
+    sql = """
+        SELECT e.contact_id, e.faves, e.comments, e.faves + e.comments AS total_engagement
+        FROM contact_engagement e
+        WHERE e.contact_id NOT IN (SELECT id FROM contacts)
+          AND e.contact_id NOT IN (SELECT contact_id FROM never_follow)
+        ORDER BY total_engagement DESC LIMIT ?
+    """
+    with get_db() as conn:
+        rows = conn.execute(sql, (limit,)).fetchall()
+        if not rows:
+            if table_empty(conn, "contact_engagement"):
+                return [TextContent(type="text", text="No engagement data found. Visit /sync to run an engagement sync first.")]
+            return [TextContent(type="text", text="No follow candidates — everyone who's engaged is already followed or on the never-follow list.")]
+    results = [{
+        "contact_id":       r["contact_id"],
+        "faves":            r["faves"],
+        "comments":         r["comments"],
+        "total_engagement": r["total_engagement"],
+        "url_profile":      f"https://www.flickr.com/people/{r['contact_id']}/",
+    } for r in rows]
+    return [TextContent(type="text", text=json.dumps(results, indent=2))]
+
+
+async def _add_to_never_follow(args):
+    contact_id = args["contact_id"]
+    reason = args.get("reason", "")
+    with get_db() as conn:
+        conn.execute(
+            "INSERT INTO never_follow (contact_id, reason, added_at) VALUES (?, ?, ?) "
+            "ON CONFLICT(contact_id) DO UPDATE SET reason=excluded.reason",
+            (contact_id, reason, int(time.time())),
+        )
+    return [TextContent(type="text", text=f"Contact {contact_id} added to never-follow list.")]
+
+
 HANDLERS = {
     "get_contacts_summary":     lambda _: _get_contacts_summary(),
     "find_unfollow_candidates": _find_unfollow_candidates,
@@ -237,4 +299,6 @@ HANDLERS = {
     "follow_contact":           _follow_contact,
     "unfollow_contact":         _unfollow_contact,
     "get_contact_uploads":      _get_contact_uploads,
+    "find_follow_candidates":   _find_follow_candidates,
+    "add_to_never_follow":      _add_to_never_follow,
 }

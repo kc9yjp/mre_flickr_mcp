@@ -78,6 +78,7 @@ class TestStdioProtocol:
             "join_group", "leave_group", "set_safety_level", "set_content_type",
             "set_dates", "create_gallery", "add_to_gallery", "get_galleries",
             "get_contact_uploads", "search_all_groups",
+            "find_follow_candidates", "add_to_never_follow",
         }
         assert expected.issubset(names), f"Missing tools: {expected - names}"
 

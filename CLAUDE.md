@@ -87,6 +87,7 @@ photos            — id, title, description, tags, views, favorites, comments,
 contacts          — id, username, realname, is_friend, is_family, synced_at
 contact_engagement — contact_id, faves, comments, last_updated
 do_not_unfollow   — contact_id, reason, added_at
+never_follow      — contact_id, reason, added_at (excluded from follow suggestions)
 groups            — id, name, members, pool_count, synced_at
 albums            — id, title, description, primary_photo_id, count_photos, count_views, synced_at
 photo_groups      — photo_id, group_id (which of your photos are in each group)
@@ -127,6 +128,8 @@ sync_log          — type, mode, photos_fetched, synced_at
 | `find_unfollow_candidates` | Contacts ranked by lowest engagement (faves + comments) |
 | `protect_contact` | Add contact to do-not-unfollow whitelist |
 | `unfollow_contact` | Unfollow a contact via API |
+| `find_follow_candidates` | People who faved/commented on your photos that you don't follow yet, ranked by engagement |
+| `add_to_never_follow` | Permanently exclude a contact from follow suggestions |
 | `set_location` | Set photo geolocation (lat/lon) on Flickr |
 | `sync` | Trigger an incremental (or full) photo sync from within MCP |
 
@@ -143,6 +146,8 @@ sync_log          — type, mode, photos_fetched, synced_at
 - `/flickr-photo` — process a photo from the current browser tab: suggest metadata, update, add to groups/albums
 - `/flickr-fave` — suggest a comment with any input given, wait for confirm comment and suggest fave
 - `/flickr-hide` — find weak photos, review visually, make private or update and keep
+- `/flickr-likes` — review recent faves grouped by owner; mark heavy-fave owners as friends, review light ones for follow
+- `/flickr-fans` — review people who fave/comment on your photos but aren't followed; follow, interact, or add to never-follow list
 - `/flickr-sync` — trigger syncs via the web UI and report results
 
 ## Browser Interaction

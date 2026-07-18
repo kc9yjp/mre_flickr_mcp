@@ -461,6 +461,51 @@ class TestContacts:
         candidates = _json(result)
         assert any(c["contact_id"] == "contact1@N00" for c in candidates)
 
+    @pytest.mark.asyncio
+    async def test_add_to_never_follow(self, db):
+        import mcp_tools
+        result = await mcp_tools._add_to_never_follow({"contact_id": "contact2@N00", "reason": "no thanks"})
+        assert "never-follow" in _text(result)
+        row = db.execute("SELECT * FROM never_follow WHERE contact_id='contact2@N00'").fetchone()
+        assert row is not None
+
+    @pytest.mark.asyncio
+    async def test_find_follow_candidates_excludes_existing_contacts(self, db):
+        import mcp_tools
+        db.execute(
+            "INSERT INTO contact_engagement (contact_id, faves, comments, last_updated) VALUES (?, ?, ?, ?)",
+            ("contact1@N00", 5, 2, int(time.time())),
+        )
+        db.commit()
+        result = await mcp_tools._find_follow_candidates({})
+        text = _text(result)
+        assert "contact1@N00" not in text
+
+    @pytest.mark.asyncio
+    async def test_find_follow_candidates_excludes_never_follow(self, db):
+        import mcp_tools
+        db.execute(
+            "INSERT INTO contact_engagement (contact_id, faves, comments, last_updated) VALUES (?, ?, ?, ?)",
+            ("contact2@N00", 5, 2, int(time.time())),
+        )
+        db.commit()
+        await mcp_tools._add_to_never_follow({"contact_id": "contact2@N00"})
+        result = await mcp_tools._find_follow_candidates({})
+        text = _text(result)
+        assert "contact2@N00" not in text
+
+    @pytest.mark.asyncio
+    async def test_find_follow_candidates_returned(self, db):
+        import mcp_tools
+        db.execute(
+            "INSERT INTO contact_engagement (contact_id, faves, comments, last_updated) VALUES (?, ?, ?, ?)",
+            ("contact3@N00", 5, 2, int(time.time())),
+        )
+        db.commit()
+        result = await mcp_tools._find_follow_candidates({})
+        candidates = _json(result)
+        assert any(c["contact_id"] == "contact3@N00" for c in candidates)
+
 
 # ---------------------------------------------------------------------------
 # set_visibility

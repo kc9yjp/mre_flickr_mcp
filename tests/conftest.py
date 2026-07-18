@@ -43,6 +43,9 @@ CREATE TABLE IF NOT EXISTS contact_engagement (
 CREATE TABLE IF NOT EXISTS do_not_unfollow (
     contact_id TEXT PRIMARY KEY, reason TEXT, added_at INTEGER
 );
+CREATE TABLE IF NOT EXISTS never_follow (
+    contact_id TEXT PRIMARY KEY, reason TEXT, added_at INTEGER
+);
 CREATE TABLE IF NOT EXISTS sync_log (
     id INTEGER PRIMARY KEY AUTOINCREMENT, synced_at INTEGER,
     mode TEXT, photos_fetched INTEGER, type TEXT DEFAULT 'photos'

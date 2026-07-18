@@ -84,6 +84,7 @@ from tools.groups import (  # noqa: E402, F401
 from tools.contacts import (  # noqa: E402, F401
     _get_contacts_summary, _find_unfollow_candidates, _protect_contact,
     _follow_contact, _unfollow_contact, _get_contact_uploads,
+    _find_follow_candidates, _add_to_never_follow,
 )
 from tools.galleries import (  # noqa: E402, F401
     _get_galleries, _create_gallery, _add_to_gallery, _get_gallery_photos,

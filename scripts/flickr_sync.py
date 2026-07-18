@@ -73,6 +73,11 @@ _MIGRATIONS = [
         note     TEXT,
         added_at INTEGER NOT NULL
     )""",
+    """CREATE TABLE IF NOT EXISTS never_follow (
+        contact_id TEXT PRIMARY KEY,
+        reason     TEXT,
+        added_at   INTEGER
+    )""",
 ]
 
 SCHEMA_VERSION = len(_MIGRATIONS)
@@ -199,6 +204,12 @@ def init_db(conn):
             photo_id TEXT PRIMARY KEY,
             note     TEXT,
             added_at INTEGER NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS never_follow (
+            contact_id TEXT PRIMARY KEY,
+            reason     TEXT,
+            added_at   INTEGER
         );
     """)
     conn.commit()
