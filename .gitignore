@@ -173,3 +173,7 @@ playwright/node_modules/
 playwright/test-results/
 playwright/playwright-report/
 playwright/.auth/
+
+# Workbench frontend
+frontend/node_modules/
+frontend/tsconfig.tsbuildinfo

@@ -919,6 +919,14 @@ async def route_setup(request: Request):
         "stdio_exec":      stdio_exec_cmd,
     }
 
+    bookmarklet = (
+        "javascript:(function(){"
+        "var m=location.href.match(/flickr\\.com\\/photos\\/[^\\/]+\\/(\\d+)/);"
+        f"if(m){{window.open('{base}/app/#photo='+m[1]);}}"
+        "else{alert('Not a Flickr photo page');}"
+        "})();"
+    )
+
     ctx = _base_ctx(request, "Setup")
     ctx.update({
         "sse_url":     sse_url,
@@ -926,6 +934,7 @@ async def route_setup(request: Request):
         "base_url":    base,
         "mcp_api_key": mcp_api_key,
         "snippets":    snippets,
+        "bookmarklet": bookmarklet,
     })
     return templates.TemplateResponse(request, "setup.html", ctx)
 
@@ -1115,6 +1124,9 @@ async def main_sse():
             Route("/sse",            endpoint=_SSEHandler(sse)),
             Mount("/messages/",      app=sse.handle_post_message),
             Route("/mcp",            endpoint=_StreamableHTTPHandler()),
+            # Workbench SPA — only when the frontend has been built
+            *([Mount("/app", app=StaticFiles(directory=str(_PROJECT_ROOT / "frontend" / "dist"), html=True), name="app")]
+              if os.path.isdir(_PROJECT_ROOT / "frontend" / "dist") else []),
             Mount("/static",         app=StaticFiles(directory=str(_PROJECT_ROOT / "static")), name="static"),
         ],
     )

@@ -1,3 +1,10 @@
+FROM node:22-alpine AS frontend
+WORKDIR /build
+COPY frontend/package.json frontend/package-lock.json ./
+RUN npm ci
+COPY frontend/ ./
+RUN npm run build
+
 FROM python:3.14-slim-bookworm
 
 WORKDIR /app
@@ -17,6 +24,7 @@ RUN useradd -m -u 1000 app && \
 COPY --chown=app scripts/ ./scripts/
 COPY --chown=app templates/ ./templates/
 COPY --chown=app static/ ./static/
+COPY --chown=app --from=frontend /build/dist ./frontend/dist
 
 USER app
 
