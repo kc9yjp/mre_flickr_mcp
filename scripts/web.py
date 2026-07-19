@@ -1086,6 +1086,7 @@ async def main_sse():
     import uvicorn
 
     import webapi  # imported here because webapi imports this module
+    from agent import routes as agent_routes
 
     _load_api_key_registry()
 
@@ -1121,6 +1122,7 @@ async def main_sse():
             Route("/settings",       endpoint=route_settings, methods=["GET", "POST"]),
             Route("/setup",          endpoint=route_setup),
             *webapi.api_routes(),
+            *agent_routes.api_routes(),
             Route("/sse",            endpoint=_SSEHandler(sse)),
             Mount("/messages/",      app=sse.handle_post_message),
             Route("/mcp",            endpoint=_StreamableHTTPHandler()),

@@ -2,6 +2,7 @@
 
 interface Events {
   focusPhoto: string;
+  runCommand: string; // a chat prompt to send immediately
 }
 
 type Handler<K extends keyof Events> = (payload: Events[K]) => void;

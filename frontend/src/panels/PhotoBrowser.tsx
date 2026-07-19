@@ -1,7 +1,12 @@
 import { FormEvent, useCallback, useEffect, useState } from "react";
-import { getJSON, Photo, PhotoDetail, PhotoPage } from "../api";
+import { getJSON, Photo, PhotoDetail, PhotoPage, WorkflowCommand } from "../api";
 import * as bus from "../bus";
 import { compactNumber } from "../format";
+
+let photoCommands: WorkflowCommand[] = [];
+getJSON<{ commands: WorkflowCommand[] }>("/api/commands")
+  .then((r) => (photoCommands = r.commands.filter((c) => c.context === "photo")))
+  .catch(() => {});
 
 const PAGE_SIZE = 60;
 
@@ -55,6 +60,17 @@ function DetailView({ detail, onBack }: { detail: PhotoDetail; onBack: () => voi
         <a href={detail.url_photopage} target="_blank" rel="noreferrer">
           Open on Flickr ↗
         </a>
+      </div>
+      <div className="detail-workflows">
+        {photoCommands.map((c) => (
+          <button
+            key={c.id}
+            title="Runs in the Chat panel"
+            onClick={() => bus.emit("runCommand", c.prompt.replaceAll("{photo_id}", detail.id))}
+          >
+            ▶ {c.label}
+          </button>
+        ))}
       </div>
       {src && <img className="detail-image" src={src} alt={detail.title} />}
       <h2>{detail.title || detail.id}</h2>

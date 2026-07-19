@@ -1,5 +1,6 @@
-import { useState } from "react";
-import { ApiError, postJSON } from "../api";
+import { useEffect, useState } from "react";
+import { ApiError, WorkflowCommand, getJSON, postJSON } from "../api";
+import * as bus from "../bus";
 
 const SYNCS: { type: string; label: string; full?: boolean }[] = [
   { type: "photos", label: "Sync photos" },
@@ -14,6 +15,13 @@ const SYNCS: { type: string; label: string; full?: boolean }[] = [
 export function Command() {
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
+  const [commands, setCommands] = useState<WorkflowCommand[]>([]);
+
+  useEffect(() => {
+    getJSON<{ commands: WorkflowCommand[] }>("/api/commands")
+      .then((r) => setCommands(r.commands.filter((c) => c.context === "global")))
+      .catch(() => {});
+  }, []);
 
   const trigger = async (type: string, label: string, full?: boolean) => {
     setBusy(true);
@@ -44,7 +52,18 @@ export function Command() {
       </div>
       {message && <p className="command-message">{message}</p>}
       <h3>Workflows</h3>
-      <p className="hint">Workflow prompts arrive with the chat agent (milestone 5).</p>
+      <p className="hint">Each button starts the workflow in the Chat panel.</p>
+      <div className="command-buttons">
+        {commands.map((c) => (
+          <button key={c.id} onClick={() => bus.emit("runCommand", c.prompt)}>
+            {c.label}
+          </button>
+        ))}
+      </div>
+      <p className="hint">
+        Photo-specific workflows (metadata, groups, albums, thresholds) are on each
+        photo's detail view in the Photo Browser.
+      </p>
     </div>
   );
 }

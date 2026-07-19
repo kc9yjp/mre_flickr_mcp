@@ -63,6 +63,44 @@ export interface SyncStatus {
   rows: SyncRow[];
 }
 
+export interface Conversation {
+  id: string;
+  title: string;
+  created_at: number;
+  updated_at: number;
+}
+
+export interface WireMessage {
+  role: "user" | "assistant" | "tool" | "system";
+  content: string | null;
+  tool_calls?: { id: string; function: { name: string; arguments: string } }[];
+  tool_call_id?: string;
+}
+
+export interface WorkflowCommand {
+  id: string;
+  label: string;
+  context: "photo" | "global";
+  prompt: string;
+}
+
+export interface LLMSettings {
+  base_url: string;
+  api_key: string;
+  model: string;
+  max_tokens: number;
+}
+
+export type StreamEvent =
+  | { type: "start"; conversation_id: string }
+  | { type: "delta"; text: string }
+  | { type: "tool_call"; id: string; name: string; arguments: string }
+  | { type: "confirm_request"; confirm_id: string; name: string; arguments: string }
+  | { type: "tool_result"; id: string; name: string; text: string }
+  | { type: "focus"; photo_id: string }
+  | { type: "error"; message: string }
+  | { type: "done" };
+
 let csrfToken = "";
 
 export class ApiError extends Error {
@@ -107,4 +145,44 @@ export async function postJSON<T>(url: string, body?: unknown): Promise<T> {
       body: body === undefined ? undefined : JSON.stringify(body),
     }),
   );
+}
+
+/** POST to /api/chat/stream and invoke onEvent for every SSE data event. */
+export async function streamChat(
+  body: { conversation_id?: string; message: string },
+  onEvent: (event: StreamEvent) => void,
+): Promise<void> {
+  const response = await fetch("/api/chat/stream", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-CSRF-Token": csrfToken,
+    },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok || !response.body) {
+    const err = await response.json().catch(() => ({}));
+    throw new ApiError(response.status, err.error ?? response.statusText);
+  }
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const frames = buffer.split("\n\n");
+    buffer = frames.pop() ?? "";
+    for (const frame of frames) {
+      for (const line of frame.split("\n")) {
+        if (line.startsWith("data:")) {
+          try {
+            onEvent(JSON.parse(line.slice(5).trim()) as StreamEvent);
+          } catch {
+            // ignore malformed frame
+          }
+        }
+      }
+    }
+  }
 }
