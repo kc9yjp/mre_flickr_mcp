@@ -530,16 +530,14 @@ async def route_sync_status(request: Request):
     return JSONResponse({"running": running, "rows": rows})
 
 
-async def route_sync_trigger(request: Request):
-    """Handle sync trigger button POSTs from the sync page."""
-    redir = _require_login(request)
-    if redir:
-        return redir
+def _start_sync(sync_type: str, username: str, user_nsid: str, *, full: bool = False) -> bool:
+    """Validate and launch a background sync task.
 
-    sync_type   = request.path_params["type"]
+    Returns True when the sync was started, False when the type is unknown or
+    another sync is already running for this user.  Shared by the sync-page
+    form route and the JSON API.
+    """
     scripts_dir = os.path.dirname(SYNC_SCRIPT)
-    user_nsid   = request.session.get("user_nsid", "")
-    username    = request.session.get("username", "")
     user_args   = ["--nsid", user_nsid, "--username", username] if user_nsid else []
 
     script_map = {
@@ -550,18 +548,17 @@ async def route_sync_trigger(request: Request):
     }
 
     if sync_type not in script_map and sync_type not in ("all", "backfill"):
-        return RedirectResponse("/sync", status_code=303)
+        return False
 
     lock = _get_user_lock(username or "_single_user")
     if lock.locked():
-        return RedirectResponse("/sync", status_code=303)
+        return False
 
-    is_full = request.query_params.get("full") == "1"
     is_backfill = sync_type == "backfill"
     if is_backfill:
         photo_args = list(user_args) + ["--backfill"]
     else:
-        photo_args = list(user_args) + (["--full"] if is_full else [])
+        photo_args = list(user_args) + (["--full"] if full else [])
 
     async def _run():
         async with lock:
@@ -577,6 +574,21 @@ async def route_sync_trigger(request: Request):
                                        extra_args=extra or None, username=username or None)
 
     asyncio.create_task(_run())
+    return True
+
+
+async def route_sync_trigger(request: Request):
+    """Handle sync trigger button POSTs from the sync page."""
+    redir = _require_login(request)
+    if redir:
+        return redir
+
+    _start_sync(
+        request.path_params["type"],
+        request.session.get("username", ""),
+        request.session.get("user_nsid", ""),
+        full=request.query_params.get("full") == "1",
+    )
     return RedirectResponse("/sync", status_code=303)
 
 
@@ -1030,6 +1042,16 @@ class CSRFMiddleware(BaseHTTPMiddleware):
             if path.startswith("/sse") or path.startswith("/messages") or path == "/mcp":
                 return await call_next(request)
 
+            # JSON API routes send the token as a header; checking it here
+            # (before request.form()) leaves the body untouched for handlers.
+            if path.startswith("/api/"):
+                token = request.headers.get("X-CSRF-Token", "")
+                session_token = request.session.get("csrf_token", "")
+                if not session_token or not secrets.compare_digest(token, session_token):
+                    logging.warning("CSRF validation failed for path %s", path)
+                    return JSONResponse({"error": "CSRF validation failed"}, status_code=403)
+                return await call_next(request)
+
             form_data = await request.form()
             token_in_form = form_data.get("csrf_token")
             token_in_session = request.session.get("csrf_token")
@@ -1053,6 +1075,8 @@ async def main_sse():
     """
     from mcp.server.sse import SseServerTransport
     import uvicorn
+
+    import webapi  # imported here because webapi imports this module
 
     _load_api_key_registry()
 
@@ -1087,6 +1111,7 @@ async def main_sse():
             Route("/queue",          endpoint=route_queue, methods=["GET", "POST"]),
             Route("/settings",       endpoint=route_settings, methods=["GET", "POST"]),
             Route("/setup",          endpoint=route_setup),
+            *webapi.api_routes(),
             Route("/sse",            endpoint=_SSEHandler(sse)),
             Mount("/messages/",      app=sse.handle_post_message),
             Route("/mcp",            endpoint=_StreamableHTTPHandler()),

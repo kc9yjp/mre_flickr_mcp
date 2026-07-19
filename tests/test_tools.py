@@ -333,8 +333,8 @@ class TestPhotoGroups:
         import mcp_tools
         import time as _time
         db.execute("INSERT INTO photo_groups VALUES ('photo1', 'group1@N00')")
-        db.execute("INSERT INTO sync_log VALUES (?,?,?,?,?)",
-                   (None, int(_time.time()), "full", 1, "groups"))
+        db.execute("INSERT INTO sync_log (synced_at, mode, photos_fetched, type) VALUES (?,?,?,?)",
+                   (int(_time.time()), "full", 1, "groups"))
         db.commit()
         api_get.return_value = {"set": [{"id": "album1", "title": "My Album"}], "pool": []}
         result = await mcp_tools._get_photo_contexts({"photo_id": "photo1"})
