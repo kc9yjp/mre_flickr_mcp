@@ -73,30 +73,7 @@ computer, so the summary below is now the source of truth going forward.
     `::test_confirm_request_includes_photo_preview`.
 
 **Not done — pick up here:**
-1. **Vision guard is still a stub, not a real fix.** `loop.py`'s
-   `_result_text()` unconditionally replaces any `ImageContent` result with
-   the literal string `"(image fetched — vision support not enabled yet)"` —
-   there is no `vision` field in `settings.py` at all, and no branching logic.
-   Meanwhile `scripts/agent/commands.py`'s photo workflow prompts
-   (`improve-photo`, `suggest-groups`, `suggest-albums`) explicitly instruct
-   the model to describe "mood and subject" after calling
-   `fetch_photo_image` — so those workflows currently **confabulate a photo
-   description every time**, which is exactly the failure mode that
-   triggered this investigation (see conversation history / commit log for
-   the reproduction). Needed:
-   - Add `vision: bool` (default `false`) to `settings.py` DEFAULTS, exposed
-     in the LLM settings UI with a warning about hallucination risk.
-   - In `loop.py`, only attach real image data (as an `image_url` message
-     part) when `cfg["vision"]` is true; otherwise keep today's placeholder
-     text but make it explicit that the model must not guess — e.g. "no
-     visual content was provided; work from title/description/tags/EXIF
-     only, or tell the user vision is unavailable."
-   - Add a standing rule to `SYSTEM_PROMPT` forbidding the model from
-     claiming to have seen an image it wasn't given.
-   - Regression test: assert no `image_url` part is ever emitted when
-     `vision` is false, and that the tool-result text carries the explicit
-     disclaimer.
-2. **M5 remainder**: Ctrl/Cmd-K command palette, an "approve all writes this
+1. **M5 remainder**: Ctrl/Cmd-K command palette, an "approve all writes this
    conversation" toggle, conversation-management UI beyond the basic
    dropdown switcher, browser-extension upgrade of the bookmarklet.
 3. Nothing yet exercises the confirm-card photo preview or focused-photo
