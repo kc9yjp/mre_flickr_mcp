@@ -339,6 +339,76 @@ async def test_run_turn_llm_error_yields_error_event(user_db):
     assert events[-1]["type"] == "done"
 
 
+# --- vision guard ---
+
+def test_result_content_vision_disabled_no_image_url():
+    """When vision=False, ImageContent must never produce an image_url part."""
+    from mcp.types import ImageContent, TextContent
+    from agent.loop import _result_content, _VISION_DISABLED_NOTE
+
+    result = [
+        TextContent(type="text", text="here is the image:"),
+        ImageContent(type="image", data="abc123", mimeType="image/jpeg"),
+    ]
+    content = _result_content(result, vision=False)
+    assert isinstance(content, str)
+    assert "image_url" not in content
+    assert _VISION_DISABLED_NOTE in content
+    assert "Do not guess" in content
+
+
+def test_result_content_vision_enabled_includes_image_url():
+    """When vision=True, ImageContent should produce an image_url multimodal part."""
+    from mcp.types import ImageContent, TextContent
+    from agent.loop import _result_content
+
+    result = [
+        TextContent(type="text", text="fetched"),
+        ImageContent(type="image", data="abc123", mimeType="image/jpeg"),
+    ]
+    content = _result_content(result, vision=True)
+    assert isinstance(content, list)
+    types = [p["type"] for p in content]
+    assert "image_url" in types
+    img = next(p for p in content if p["type"] == "image_url")
+    assert img["image_url"]["url"] == "data:image/jpeg;base64,abc123"
+
+
+@pytest.mark.asyncio
+async def test_run_turn_vision_disabled_tool_result_has_disclaimer(user_db):
+    """With vision=False in cfg, a fetch_photo_image result must carry the
+    explicit disclaimer and no image_url part must reach the stored conversation."""
+    from mcp.types import ImageContent
+    from agent import loop, store
+    from agent.loop import _VISION_DISABLED_NOTE
+
+    cfg_no_vision = {**CFG, "vision": False}
+    conv = store.create_conversation(USERNAME, "t")
+
+    fake_image = [ImageContent(type="image", data="IMGDATA", mimeType="image/jpeg")]
+
+    async def fake_execute(user, name, args):
+        return fake_image
+
+    scripted = _scripted_llm([
+        {"tool_calls": [_tool_call("c1", "fetch_photo_image", {"photo_id": "photo1"})]},
+        {"content": "I cannot see the image."},
+    ])
+
+    with patch("agent.loop.llm.stream_chat", scripted), \
+         patch("agent.loop._execute_tool", fake_execute):
+        events = [e async for e in loop.run_turn(USER, conv, "show photo", cfg_no_vision)]
+
+    result = next(e for e in events if e["type"] == "tool_result")
+    assert _VISION_DISABLED_NOTE in result["text"]
+    assert "IMGDATA" not in result["text"]
+
+    stored = store.get_messages(USERNAME, conv)
+    stored_json = json.dumps(stored)
+    assert "image_url" not in stored_json
+    assert "IMGDATA" not in stored_json
+
+
 # --- commands ---
 
 def test_commands_resolve_user_placeholder():

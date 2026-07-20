@@ -49,7 +49,12 @@ SYSTEM_PROMPT = (
     "- Some turns include a note naming the photo currently open in the "
     "user's Photo Browser panel. Treat that as the default target for "
     "instructions that don't name a different photo — but an explicit photo "
-    "id or link in the user's own message always takes priority over it."
+    "id or link in the user's own message always takes priority over it.\n"
+    "- CRITICAL: Never claim to have seen, viewed, or visually described a "
+    "photo unless actual image data was provided in the tool result. If a tool "
+    "result says vision is disabled, work from title, description, tags, and "
+    "EXIF only, and tell the user explicitly that visual inspection is "
+    "unavailable. Guessing or fabricating visual details is not allowed."
 )
 
 # One agent turn at a time per user.
@@ -105,18 +110,42 @@ async def _execute_tool(user: dict, name: str, args: dict) -> list:
         _current_user.reset(token)
 
 
-def _result_text(result: list) -> str:
-    parts = []
+_VISION_DISABLED_NOTE = (
+    "(image fetched — vision is disabled; work from title/description/tags/EXIF "
+    "only. Do not guess or claim to describe the image.)"
+)
+
+
+def _result_content(result: list, vision: bool) -> "str | list":
+    """Convert MCP tool result to LLM message content.
+
+    Returns a multimodal list when vision is enabled and images are present;
+    otherwise a plain string.
+    """
+    text_parts = []
+    image_parts = []
     for item in result:
         if isinstance(item, TextContent):
-            parts.append(item.text)
+            text_parts.append(item.text)
         elif isinstance(item, ImageContent):
-            parts.append("(image fetched — vision support not enabled yet)")
+            if vision:
+                image_parts.append({
+                    "type": "image_url",
+                    "image_url": {"url": f"data:{item.mimeType};base64,{item.data}"},
+                })
+            else:
+                text_parts.append(_VISION_DISABLED_NOTE)
         else:
-            parts.append(str(item))
-    text = "\n".join(parts)
+            text_parts.append(str(item))
+    text = "\n".join(text_parts)
     if len(text) > RESULT_CHAR_CAP:
         text = text[:RESULT_CHAR_CAP] + "\n…(truncated)"
+    if image_parts:
+        content: list = []
+        if text:
+            content.append({"type": "text", "text": text})
+        content.extend(image_parts)
+        return content
     return text
 
 
@@ -166,6 +195,7 @@ async def run_turn(
     different photo, silently misdirecting later turns that replay history.
     """
     username = user["username"]
+    vision = bool(cfg.get("vision", False))
     tools = schema.to_openai_tools()
 
     user_msg = {"role": "user", "content": user_message}
@@ -237,17 +267,23 @@ async def run_turn(
 
                 if args is not None:
                     try:
-                        text = _result_text(await _execute_tool(user, name, args))
+                        content = _result_content(await _execute_tool(user, name, args), vision)
                     except (FileNotFoundError, RuntimeError) as e:
-                        text = str(e)
+                        content = str(e)
                     except Exception as e:
                         logging.exception("agent: tool %s failed", name)
-                        text = f"Unexpected error: {type(e).__name__}"
+                        content = f"Unexpected error: {type(e).__name__}"
+                else:
+                    content = text
 
-                tool_msg = {"role": "tool", "tool_call_id": call["id"], "content": text}
+                ui_text = (
+                    content if isinstance(content, str)
+                    else next((p["text"] for p in content if p.get("type") == "text"), "(image)")
+                )
+                tool_msg = {"role": "tool", "tool_call_id": call["id"], "content": content}
                 store.append_message(username, conversation_id, tool_msg)
                 messages.append(tool_msg)
-                yield {"type": "tool_result", "id": call["id"], "name": name, "text": text}
+                yield {"type": "tool_result", "id": call["id"], "name": name, "text": ui_text}
 
                 if args is not None and (photo_id := _focus_photo_id(name, args)):
                     yield {"type": "focus", "photo_id": photo_id}

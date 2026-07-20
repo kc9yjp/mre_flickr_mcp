@@ -123,6 +123,17 @@ function SettingsForm({ onClose }: { onClose: () => void }) {
           onChange={(e) => setCfg({ ...cfg, max_tokens: Number(e.target.value) })}
         />
       </label>
+      <label className="chat-settings-checkbox">
+        <input
+          type="checkbox"
+          checked={cfg.vision}
+          onChange={(e) => setCfg({ ...cfg, vision: e.target.checked })}
+        />
+        Enable vision (send images to LLM)
+        <span className="hint">
+          {" "}— only enable if your model supports it; off by default to prevent hallucination
+        </span>
+      </label>
       <div className="chat-settings-actions">
         <button type="submit">Save</button>
         <button type="button" onClick={onClose}>

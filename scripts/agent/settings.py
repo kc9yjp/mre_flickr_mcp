@@ -14,6 +14,7 @@ DEFAULTS = {
     "api_key": "",
     "model": "",
     "max_tokens": 1024,
+    "vision": False,
 }
 
 
@@ -45,6 +46,7 @@ def save_settings(nsid: str, data: dict) -> dict:
             continue
         current[key] = data[key]
     current["max_tokens"] = int(current["max_tokens"] or DEFAULTS["max_tokens"])
+    current["vision"] = bool(current.get("vision", False))
 
     path = settings_file(nsid)
     os.makedirs(os.path.dirname(path), exist_ok=True)

@@ -89,6 +89,7 @@ export interface LLMSettings {
   api_key: string;
   model: string;
   max_tokens: number;
+  vision: boolean;
 }
 
 export type StreamEvent =
