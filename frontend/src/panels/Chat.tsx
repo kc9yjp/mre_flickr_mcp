@@ -134,6 +134,15 @@ function SettingsForm({ onClose }: { onClose: () => void }) {
           {" "}— only enable if your model supports it; off by default to prevent hallucination
         </span>
       </label>
+      <label>
+        Base prompt (standing instructions for this account)
+        <textarea
+          rows={4}
+          value={cfg.base_prompt}
+          onChange={(e) => setCfg({ ...cfg, base_prompt: e.target.value })}
+          placeholder="e.g. I'm based in Oak Park, IL. Prefer groups relevant to the Chicago area."
+        />
+      </label>
       <div className="chat-settings-actions">
         <button type="submit">Save</button>
         <button type="button" onClick={onClose}>
@@ -154,10 +163,13 @@ export function Chat() {
   const [confirm, setConfirm] = useState<PendingConfirm | null>(null);
   const [error, setError] = useState("");
   const [showSettings, setShowSettings] = useState(false);
+  const [autoApprove, setAutoApprove] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const activeIdRef = useRef<string | null>(null);
   activeIdRef.current = activeId;
   const focusedPhotoRef = useRef<string | null>(null);
+  const autoApproveRef = useRef(false);
+  autoApproveRef.current = autoApprove;
 
   const refreshConversations = useCallback(() => {
     getJSON<{ conversations: Conversation[] }>("/api/chat/conversations")
@@ -213,7 +225,11 @@ export function Chat() {
               }));
               break;
             case "confirm_request":
-              setConfirm(event);
+              if (autoApproveRef.current) {
+                postJSON("/api/chat/confirm", { confirm_id: event.confirm_id, approve: true }).catch(() => {});
+              } else {
+                setConfirm(event);
+              }
               break;
             case "tool_result":
               setConfirm(null);
@@ -271,6 +287,17 @@ export function Chat() {
     setError("");
   };
 
+  const deleteConversation = async () => {
+    if (!activeId) return;
+    try {
+      await postJSON(`/api/chat/conversations/${activeId}/delete`, {});
+      newConversation();
+      refreshConversations();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  };
+
   return (
     <div className="panel chat">
       <div className="chat-header">
@@ -285,7 +312,19 @@ export function Chat() {
             </option>
           ))}
         </select>
-        <button onClick={() => setShowSettings((s) => !s)} title="LLM settings">
+        {activeId && (
+          <button onClick={deleteConversation} title="Delete conversation" className="icon-btn">
+            🗑
+          </button>
+        )}
+        <button
+          onClick={() => setAutoApprove((a) => !a)}
+          title={autoApprove ? "Auto-approve ON — click to require confirmation" : "Auto-approve OFF — click to approve all writes automatically"}
+          className={autoApprove ? "icon-btn active" : "icon-btn"}
+        >
+          ⚡
+        </button>
+        <button onClick={() => setShowSettings((s) => !s)} title="LLM settings" className="icon-btn">
           ⚙
         </button>
       </div>

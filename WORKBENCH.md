@@ -73,13 +73,23 @@ computer, so the summary below is now the source of truth going forward.
     `::test_confirm_request_includes_photo_preview`.
 
 **Not done — pick up here:**
-1. **M5 remainder**: Ctrl/Cmd-K command palette, an "approve all writes this
-   conversation" toggle, conversation-management UI beyond the basic
-   dropdown switcher, browser-extension upgrade of the bookmarklet.
-3. Nothing yet exercises the confirm-card photo preview or focused-photo
+1. **M5 remainder**: Ctrl/Cmd-K command palette, browser-extension upgrade
+   of the bookmarklet, classic server pages (/sync, /stats, /queue, /setup,
+   /login) as in-app panels.
+2. Nothing yet exercises the confirm-card photo preview or focused-photo
    context against a *real* LLM end-to-end (only against the scripted fake in
    tests, and manually against local Ollama) — worth a manual pass after any
    further agent-loop changes.
+
+**Done this session (M5 partial):**
+- Renamed to "Mr. E's Photo Workbench" (title + topbar)
+- Font size 14px → 16px
+- View-menu: four buttons → single "View ▾" dropdown
+- Auto-approve toggle (⚡): skips confirm card, immediately approves all
+  write tools when on
+- Delete conversation button (🗑) next to conversation dropdown
+- Editable base prompt in LLM settings: persisted to llm.json, injected as
+  a second system message in each agent turn
 
 ## Running it
 

@@ -15,6 +15,7 @@ DEFAULTS = {
     "model": "",
     "max_tokens": 1024,
     "vision": False,
+    "base_prompt": "",
 }
 
 

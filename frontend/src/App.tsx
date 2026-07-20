@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import {
   DockviewReact,
   DockviewReadyEvent,
@@ -72,8 +72,25 @@ function openOrFocusPanel(api: DockviewApi, id: string) {
 export default function App() {
   const [me, setMe] = useState<Me | null>(null);
   const [openPanels, setOpenPanels] = useState<Set<string>>(new Set(PANEL_ORDER));
+  const [viewOpen, setViewOpen] = useState(false);
+  const viewRef = useRef<HTMLDivElement>(null);
   const saveTimer = useRef<number | undefined>(undefined);
   const dockApi = useRef<DockviewApi | null>(null);
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (viewRef.current && !viewRef.current.contains(e.target as Node)) {
+        setViewOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, []);
+
+  const handlePanelClick = useCallback((id: string) => {
+    if (dockApi.current) openOrFocusPanel(dockApi.current, id);
+    setViewOpen(false);
+  }, []);
 
   useEffect(() => {
     initSession().then(setMe).catch(() => {});
@@ -112,19 +129,26 @@ export default function App() {
   return (
     <div className="workbench">
       <header className="topbar">
-        <span className="topbar-title">Flickr Workbench</span>
-        <nav className="topbar-view-menu">
-          {PANEL_ORDER.map((id) => (
-            <button
-              key={id}
-              className={openPanels.has(id) ? "view-btn active" : "view-btn"}
-              onClick={() => dockApi.current && openOrFocusPanel(dockApi.current, id)}
-              title={openPanels.has(id) ? `Focus ${PANEL_SPECS[id].title}` : `Reopen ${PANEL_SPECS[id].title}`}
-            >
-              {PANEL_SPECS[id].title}
-            </button>
-          ))}
-        </nav>
+        <span className="topbar-title">Mr. E's Photo Workbench</span>
+        <div className="view-dropdown" ref={viewRef}>
+          <button
+            className="view-dropdown-toggle"
+            onClick={() => setViewOpen((o) => !o)}
+            title="Show/hide panels"
+          >
+            View ▾
+          </button>
+          {viewOpen && (
+            <div className="view-dropdown-menu">
+              {PANEL_ORDER.map((id) => (
+                <button key={id} onClick={() => handlePanelClick(id)}>
+                  <span className="view-check">{openPanels.has(id) ? "✓" : " "}</span>
+                  {PANEL_SPECS[id].title}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
         <span className="topbar-user">
           {me ? me.fullname || me.username : "…"}
           <a href="/">classic UI</a>

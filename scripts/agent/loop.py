@@ -201,6 +201,9 @@ async def run_turn(
     user_msg = {"role": "user", "content": user_message}
     store.append_message(username, conversation_id, user_msg)
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+    base_prompt = (cfg.get("base_prompt") or "").strip()
+    if base_prompt:
+        messages.append({"role": "system", "content": base_prompt})
     if focused_photo_id:
         messages.append({
             "role": "system",
