@@ -22,7 +22,7 @@ from typing import AsyncIterator
 from mcp.types import TextContent, ImageContent
 
 import mcp_tools
-from db import _current_user
+from db import _current_user, get_db
 
 from agent import llm, schema, store
 
@@ -45,7 +45,11 @@ SYSTEM_PROMPT = (
     "- Suggested tags: lowercase, compound words concatenated (oakpark), "
     "never bare year tags.\n"
     "- Keep responses concise. When you discuss a specific photo, mention its "
-    "photo id."
+    "photo id.\n"
+    "- Some turns include a note naming the photo currently open in the "
+    "user's Photo Browser panel. Treat that as the default target for "
+    "instructions that don't name a different photo — but an explicit photo "
+    "id or link in the user's own message always takes priority over it."
 )
 
 # One agent turn at a time per user.
@@ -126,25 +130,56 @@ def _focus_photo_id(name: str, args: dict) -> str | None:
     return None
 
 
+def _photo_preview_sync(user: dict, photo_id: str) -> dict | None:
+    """Best-effort thumbnail/title lookup for the confirm card. Never raises —
+    a missing preview just means the card falls back to showing the raw id."""
+    token = _current_user.set(user)
+    try:
+        with get_db() as conn:
+            row = conn.execute(
+                "SELECT id, title, url_medium FROM photos WHERE id = ?", (photo_id,)
+            ).fetchone()
+        if row:
+            return {"id": row["id"], "title": row["title"], "thumb_url": row["url_medium"]}
+    except Exception:
+        logging.exception("agent: photo preview lookup failed for %s", photo_id)
+    finally:
+        _current_user.reset(token)
+    return None
+
+
 async def run_turn(
     user: dict,
     conversation_id: str,
     user_message: str,
     cfg: dict,
+    focused_photo_id: str | None = None,
 ) -> AsyncIterator[dict]:
     """Run one user turn: LLM ↔ tools until the model stops calling tools.
 
     Caller must hold the user's turn lock and have verified cfg has a model.
+
+    ``focused_photo_id`` — whichever photo is currently open in the caller's
+    Photo Browser panel, if any. It is injected as a system note for THIS
+    turn's LLM call only and is never persisted to the stored conversation:
+    the note would otherwise go stale the moment the user looks at a
+    different photo, silently misdirecting later turns that replay history.
     """
     username = user["username"]
     tools = schema.to_openai_tools()
 
     user_msg = {"role": "user", "content": user_message}
     store.append_message(username, conversation_id, user_msg)
-    messages = (
-        [{"role": "system", "content": SYSTEM_PROMPT}]
-        + store.get_messages(username, conversation_id)
-    )
+    messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+    if focused_photo_id:
+        messages.append({
+            "role": "system",
+            "content": (
+                f"The user currently has photo {focused_photo_id} open in "
+                "the Photo Browser panel."
+            ),
+        })
+    messages += store.get_messages(username, conversation_id)
 
     try:
         for _ in range(MAX_ITERATIONS):
@@ -184,11 +219,17 @@ async def run_turn(
                 if args is not None and name in schema.WRITE_TOOLS:
                     confirm_id = uuid.uuid4().hex
                     future = _register_confirm(confirm_id)
+                    target_id = _focus_photo_id(name, args)
+                    photo = (
+                        await asyncio.to_thread(_photo_preview_sync, user, target_id)
+                        if target_id else None
+                    )
                     yield {
                         "type": "confirm_request",
                         "confirm_id": confirm_id,
                         "name": name,
                         "arguments": raw_args,
+                        "photo": photo,
                     }
                     if not await _await_confirmation(confirm_id, future):
                         text = f"User declined: {name} was not executed."

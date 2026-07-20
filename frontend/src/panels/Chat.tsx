@@ -26,6 +26,7 @@ interface PendingConfirm {
   confirm_id: string;
   name: string;
   arguments: string;
+  photo: { id: string; title: string; thumb_url: string | null } | null;
 }
 
 function wireToRender(messages: WireMessage[]): ChatMsg[] {
@@ -145,6 +146,7 @@ export function Chat() {
   const scrollRef = useRef<HTMLDivElement>(null);
   const activeIdRef = useRef<string | null>(null);
   activeIdRef.current = activeId;
+  const focusedPhotoRef = useRef<string | null>(null);
 
   const refreshConversations = useCallback(() => {
     getJSON<{ conversations: Conversation[] }>("/api/chat/conversations")
@@ -153,6 +155,11 @@ export function Chat() {
   }, []);
 
   useEffect(refreshConversations, [refreshConversations]);
+
+  // Track whichever photo is open in the Photo Browser so free-form messages
+  // (no workflow button, no explicit id) can default to it — see loop.py's
+  // focused_photo_id handling for why this rides in per-request, not stored.
+  useEffect(() => bus.on("photoOpened", (id) => { focusedPhotoRef.current = id; }), []);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
@@ -175,7 +182,11 @@ export function Chat() {
 
     try {
       await streamChat(
-        { conversation_id: activeIdRef.current ?? undefined, message: text },
+        {
+          conversation_id: activeIdRef.current ?? undefined,
+          message: text,
+          focused_photo_id: focusedPhotoRef.current,
+        },
         (event) => {
           switch (event.type) {
             case "start":
@@ -288,6 +299,14 @@ export function Chat() {
             <p>
               Run <strong>{confirm.name}</strong>?
             </p>
+            {confirm.photo && (
+              <div className="confirm-photo">
+                {confirm.photo.thumb_url && <img src={confirm.photo.thumb_url} alt="" />}
+                <span>
+                  {confirm.photo.title || "(untitled)"} — photo {confirm.photo.id}
+                </span>
+              </div>
+            )}
             <pre>{prettyArgs(confirm.arguments)}</pre>
             <div>
               <button className="approve" onClick={() => answerConfirm(true)}>

@@ -50,9 +50,30 @@ function emitHashFocus() {
   if (match) bus.emit("focusPhoto", match[1]);
 }
 
+// Where to (re-)add each panel when it isn't already open. Mirrors defaultLayout.
+const PANEL_SPECS: Record<string, { title: string; position?: Parameters<DockviewApi["addPanel"]>[0]["position"] }> = {
+  photos:  { title: "Photo Browser" },
+  summary: { title: "Summary", position: { referencePanel: "photos", direction: "right" } },
+  chat:    { title: "Chat", position: { referencePanel: "summary", direction: "below" } },
+  command: { title: "Commands", position: { referencePanel: "chat", direction: "within" } },
+};
+const PANEL_ORDER = ["photos", "summary", "chat", "command"];
+
+function openOrFocusPanel(api: DockviewApi, id: string) {
+  const existing = api.getPanel(id);
+  if (existing) {
+    existing.api.setActive();
+    return;
+  }
+  const spec = PANEL_SPECS[id];
+  api.addPanel({ id, component: id, title: spec.title, position: spec.position });
+}
+
 export default function App() {
   const [me, setMe] = useState<Me | null>(null);
+  const [openPanels, setOpenPanels] = useState<Set<string>>(new Set(PANEL_ORDER));
   const saveTimer = useRef<number | undefined>(undefined);
+  const dockApi = useRef<DockviewApi | null>(null);
 
   useEffect(() => {
     initSession().then(setMe).catch(() => {});
@@ -62,6 +83,7 @@ export default function App() {
   }, []);
 
   const onReady = (event: DockviewReadyEvent) => {
+    dockApi.current = event.api;
     const saved = localStorage.getItem(LAYOUT_KEY);
     let restored = false;
     if (saved) {
@@ -73,8 +95,10 @@ export default function App() {
       }
     }
     if (!restored) defaultLayout(event.api);
+    setOpenPanels(new Set(event.api.panels.map((p) => p.id)));
 
     event.api.onDidLayoutChange(() => {
+      setOpenPanels(new Set(event.api.panels.map((p) => p.id)));
       window.clearTimeout(saveTimer.current);
       saveTimer.current = window.setTimeout(() => {
         localStorage.setItem(LAYOUT_KEY, JSON.stringify(event.api.toJSON()));
@@ -89,6 +113,18 @@ export default function App() {
     <div className="workbench">
       <header className="topbar">
         <span className="topbar-title">Flickr Workbench</span>
+        <nav className="topbar-view-menu">
+          {PANEL_ORDER.map((id) => (
+            <button
+              key={id}
+              className={openPanels.has(id) ? "view-btn active" : "view-btn"}
+              onClick={() => dockApi.current && openOrFocusPanel(dockApi.current, id)}
+              title={openPanels.has(id) ? `Focus ${PANEL_SPECS[id].title}` : `Reopen ${PANEL_SPECS[id].title}`}
+            >
+              {PANEL_SPECS[id].title}
+            </button>
+          ))}
+        </nav>
         <span className="topbar-user">
           {me ? me.fullname || me.username : "…"}
           <a href="/">classic UI</a>

@@ -3,6 +3,7 @@
 interface Events {
   focusPhoto: string;
   runCommand: string; // a chat prompt to send immediately
+  photoOpened: string | null; // Photo Browser's current detail view, for chat context
 }
 
 type Handler<K extends keyof Events> = (payload: Events[K]) => void;

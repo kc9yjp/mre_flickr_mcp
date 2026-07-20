@@ -95,7 +95,13 @@ export type StreamEvent =
   | { type: "start"; conversation_id: string }
   | { type: "delta"; text: string }
   | { type: "tool_call"; id: string; name: string; arguments: string }
-  | { type: "confirm_request"; confirm_id: string; name: string; arguments: string }
+  | {
+      type: "confirm_request";
+      confirm_id: string;
+      name: string;
+      arguments: string;
+      photo: { id: string; title: string; thumb_url: string | null } | null;
+    }
   | { type: "tool_result"; id: string; name: string; text: string }
   | { type: "focus"; photo_id: string }
   | { type: "error"; message: string }
@@ -149,7 +155,7 @@ export async function postJSON<T>(url: string, body?: unknown): Promise<T> {
 
 /** POST to /api/chat/stream and invoke onEvent for every SSE data event. */
 export async function streamChat(
-  body: { conversation_id?: string; message: string },
+  body: { conversation_id?: string; message: string; focused_photo_id?: string | null },
   onEvent: (event: StreamEvent) => void,
 ): Promise<void> {
   const response = await fetch("/api/chat/stream", {

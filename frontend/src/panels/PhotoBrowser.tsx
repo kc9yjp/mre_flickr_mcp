@@ -137,6 +137,7 @@ export function PhotoBrowser() {
     setError("");
     try {
       setDetail(await getJSON<PhotoDetail>(`/api/photos/${id}`));
+      bus.emit("photoOpened", id);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
@@ -149,9 +150,14 @@ export function PhotoBrowser() {
     return bus.on("focusPhoto", openDetail);
   }, [load, openDetail]);
 
+  const closeDetail = useCallback(() => {
+    setDetail(null);
+    bus.emit("photoOpened", null);
+  }, []);
+
   const submit = (e: FormEvent) => {
     e.preventDefault();
-    setDetail(null);
+    closeDetail();
     setFilters(draft);
     load(draft, 0);
   };
@@ -159,7 +165,7 @@ export function PhotoBrowser() {
   if (detail) {
     return (
       <div className="panel photo-browser">
-        <DetailView detail={detail} onBack={() => setDetail(null)} />
+        <DetailView detail={detail} onBack={closeDetail} />
       </div>
     );
   }

@@ -50,6 +50,32 @@ body {
   font-weight: 600;
 }
 
+.topbar-view-menu {
+  display: flex;
+  gap: 4px;
+}
+
+.view-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--ink-muted);
+  border-radius: 4px;
+  padding: 3px 8px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.view-btn:hover {
+  color: var(--ink);
+  border-color: var(--ink-secondary);
+}
+
+.view-btn.active {
+  color: var(--ink);
+  border-color: var(--accent);
+  background: var(--surface);
+}
+
 .topbar-user {
   color: var(--ink-secondary);
 }
@@ -415,6 +441,23 @@ select:focus {
   border: 1px solid var(--accent);
   border-radius: 8px;
   padding: 10px;
+}
+
+.confirm-photo {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 0;
+  font-size: 12px;
+  color: var(--ink-secondary);
+}
+
+.confirm-photo img {
+  width: 48px;
+  height: 48px;
+  object-fit: cover;
+  border-radius: 4px;
+  flex: none;
 }
 
 .confirm-card pre {

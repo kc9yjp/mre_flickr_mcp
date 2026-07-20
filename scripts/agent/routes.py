@@ -77,10 +77,12 @@ async def chat_stream(request: Request):
     else:
         conversation_id = store.create_conversation(username, message)
 
+    focused_photo_id = (body.get("focused_photo_id") or "").strip() or None
+
     async def events():
         async with lock:
             yield {"type": "start", "conversation_id": conversation_id}
-            async for event in loop.run_turn(user, conversation_id, message, cfg):
+            async for event in loop.run_turn(user, conversation_id, message, cfg, focused_photo_id):
                 yield event
 
     return StreamingResponse(

@@ -200,6 +200,90 @@ async def test_run_turn_write_tool_denied(user_db):
 
 
 @pytest.mark.asyncio
+async def test_focused_photo_context_is_ephemeral_not_persisted(user_db):
+    """The focused-photo note must reach the LLM call but never land in the
+    stored conversation — otherwise it goes stale the moment the user looks
+    at a different photo and misdirects a later, unrelated turn."""
+    from agent import loop, store
+
+    conv = store.create_conversation(USERNAME, "t")
+    seen_messages = []
+
+    async def fake_stream_chat(cfg, messages, tools=None, client=None):
+        seen_messages.append(messages)
+        yield {"type": "message", "content": "ok", "tool_calls": [], "finish_reason": "stop"}
+
+    with patch("agent.loop.llm.stream_chat", fake_stream_chat):
+        events = [
+            e async for e in loop.run_turn(USER, conv, "add red tag", CFG, focused_photo_id="9999999")
+        ]
+
+    assert events[-1]["type"] == "done"
+    assert any("9999999" in (m.get("content") or "") for m in seen_messages[0])
+
+    stored = store.get_messages(USERNAME, conv)
+    assert all("9999999" not in json.dumps(m) for m in stored)
+    assert [m["role"] for m in stored] == ["user", "assistant"]
+
+
+@pytest.mark.asyncio
+async def test_confirm_request_includes_photo_preview(user_db):
+    from agent import loop, store
+
+    conv = store.create_conversation(USERNAME, "t")
+    scripted = _scripted_llm([
+        {"tool_calls": [_tool_call("c1", "update_photo", {"id": "photo1", "tags": "red"})]},
+        {"content": "Done."},
+    ])
+    events = []
+    with patch("agent.loop.llm.stream_chat", scripted):
+        async for event in loop.run_turn(USER, conv, "add red tag", CFG):
+            events.append(event)
+            if event["type"] == "confirm_request":
+                assert loop.resolve_confirm(event["confirm_id"], True)
+
+    confirm = next(e for e in events if e["type"] == "confirm_request")
+    # "photo1" fails the numeric-id check (_focus_photo_id), so no preview —
+    # this pins the current, deliberately conservative fallback behavior.
+    assert confirm["photo"] is None
+
+
+@pytest.mark.asyncio
+async def test_confirm_request_photo_preview_populated_for_numeric_id(user_db):
+    from agent import loop, store
+
+    con = sqlite3.connect(Path(user_db) / "flickr.db")
+    con.execute(
+        "INSERT INTO photos (id, title, description, date_taken, date_uploaded, "
+        "last_updated, url_photopage, url_original, tags, views, favorites, "
+        "comments, is_public, synced_at, reviewed_at, url_medium) "
+        "VALUES ('55405570240','Sunset','','2024-01-15 12:00:00',0,0,'','',"
+        "'',0,0,0,1,0,NULL,'https://live.staticflickr.com/x/thumb_z.jpg')"
+    )
+    con.commit()
+    con.close()
+
+    conv = store.create_conversation(USERNAME, "t")
+    scripted = _scripted_llm([
+        {"tool_calls": [_tool_call("c1", "update_photo", {"id": "55405570240", "tags": "red"})]},
+        {"content": "Done."},
+    ])
+    events = []
+    with patch("agent.loop.llm.stream_chat", scripted):
+        async for event in loop.run_turn(USER, conv, "add red tag", CFG):
+            events.append(event)
+            if event["type"] == "confirm_request":
+                assert loop.resolve_confirm(event["confirm_id"], True)
+
+    confirm = next(e for e in events if e["type"] == "confirm_request")
+    assert confirm["photo"] == {
+        "id": "55405570240",
+        "title": "Sunset",
+        "thumb_url": "https://live.staticflickr.com/x/thumb_z.jpg",
+    }
+
+
+@pytest.mark.asyncio
 async def test_run_turn_write_tool_approved_executes(user_db, patched_server):
     mcp, api_get, api_post = patched_server
     from agent import loop, store
