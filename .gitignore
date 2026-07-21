@@ -167,6 +167,7 @@ data/
 .mcp.json
 .mcp_servers.json
 .env
+docker-compose.yml
 
 # Playwright
 playwright/node_modules/
