@@ -61,10 +61,20 @@ original M5 plan (Ctrl/Cmd-K palette, browser extension).
   from `web.py`. Templates `home.html`, `stats.html`, `sync.html`, `queue.html`,
   `setup.html`, `settings.html` deleted. Only `login.html` and `base.html` remain.
 
-**Not done — pick up here:**
-1. **Ctrl/Cmd-K command palette** — quick-open for panels and workflow commands
-2. **Browser extension** — upgrade the bookmarklet to a proper extension that
-   auto-detects the current Flickr photo page without a click
+**Done — M5 remainder:**
+- **Ctrl/Cmd-K command palette**: searches panels and global workflow commands;
+  keyboard nav (↑↓ Enter Esc); opens panels via dockview on desktop, switches
+  the panel selector on mobile via `switchPanel` bus event. Panel definitions
+  extracted to `frontend/src/panelDefs.ts` shared between App and palette.
+- **Browser extension**: `GET /api/extension` generates a MV3 Chrome/Edge zip
+  with the server URL baked in. Popup opens the current Flickr photo page in
+  the Workbench with one click. Download button in the Setup panel.
+  Install: unzip → Chrome `chrome://extensions` → Developer mode → Load unpacked.
+- **`remember` pseudo-tool**: typing "remember X" or "memory: X" in chat calls
+  a `remember` tool that appends the guidance to `base_prompt` in `llm.json`,
+  taking effect on the next turn. No confirm gate.
+
+**Nothing left to do.** M1–M5 are complete.
 
 ## Running it
 
