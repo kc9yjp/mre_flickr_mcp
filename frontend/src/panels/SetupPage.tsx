@@ -102,6 +102,15 @@ export function SetupPage() {
         📷 Send to Workbench
       </a>
 
+      <h3 style={{ marginTop: 20 }}>Browser Extension</h3>
+      <p className="hint">
+        Chrome/Edge extension — one-click to open the current Flickr photo in the Workbench.
+        Download, unzip, then load as an unpacked extension in your browser's extension settings.
+      </p>
+      <a className="bookmarklet-link" href="/api/extension" download>
+        ⬇ Download Extension
+      </a>
+
       <h3 style={{ marginTop: 20 }}>API Key</h3>
       <p className="hint">Regenerating creates a new key — update your MCP config after.</p>
       {regenMsg && <p className="hint" style={{ color: "var(--accent)" }}>{regenMsg}</p>}

@@ -1,5 +1,7 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Me } from "./api";
+import * as bus from "./bus";
+import { CommandPalette } from "./CommandPalette";
 import { Chat } from "./panels/Chat";
 import { PhotoBrowser } from "./panels/PhotoBrowser";
 import { Summary } from "./panels/Summary";
@@ -47,9 +49,12 @@ export function MobileLayout({ me }: { me: Me | null }) {
   });
 
   const switchPanel = (id: PanelId) => {
-    setPanel(id);
+    if (!PANELS.some((p) => p.id === id)) return;
+    setPanel(id as PanelId);
     localStorage.setItem(PANEL_KEY, id);
   };
+
+  useEffect(() => bus.on("switchPanel", (id) => switchPanel(id as PanelId)), []);
 
   const togglePosition = () => {
     setChatBottom((b) => {
@@ -96,6 +101,7 @@ export function MobileLayout({ me }: { me: Me | null }) {
 
   return (
     <div className="mobile-layout">
+      <CommandPalette />
       {chatBottom ? (
         <>
           {contentPane}

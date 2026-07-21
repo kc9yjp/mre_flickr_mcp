@@ -18,6 +18,8 @@ import { SetupPage } from "./panels/SetupPage";
 import { SettingsPage } from "./panels/SettingsPage";
 import { MobileLayout } from "./MobileLayout";
 import { useIsMobile } from "./useIsMobile";
+import { CommandPalette, paletteShortcut } from "./CommandPalette";
+import { PANEL_SPECS, PANEL_ORDER, openOrFocusPanel } from "./panelDefs";
 
 const LAYOUT_KEY = "workbench-layout-v1";
 
@@ -58,29 +60,6 @@ function defaultLayout(api: DockviewApi) {
 function emitHashFocus() {
   const match = window.location.hash.match(/photo=(\d+)/);
   if (match) bus.emit("focusPhoto", match[1]);
-}
-
-// Where to (re-)add each panel when it isn't already open. Mirrors defaultLayout.
-const PANEL_SPECS: Record<string, { title: string; position?: Parameters<DockviewApi["addPanel"]>[0]["position"] }> = {
-  photos:   { title: "Photo Browser" },
-  summary:  { title: "Summary",  position: { referencePanel: "photos",  direction: "right" } },
-  chat:     { title: "Chat",     position: { referencePanel: "summary", direction: "below" } },
-  command:  { title: "Commands", position: { referencePanel: "chat",    direction: "within" } },
-  sync:     { title: "Sync",     position: { referencePanel: "command", direction: "within" } },
-  queue:    { title: "Queue",    position: { referencePanel: "command", direction: "within" } },
-  setup:    { title: "Setup",    position: { referencePanel: "command", direction: "within" } },
-  settings: { title: "Settings", position: { referencePanel: "command", direction: "within" } },
-};
-const PANEL_ORDER = ["photos", "summary", "chat", "command", "sync", "queue", "setup", "settings"];
-
-function openOrFocusPanel(api: DockviewApi, id: string) {
-  const existing = api.getPanel(id);
-  if (existing) {
-    existing.api.setActive();
-    return;
-  }
-  const spec = PANEL_SPECS[id];
-  api.addPanel({ id, component: id, title: spec.title, position: spec.position });
 }
 
 export default function App() {
@@ -151,7 +130,7 @@ export default function App() {
           <button
             className="view-dropdown-toggle"
             onClick={() => setViewOpen((o) => !o)}
-            title="Show/hide panels"
+            title={`Show/hide panels (${paletteShortcut})`}
           >
             View ▾
           </button>
@@ -173,6 +152,7 @@ export default function App() {
       <div className="dock-container">
         <DockviewReact components={components} onReady={onReady} theme={themeDark} />
       </div>
+      <CommandPalette dockApiRef={dockApi} />
     </div>
   );
 }

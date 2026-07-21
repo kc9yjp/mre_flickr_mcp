@@ -541,6 +541,79 @@ async def api_settings(request: Request):
     return JSONResponse({"settings": settings})
 
 
+async def api_extension(request: Request):
+    """GET /api/extension — download a browser extension zip with the server URL baked in."""
+    import io, zipfile, textwrap
+    user = _session_user(request)
+    if not user:
+        return _unauthorized()
+
+    base = str(request.base_url).rstrip("/")
+
+    manifest = json.dumps({
+        "manifest_version": 3,
+        "name": "Photo Workbench",
+        "version": "1.0.0",
+        "description": "Open the current Flickr photo in Mr. E's Photo Workbench",
+        "action": {"default_popup": "popup.html"},
+        "permissions": ["tabs"],
+    }, indent=2)
+
+    popup_html = textwrap.dedent("""\
+        <!doctype html>
+        <html>
+        <head>
+          <meta charset="utf-8">
+          <style>
+            body { width: 220px; padding: 14px; font-family: sans-serif; font-size: 14px; }
+            button { width: 100%; padding: 10px; font-size: 14px; cursor: pointer; border-radius: 6px; border: 1px solid #888; background: #222; color: #eee; }
+            button:hover:not(:disabled) { border-color: #5aa2e8; }
+            button:disabled { opacity: 0.45; cursor: default; }
+            p { color: #888; font-size: 12px; margin: 8px 0 0; }
+          </style>
+        </head>
+        <body>
+          <button id="btn">Open in Workbench</button>
+          <p id="msg"></p>
+          <script src="popup.js"></script>
+        </body>
+        </html>
+    """)
+
+    popup_js = textwrap.dedent(f"""\
+        const BASE = {json.dumps(base)};
+        chrome.tabs.query({{active: true, currentWindow: true}}, function([tab]) {{
+          const m = tab && tab.url && tab.url.match(/flickr\\.com\\/photos\\/[^/]+\\/(\\d+)/);
+          const btn = document.getElementById('btn');
+          const msg = document.getElementById('msg');
+          if (m) {{
+            btn.onclick = function() {{
+              chrome.tabs.create({{url: BASE + '/app/#photo=' + m[1]}});
+              window.close();
+            }};
+            msg.textContent = 'Photo ' + m[1];
+          }} else {{
+            btn.disabled = true;
+            msg.textContent = 'Not a Flickr photo page';
+          }}
+        }});
+    """)
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("manifest.json", manifest)
+        zf.writestr("popup.html", popup_html)
+        zf.writestr("popup.js", popup_js)
+    buf.seek(0)
+
+    from starlette.responses import Response as _Response
+    return _Response(
+        buf.read(),
+        media_type="application/zip",
+        headers={"Content-Disposition": 'attachment; filename="photo-workbench-extension.zip"'},
+    )
+
+
 def api_routes() -> list[Route]:
     """Routes to register in the main Starlette app (see ``web.main_sse``)."""
     return [
@@ -555,4 +628,5 @@ def api_routes() -> list[Route]:
         Route("/api/reset",        endpoint=api_reset, methods=["POST"]),
         Route("/api/settings",     endpoint=api_settings, methods=["GET", "POST"]),
         Route("/api/regen-key",    endpoint=api_regen_key, methods=["POST"]),
+        Route("/api/extension",    endpoint=api_extension),
     ]
