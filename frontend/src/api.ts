@@ -29,6 +29,8 @@ export interface Photo {
 export interface PhotoDetail extends Photo {
   groups: { id: string; name: string }[];
   in_keeper_list: boolean;
+  is_own: boolean;
+  owner?: { nsid: string; username: string; realname: string; profile_url: string };
 }
 
 export interface PhotoPage {
@@ -170,6 +172,14 @@ export async function initSession(): Promise<Me> {
 export async function getJSON<T>(url: string, params?: Record<string, string>): Promise<T> {
   const qs = params ? "?" + new URLSearchParams(params).toString() : "";
   return handle<T>(await fetch(url + qs));
+}
+
+export async function favePhoto(id: string): Promise<{ ok: true }> {
+  return postJSON(`/api/photos/${id}/fave`, {});
+}
+
+export async function commentOnPhoto(id: string, commentText: string): Promise<{ ok: true; comment_id: string }> {
+  return postJSON(`/api/photos/${id}/comment`, { comment_text: commentText });
 }
 
 export async function postJSON<T>(url: string, body?: unknown): Promise<T> {

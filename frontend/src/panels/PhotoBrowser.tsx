@@ -1,5 +1,14 @@
 import { FormEvent, useCallback, useEffect, useState } from "react";
-import { getJSON, Photo, PhotoDetail, PhotoPage, WorkflowCommand } from "../api";
+import {
+  ApiError,
+  commentOnPhoto,
+  favePhoto,
+  getJSON,
+  Photo,
+  PhotoDetail,
+  PhotoPage,
+  WorkflowCommand,
+} from "../api";
 import * as bus from "../bus";
 import { compactNumber } from "../format";
 
@@ -51,6 +60,63 @@ function Thumb({ photo, onClick }: { photo: Photo; onClick: () => void }) {
   );
 }
 
+function FaveCommentBar({ photoId }: { photoId: string }) {
+  const [comment, setComment] = useState("");
+  const [faveStatus, setFaveStatus] = useState("");
+  const [commentStatus, setCommentStatus] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const doFave = async () => {
+    setFaveStatus("");
+    setBusy(true);
+    try {
+      await favePhoto(photoId);
+      setFaveStatus("★ Faved");
+    } catch (e) {
+      setFaveStatus(e instanceof ApiError ? e.message : "Fave failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const submitComment = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!comment.trim()) return;
+    setCommentStatus("");
+    setBusy(true);
+    try {
+      await commentOnPhoto(photoId, comment.trim());
+      setComment("");
+      setCommentStatus("Comment posted.");
+    } catch (e) {
+      setCommentStatus(e instanceof ApiError ? e.message : "Comment failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="detail-fave-comment">
+      <div className="detail-fave-row">
+        <button onClick={doFave} disabled={busy}>★ Fave</button>
+        {faveStatus && <span className="hint">{faveStatus}</span>}
+      </div>
+      <form className="detail-comment-form" onSubmit={submitComment}>
+        <textarea
+          rows={2}
+          placeholder="Write a comment…"
+          value={comment}
+          onChange={(e) => setComment(e.target.value)}
+        />
+        <button type="submit" disabled={busy || !comment.trim()}>
+          Comment
+        </button>
+      </form>
+      {commentStatus && <span className="hint">{commentStatus}</span>}
+    </div>
+  );
+}
+
 function DetailView({ detail, onBack }: { detail: PhotoDetail; onBack: () => void }) {
   const src = detail.url_original || detail.url_medium;
   return (
@@ -61,27 +127,38 @@ function DetailView({ detail, onBack }: { detail: PhotoDetail; onBack: () => voi
           Open on Flickr ↗
         </a>
       </div>
-      <div className="detail-workflows">
-        {photoCommands.map((c) => (
-          <button
-            key={c.id}
-            title="Runs in the Chat panel"
-            onClick={() => bus.emit("runCommand", c.prompt.replaceAll("{photo_id}", detail.id))}
-          >
-            ▶ {c.label}
-          </button>
-        ))}
-      </div>
+      {detail.is_own && (
+        <div className="detail-workflows">
+          {photoCommands.map((c) => (
+            <button
+              key={c.id}
+              title="Runs in the Chat panel"
+              onClick={() => bus.emit("runCommand", c.prompt.replaceAll("{photo_id}", detail.id))}
+            >
+              ▶ {c.label}
+            </button>
+          ))}
+        </div>
+      )}
       {src && <img className="detail-image" src={src} alt={detail.title} />}
       <h2>{detail.title || detail.id}</h2>
+      {!detail.is_own && detail.owner && (
+        <p className="hint">
+          by{" "}
+          <a href={detail.owner.profile_url} target="_blank" rel="noreferrer">
+            {detail.owner.realname || detail.owner.username || detail.owner.nsid}
+          </a>
+        </p>
+      )}
       {detail.description && <p className="detail-description">{detail.description}</p>}
       <div className="detail-stats">
         <span>{compactNumber(detail.views)} views</span>
-        <span>{detail.favorites} faves</span>
-        <span>{detail.comments} comments</span>
+        <span>{compactNumber(detail.favorites)} faves</span>
+        <span>{compactNumber(detail.comments)} comments</span>
         <span>{detail.is_public ? "public" : "private"}</span>
         {detail.in_keeper_list && <span>keeper</span>}
       </div>
+      <FaveCommentBar photoId={detail.id} />
       <dl className="detail-meta">
         <dt>Taken</dt>
         <dd>{detail.date_taken || "unknown"}</dd>
@@ -95,16 +172,20 @@ function DetailView({ detail, onBack }: { detail: PhotoDetail; onBack: () => voi
               ))
             : "none"}
         </dd>
-        <dt>Groups</dt>
-        <dd>
-          {detail.groups.length
-            ? detail.groups.map((g) => (
-                <span key={g.id} className="chip">
-                  {g.name}
-                </span>
-              ))
-            : "none"}
-        </dd>
+        {detail.is_own && (
+          <>
+            <dt>Groups</dt>
+            <dd>
+              {detail.groups.length
+                ? detail.groups.map((g) => (
+                    <span key={g.id} className="chip">
+                      {g.name}
+                    </span>
+                  ))
+                : "none"}
+            </dd>
+          </>
+        )}
       </dl>
     </div>
   );

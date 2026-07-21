@@ -18,6 +18,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Route
 
+import flickr_api
 from db import db_file, get_db_for_user, SETTINGS_DEFAULTS, get_setting, set_setting
 from mcp_tools import _get_user_lock
 
@@ -131,16 +132,18 @@ async def api_photo_detail(request: Request):
     user = _session_user(request)
     if not user:
         return _unauthorized()
-    if err := _no_db(user["username"]):
-        return err
 
     photo_id = request.path_params["id"]
+
+    if not os.path.exists(db_file(user["username"])):
+        return await _external_photo_detail(user, photo_id)
+
     with get_db_for_user(user["username"]) as conn:
         row = conn.execute(
             f"SELECT {_PHOTO_COLUMNS} FROM photos WHERE id = ?", (photo_id,)
         ).fetchone()
         if not row:
-            return JSONResponse({"error": "photo not found"}, status_code=404)
+            return await _external_photo_detail(user, photo_id)
         groups = conn.execute(
             "SELECT g.id, g.name FROM photo_groups pg "
             "JOIN groups g ON pg.group_id = g.id WHERE pg.photo_id = ? "
@@ -155,7 +158,128 @@ async def api_photo_detail(request: Request):
         **dict(row),
         "groups": [dict(g) for g in groups],
         "in_keeper_list": bool(keeper),
+        "is_own": True,
     })
+
+
+async def _external_photo_detail(user: dict, photo_id: str) -> JSONResponse:
+    """Fetch detail for a photo that isn't (yet) in the local DB — e.g. someone
+    else's photo opened via the bookmarklet — straight from the Flickr API."""
+    from db import _current_user as _ctx
+
+    token = _ctx.set(user)
+    try:
+        info = flickr_api._api_get("flickr.photos.getInfo", {"photo_id": photo_id})
+        sizes_data = flickr_api._api_get("flickr.photos.getSizes", {"photo_id": photo_id})
+        try:
+            faves_data = flickr_api._api_get(
+                "flickr.photos.getFavorites", {"photo_id": photo_id, "per_page": "1"}
+            )
+            favorites = int(faves_data.get("photo", {}).get("total", 0) or 0)
+        except Exception:
+            favorites = 0
+    except flickr_api.FlickrAPIError as e:
+        status = 404 if e.code == 1 else 502
+        return JSONResponse({"error": e.flickr_message}, status_code=status)
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=502)
+    finally:
+        _ctx.reset(token)
+
+    photo = info["photo"]
+    owner = photo.get("owner", {})
+    sizes = sizes_data.get("sizes", {}).get("size", [])
+
+    def _pick(labels):
+        return next(
+            (s["source"] for label in labels for s in sizes if s["label"] == label),
+            None,
+        )
+
+    url_original = _pick(("Original", "Large 2048", "Large 1600", "Large"))
+    if not url_original and sizes:
+        url_original = sizes[-1]["source"]
+    url_medium = _pick(("Medium 640", "Medium"))
+
+    tags = " ".join(t["raw"] for t in photo.get("tags", {}).get("tag", []))
+
+    return JSONResponse({
+        "id":             photo_id,
+        "title":          photo.get("title", {}).get("_content", ""),
+        "description":    photo.get("description", {}).get("_content", ""),
+        "date_taken":     photo.get("dates", {}).get("taken", ""),
+        "date_uploaded":  int(photo.get("dates", {}).get("posted", 0) or 0),
+        "last_updated":   int(photo.get("dates", {}).get("lastupdate", 0) or 0),
+        "url_photopage":  f"https://www.flickr.com/photos/{owner.get('nsid', '')}/{photo_id}/",
+        "url_original":   url_original,
+        "url_medium":     url_medium,
+        "tags":           tags,
+        "views":          int(photo.get("views", 0) or 0),
+        "favorites":      favorites,
+        "comments":       int(photo.get("comments", {}).get("_content", 0) or 0),
+        "is_public":      1 if photo.get("visibility", {}).get("ispublic", 1) else 0,
+        "synced_at":      0,
+        "groups":         [],
+        "in_keeper_list": False,
+        "is_own":         False,
+        "owner": {
+            "nsid":       owner.get("nsid", ""),
+            "username":   owner.get("username", ""),
+            "realname":   owner.get("realname", ""),
+            "profile_url": f"https://www.flickr.com/people/{owner.get('nsid', '')}/",
+        },
+    })
+
+
+async def api_photo_fave(request: Request):
+    """POST /api/photos/{id}/fave — add any Flickr photo to the user's favorites."""
+    user = _session_user(request)
+    if not user:
+        return _unauthorized()
+
+    from db import _current_user as _ctx
+
+    token = _ctx.set(user)
+    try:
+        flickr_api._api_post("flickr.favorites.add", {"photo_id": request.path_params["id"]})
+    except flickr_api.FlickrAPIError as e:
+        return JSONResponse({"error": e.flickr_message}, status_code=502)
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=502)
+    finally:
+        _ctx.reset(token)
+    return JSONResponse({"ok": True})
+
+
+async def api_photo_comment(request: Request):
+    """POST /api/photos/{id}/comment — post a comment on any Flickr photo."""
+    user = _session_user(request)
+    if not user:
+        return _unauthorized()
+
+    try:
+        body = await request.json()
+    except ValueError:
+        return JSONResponse({"error": "invalid JSON"}, status_code=400)
+    comment_text = (body.get("comment_text") or "").strip()
+    if not comment_text:
+        return JSONResponse({"error": "comment_text is required"}, status_code=400)
+
+    from db import _current_user as _ctx
+
+    token = _ctx.set(user)
+    try:
+        data = flickr_api._api_post("flickr.photos.comments.addComment", {
+            "photo_id":     request.path_params["id"],
+            "comment_text": comment_text,
+        })
+    except flickr_api.FlickrAPIError as e:
+        return JSONResponse({"error": e.flickr_message}, status_code=502)
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=502)
+    finally:
+        _ctx.reset(token)
+    return JSONResponse({"ok": True, "comment_id": data.get("comment", {}).get("id", "")})
 
 
 async def api_stats(request: Request):
@@ -620,6 +744,8 @@ def api_routes() -> list[Route]:
         Route("/api/me",           endpoint=api_me),
         Route("/api/photos",       endpoint=api_photos),
         Route("/api/photos/{id}",  endpoint=api_photo_detail),
+        Route("/api/photos/{id}/fave",    endpoint=api_photo_fave, methods=["POST"]),
+        Route("/api/photos/{id}/comment", endpoint=api_photo_comment, methods=["POST"]),
         Route("/api/stats",        endpoint=api_stats),
         Route("/api/sync/status",  endpoint=api_sync_status),
         Route("/api/sync/{type}",  endpoint=api_sync_trigger, methods=["POST"]),

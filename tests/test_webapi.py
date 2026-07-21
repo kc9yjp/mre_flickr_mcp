@@ -143,7 +143,85 @@ def test_api_photo_detail_includes_groups_and_keeper_flag(client):
 
 def test_api_photo_detail_missing_returns_404(client):
     _login(client)
-    assert client.get("/api/photos/doesnotexist").status_code == 404
+    import flickr_api
+    with patch("webapi.flickr_api._api_get", side_effect=flickr_api.FlickrAPIError(1, "Photo not found")):
+        assert client.get("/api/photos/doesnotexist").status_code == 404
+
+
+def _fake_external_api_get(method, extra=None):
+    if method == "flickr.photos.getInfo":
+        return {
+            "photo": {
+                "id": "9999",
+                "owner": {"nsid": "55@N00", "username": "someoneelse", "realname": "Some One"},
+                "title": {"_content": "Cool Photo"},
+                "description": {"_content": "A description"},
+                "dates": {"taken": "2020-01-01 00:00:00", "posted": "1600000000", "lastupdate": "1600000001"},
+                "views": "42",
+                "comments": {"_content": "3"},
+                "visibility": {"ispublic": 1},
+                "tags": {"tag": [{"raw": "sunset"}, {"raw": "lake"}]},
+            }
+        }
+    if method == "flickr.photos.getSizes":
+        return {"sizes": {"size": [
+            {"label": "Medium", "source": "https://example.com/medium.jpg"},
+            {"label": "Large", "source": "https://example.com/large.jpg"},
+        ]}}
+    if method == "flickr.photos.getFavorites":
+        return {"photo": {"total": "7"}}
+    raise AssertionError(f"unexpected method {method}")
+
+
+def test_api_photo_detail_external_photo_fetched_from_flickr(client):
+    _login(client)
+    with patch("webapi.flickr_api._api_get", side_effect=_fake_external_api_get):
+        resp = client.get("/api/photos/9999")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["is_own"] is False
+    assert data["title"] == "Cool Photo"
+    assert data["favorites"] == 7
+    assert data["comments"] == 3
+    assert data["tags"] == "sunset lake"
+    assert data["owner"]["username"] == "someoneelse"
+    assert data["url_original"] == "https://example.com/large.jpg"
+    assert data["url_photopage"] == "https://www.flickr.com/photos/55@N00/9999/"
+
+
+def test_api_photo_fave_posts_to_flickr(client):
+    _login(client)
+    with patch("webapi.flickr_api._api_post") as mock_post:
+        mock_post.return_value = {"stat": "ok"}
+        resp = client.post("/api/photos/9999/fave", headers={"X-CSRF-Token": CSRF})
+    assert resp.status_code == 200
+    assert resp.json()["ok"] is True
+    mock_post.assert_called_once_with("flickr.favorites.add", {"photo_id": "9999"})
+
+
+def test_api_photo_comment_posts_to_flickr(client):
+    _login(client)
+    with patch("webapi.flickr_api._api_post") as mock_post:
+        mock_post.return_value = {"comment": {"id": "abc123"}}
+        resp = client.post(
+            "/api/photos/9999/comment",
+            json={"comment_text": "Nice shot!"},
+            headers={"X-CSRF-Token": CSRF},
+        )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["ok"] is True
+    assert body["comment_id"] == "abc123"
+    mock_post.assert_called_once_with(
+        "flickr.photos.comments.addComment",
+        {"photo_id": "9999", "comment_text": "Nice shot!"},
+    )
+
+
+def test_api_photo_comment_requires_text(client):
+    _login(client)
+    resp = client.post("/api/photos/9999/comment", json={}, headers={"X-CSRF-Token": CSRF})
+    assert resp.status_code == 400
 
 
 # --- stats ---
