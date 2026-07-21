@@ -24,7 +24,7 @@ from mcp.types import TextContent, ImageContent
 import mcp_tools
 from db import _current_user, get_db
 
-from agent import llm, schema, store
+from agent import llm, schema, store, settings as _agent_settings
 
 MAX_ITERATIONS = 15
 CONFIRM_TIMEOUT = 300  # seconds to wait for the user's approve/deny
@@ -50,12 +50,38 @@ SYSTEM_PROMPT = (
     "user's Photo Browser panel. Treat that as the default target for "
     "instructions that don't name a different photo — but an explicit photo "
     "id or link in the user's own message always takes priority over it.\n"
+    "- When the user says 'remember' or 'memory' followed by guidance, or asks "
+    "you to remember a preference or rule for future conversations, call the "
+    "`remember` tool with that guidance. Keep each piece of guidance as a "
+    "concise, self-contained sentence or rule.\n"
     "- CRITICAL: Never claim to have seen, viewed, or visually described a "
     "photo unless actual image data was provided in the tool result. If a tool "
     "result says vision is disabled, work from title, description, tags, and "
     "EXIF only, and tell the user explicitly that visual inspection is "
     "unavailable. Guessing or fabricating visual details is not allowed."
 )
+
+_REMEMBER_TOOL: dict = {
+    "type": "function",
+    "function": {
+        "name": "remember",
+        "description": (
+            "Save persistent guidance to your base prompt so it applies to all "
+            "future conversations. Call this when the user asks you to remember "
+            "a preference, rule, or context for future sessions."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "guidance": {
+                    "type": "string",
+                    "description": "Concise guidance to append to the base prompt.",
+                }
+            },
+            "required": ["guidance"],
+        },
+    },
+}
 
 # One agent turn at a time per user.
 _turn_locks: dict[str, asyncio.Lock] = {}
@@ -196,7 +222,7 @@ async def run_turn(
     """
     username = user["username"]
     vision = bool(cfg.get("vision", False))
-    tools = schema.to_openai_tools()
+    tools = schema.to_openai_tools() + [_REMEMBER_TOOL]
 
     user_msg = {"role": "user", "content": user_message}
     store.append_message(username, conversation_id, user_msg)
@@ -245,7 +271,20 @@ async def run_turn(
                     text = f"Invalid tool arguments: {e}"
                     args = None
 
-                if args is not None and name not in mcp_tools._HANDLERS:
+                if args is not None and name == "remember":
+                    guidance = (args.get("guidance") or "").strip()
+                    if guidance:
+                        nsid = user.get("nsid", "")
+                        cur = _agent_settings.load_settings(nsid)
+                        existing = (cur.get("base_prompt") or "").strip()
+                        updated = (existing + "\n" + guidance).strip() if existing else guidance
+                        _agent_settings.save_settings(nsid, {**cur, "base_prompt": updated})
+                        text = f"Remembered: {guidance}"
+                    else:
+                        text = "Nothing to remember (empty guidance)."
+                    args = None
+
+                elif args is not None and name not in mcp_tools._HANDLERS:
                     text = f"Unknown tool: {name}"
                     args = None
 

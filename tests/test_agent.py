@@ -419,3 +419,83 @@ def test_commands_resolve_user_placeholder():
     assert "99@N00" in reply["prompt"]
     photo_cmds = [c for c in cmds if c["context"] == "photo"]
     assert photo_cmds and all("{photo_id}" in c["prompt"] for c in photo_cmds)
+
+
+# --- remember tool ---
+
+@pytest.mark.asyncio
+async def test_remember_appends_to_base_prompt(user_db, tmp_path):
+    """'remember' pseudo-tool appends guidance to base_prompt in llm.json."""
+    from agent import loop, store, settings as _settings
+
+    settings_dir = tmp_path / "creds" / NSID
+    settings_dir.mkdir(parents=True)
+
+    conv = store.create_conversation(USERNAME, "t")
+    scripted = _scripted_llm([
+        {"tool_calls": [_tool_call("c1", "remember", {"guidance": "Always be concise."})]},
+        {"content": "Got it."},
+    ])
+
+    with patch("agent.loop.llm.stream_chat", scripted), \
+         patch("agent.loop._agent_settings.load_settings", return_value={
+             "base_url": "", "api_key": "", "model": "", "max_tokens": 512,
+             "vision": False, "base_prompt": "",
+         }) as mock_load, \
+         patch("agent.loop._agent_settings.save_settings") as mock_save:
+        events = [e async for e in loop.run_turn(USER, conv, "remember: always be concise", CFG)]
+
+    mock_save.assert_called_once()
+    saved_cfg = mock_save.call_args[0][1]
+    assert "Always be concise." in saved_cfg["base_prompt"]
+
+    result = next(e for e in events if e["type"] == "tool_result")
+    assert "Remembered" in result["text"]
+    assert "Always be concise." in result["text"]
+
+
+@pytest.mark.asyncio
+async def test_remember_appends_to_existing_base_prompt(user_db):
+    """'remember' appends new guidance after existing base_prompt content."""
+    from agent import loop, store
+
+    conv = store.create_conversation(USERNAME, "t")
+    scripted = _scripted_llm([
+        {"tool_calls": [_tool_call("c1", "remember", {"guidance": "Second rule."})]},
+        {"content": "Done."},
+    ])
+
+    existing_cfg = {
+        "base_url": "", "api_key": "", "model": "", "max_tokens": 512,
+        "vision": False, "base_prompt": "First rule.",
+    }
+    with patch("agent.loop.llm.stream_chat", scripted), \
+         patch("agent.loop._agent_settings.load_settings", return_value=existing_cfg), \
+         patch("agent.loop._agent_settings.save_settings") as mock_save:
+        [e async for e in loop.run_turn(USER, conv, "remember second rule", CFG)]
+
+    saved_cfg = mock_save.call_args[0][1]
+    assert "First rule." in saved_cfg["base_prompt"]
+    assert "Second rule." in saved_cfg["base_prompt"]
+
+
+@pytest.mark.asyncio
+async def test_remember_does_not_require_confirm(user_db):
+    """'remember' must never emit a confirm_request event."""
+    from agent import loop, store
+
+    conv = store.create_conversation(USERNAME, "t")
+    scripted = _scripted_llm([
+        {"tool_calls": [_tool_call("c1", "remember", {"guidance": "No confirms needed."})]},
+        {"content": "Done."},
+    ])
+
+    with patch("agent.loop.llm.stream_chat", scripted), \
+         patch("agent.loop._agent_settings.load_settings", return_value={
+             "base_url": "", "api_key": "", "model": "", "max_tokens": 512,
+             "vision": False, "base_prompt": "",
+         }), \
+         patch("agent.loop._agent_settings.save_settings"):
+        events = [e async for e in loop.run_turn(USER, conv, "remember this", CFG)]
+
+    assert not any(e["type"] == "confirm_request" for e in events)
