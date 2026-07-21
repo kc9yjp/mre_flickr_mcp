@@ -7,6 +7,7 @@ import { Command } from "./panels/Command";
 import { SyncPage } from "./panels/SyncPage";
 import { QueuePage } from "./panels/QueuePage";
 import { SetupPage } from "./panels/SetupPage";
+import { SettingsPage } from "./panels/SettingsPage";
 
 const PANELS = [
   { id: "summary",  label: "Stats" },
@@ -15,6 +16,7 @@ const PANELS = [
   { id: "queue",    label: "Queue" },
   { id: "commands", label: "Commands" },
   { id: "setup",    label: "Setup" },
+  { id: "settings", label: "Settings" },
 ] as const;
 
 type PanelId = (typeof PANELS)[number]["id"];
@@ -30,6 +32,7 @@ function ContentPanel({ id }: { id: PanelId }) {
     case "sync":     return <SyncPage />;
     case "queue":    return <QueuePage />;
     case "setup":    return <SetupPage />;
+    case "settings": return <SettingsPage />;
   }
 }
 

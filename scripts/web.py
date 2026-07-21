@@ -163,13 +163,15 @@ async def route_root(request: Request):
     if "csrf_token" not in request.session:
         request.session["csrf_token"] = secrets.token_hex(32)
 
-    msg = request.query_params.get("msg", "")
     user_nsid = request.session.get("user_nsid", "")
-    logged_in = bool(user_nsid)
-
-    if not logged_in:
+    if not user_nsid:
         from starlette.responses import RedirectResponse
         return RedirectResponse(url="/login", status_code=302)
+    from starlette.responses import RedirectResponse
+    return RedirectResponse(url="/app", status_code=302)
+
+    msg = request.query_params.get("msg", "")
+    logged_in = bool(user_nsid)
     username = request.session.get("fullname") or request.session.get("username") or user_nsid
     db_username = request.session.get("username", "")
 

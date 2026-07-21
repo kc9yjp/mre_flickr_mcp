@@ -771,6 +771,32 @@ select:focus {
   font-size: 15px;
 }
 
+/* --- Settings page --- */
+
+.settings-item {
+  margin-bottom: 16px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.settings-label {
+  font-weight: 600;
+  display: block;
+  margin-bottom: 4px;
+}
+
+.settings-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.settings-row input {
+  flex: 1;
+  min-width: 160px;
+}
+
 /* --- Command --- */
 
 .command-buttons {

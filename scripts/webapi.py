@@ -18,7 +18,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Route
 
-from db import db_file, get_db_for_user
+from db import db_file, get_db_for_user, SETTINGS_DEFAULTS, get_setting, set_setting
 from mcp_tools import _get_user_lock
 
 # Accessed as attributes at call time so tests can reload/patch web freely.
@@ -445,6 +445,84 @@ async def api_reset(request: Request):
     return JSONResponse({"ok": True})
 
 
+async def api_settings(request: Request):
+    """GET /api/settings — list settings with values; POST — save updates."""
+    user = _session_user(request)
+    if not user:
+        return _unauthorized()
+    username = user["username"]
+
+    if request.method == "POST":
+        try:
+            body = await request.json()
+        except ValueError:
+            return JSONResponse({"error": "invalid JSON"}, status_code=400)
+
+        errors = []
+        updates: dict[str, str] = {}
+
+        tz_val = (body.get("group_queue_retry_tz") or "").strip()
+        if tz_val:
+            try:
+                from zoneinfo import ZoneInfo
+                ZoneInfo(tz_val)
+                updates["group_queue_retry_tz"] = tz_val
+            except Exception:
+                errors.append(f"Invalid timezone: {tz_val!r}. Use an IANA name like America/Chicago.")
+
+        retry_val = (body.get("group_queue_default_retry") or "").strip()
+        if retry_val:
+            parts = retry_val.split(":")
+            if len(parts) == 2 and all(p.isdigit() for p in parts) and 0 <= int(parts[0]) <= 23 and 0 <= int(parts[1]) <= 59:
+                updates["group_queue_default_retry"] = retry_val
+            else:
+                errors.append(f"Invalid time: {retry_val!r}. Use HH:MM in 24-hour format.")
+
+        interval_val = (body.get("sync_refresh_interval_hours") or "").strip()
+        if interval_val:
+            try:
+                h = int(interval_val)
+                if h < 1 or h > 168:
+                    raise ValueError
+                updates["sync_refresh_interval_hours"] = str(h)
+            except ValueError:
+                errors.append("Sync interval must be 1–168 hours.")
+
+        if errors:
+            return JSONResponse({"error": " ".join(errors)}, status_code=400)
+
+        if err := _no_db(username):
+            return err
+        try:
+            with get_db_for_user(username) as conn:
+                for key, value in updates.items():
+                    set_setting(conn, key, value)
+        except Exception as e:
+            logging.exception("api_settings POST error")
+            return JSONResponse({"error": str(e)}, status_code=500)
+
+    try:
+        with get_db_for_user(username) as conn:
+            settings = [
+                {
+                    "key":         key,
+                    "label":       meta["label"],
+                    "description": meta["description"],
+                    "default":     meta["default"],
+                    "value":       get_setting(conn, key),
+                }
+                for key, meta in SETTINGS_DEFAULTS.items()
+            ]
+    except Exception:
+        settings = [
+            {"key": key, "label": meta["label"], "description": meta["description"],
+             "default": meta["default"], "value": meta["default"]}
+            for key, meta in SETTINGS_DEFAULTS.items()
+        ]
+
+    return JSONResponse({"settings": settings})
+
+
 def api_routes() -> list[Route]:
     """Routes to register in the main Starlette app (see ``web.main_sse``)."""
     return [
@@ -457,4 +535,5 @@ def api_routes() -> list[Route]:
         Route("/api/queue",        endpoint=api_queue, methods=["GET", "POST"]),
         Route("/api/setup",        endpoint=api_setup),
         Route("/api/reset",        endpoint=api_reset, methods=["POST"]),
+        Route("/api/settings",     endpoint=api_settings, methods=["GET", "POST"]),
     ]

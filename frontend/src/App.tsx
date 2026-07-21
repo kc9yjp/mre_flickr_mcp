@@ -12,6 +12,10 @@ import { PhotoBrowser } from "./panels/PhotoBrowser";
 import { Summary } from "./panels/Summary";
 import { Command } from "./panels/Command";
 import { Chat } from "./panels/Chat";
+import { SyncPage } from "./panels/SyncPage";
+import { QueuePage } from "./panels/QueuePage";
+import { SetupPage } from "./panels/SetupPage";
+import { SettingsPage } from "./panels/SettingsPage";
 import { MobileLayout } from "./MobileLayout";
 import { useIsMobile } from "./useIsMobile";
 
@@ -22,6 +26,10 @@ const components: Record<string, React.FC<IDockviewPanelProps>> = {
   summary: Summary,
   command: Command,
   chat: Chat,
+  sync: SyncPage,
+  queue: QueuePage,
+  setup: SetupPage,
+  settings: SettingsPage,
 };
 
 function defaultLayout(api: DockviewApi) {
@@ -54,12 +62,16 @@ function emitHashFocus() {
 
 // Where to (re-)add each panel when it isn't already open. Mirrors defaultLayout.
 const PANEL_SPECS: Record<string, { title: string; position?: Parameters<DockviewApi["addPanel"]>[0]["position"] }> = {
-  photos:  { title: "Photo Browser" },
-  summary: { title: "Summary", position: { referencePanel: "photos", direction: "right" } },
-  chat:    { title: "Chat", position: { referencePanel: "summary", direction: "below" } },
-  command: { title: "Commands", position: { referencePanel: "chat", direction: "within" } },
+  photos:   { title: "Photo Browser" },
+  summary:  { title: "Summary",  position: { referencePanel: "photos",  direction: "right" } },
+  chat:     { title: "Chat",     position: { referencePanel: "summary", direction: "below" } },
+  command:  { title: "Commands", position: { referencePanel: "chat",    direction: "within" } },
+  sync:     { title: "Sync",     position: { referencePanel: "command", direction: "within" } },
+  queue:    { title: "Queue",    position: { referencePanel: "command", direction: "within" } },
+  setup:    { title: "Setup",    position: { referencePanel: "command", direction: "within" } },
+  settings: { title: "Settings", position: { referencePanel: "command", direction: "within" } },
 };
-const PANEL_ORDER = ["photos", "summary", "chat", "command"];
+const PANEL_ORDER = ["photos", "summary", "chat", "command", "sync", "queue", "setup", "settings"];
 
 function openOrFocusPanel(api: DockviewApi, id: string) {
   const existing = api.getPanel(id);
@@ -156,7 +168,6 @@ export default function App() {
         </div>
         <span className="topbar-user">
           {me ? me.fullname || me.username : "…"}
-          <a href="/">classic UI</a>
         </span>
       </header>
       <div className="dock-container">
