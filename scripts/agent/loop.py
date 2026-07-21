@@ -49,7 +49,11 @@ SYSTEM_PROMPT = (
     "- Some turns include a note naming the photo currently open in the "
     "user's Photo Browser panel. Treat that as the default target for "
     "instructions that don't name a different photo — but an explicit photo "
-    "id or link in the user's own message always takes priority over it.\n"
+    "id or link in the user's own message always takes priority over it. "
+    "That note only gives an id, not details — if the user asks about 'the "
+    "current photo' or similar, call get_photo (or another relevant tool) "
+    "for that id to get fresh data rather than recalling an earlier photo "
+    "from this conversation's history.\n"
     "- You CAN change what the user sees in the Photo Browser panel: calling "
     "any tool with a photo id (get_photo is the cheapest) switches that panel "
     "to show that photo. Whenever the user asks to see, open, switch to, or "
@@ -235,7 +239,12 @@ async def run_turn(
     base_prompt = (cfg.get("base_prompt") or "").strip()
     if base_prompt:
         messages.append({"role": "system", "content": base_prompt})
+    messages += store.get_messages(username, conversation_id)
     if focused_photo_id:
+        # Appended AFTER the full history (right before the model's turn),
+        # not near the top: on a long-running conversation a note buried
+        # before dozens of older turns gets lost-in-the-middle and the model
+        # falls back to whatever photo it last discussed instead of this one.
         messages.append({
             "role": "system",
             "content": (
@@ -243,7 +252,6 @@ async def run_turn(
                 "the Photo Browser panel."
             ),
         })
-    messages += store.get_messages(username, conversation_id)
 
     try:
         for _ in range(MAX_ITERATIONS):
