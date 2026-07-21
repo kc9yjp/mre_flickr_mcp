@@ -574,6 +574,203 @@ select:focus {
   margin-bottom: 10px;
 }
 
+/* --- Mobile layout --- */
+
+.mobile-layout {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+@media (orientation: landscape) {
+  .mobile-layout {
+    flex-direction: row;
+  }
+}
+
+.mobile-chat-pane {
+  display: flex;
+  flex-direction: column;
+  flex: 0 0 45%;
+  min-height: 0;
+  border-top: 1px solid var(--border);
+}
+
+@media (orientation: landscape) {
+  .mobile-chat-pane {
+    flex: 0 0 40%;
+    border-top: none;
+    border-right: 1px solid var(--border);
+  }
+}
+
+.mobile-content-pane {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.mobile-panel-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  background: var(--surface-raised);
+  border-bottom: 1px solid var(--border);
+  flex: none;
+}
+
+.mobile-panel-select {
+  flex: 1;
+  min-width: 0;
+}
+
+.mobile-user {
+  white-space: nowrap;
+  font-size: 13px;
+}
+
+.mobile-content-scroll {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+/* --- Sync page --- */
+
+.sync-btn-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 8px 0;
+}
+
+.btn-primary {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.btn-danger {
+  border-color: #e07a6a;
+  color: #e07a6a;
+}
+
+.btn-danger-sm {
+  border-color: #e07a6a;
+  color: #e07a6a;
+  padding: 2px 8px;
+  font-size: 13px;
+}
+
+.confirm-inline {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+/* --- Queue page --- */
+
+.queue-stats {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+
+.queue-stat-pill {
+  border-radius: 999px;
+  padding: 2px 12px;
+  font-size: 13px;
+  border: 1px solid var(--border);
+}
+
+.queue-stat-pill.waiting { border-color: var(--accent); color: var(--accent); }
+.queue-stat-pill.success { border-color: var(--good); color: var(--good); }
+.queue-stat-pill.errored { border-color: #e07a6a; color: #e07a6a; }
+
+.queue-section-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.queue-section-header h3 {
+  margin: 14px 0 8px;
+}
+
+.queue-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.queue-table a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.queue-time {
+  color: var(--ink-muted);
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+/* --- Setup page --- */
+
+.setup-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 10px;
+}
+
+.setup-tab {
+  font-size: 13px;
+  padding: 4px 10px;
+  border-color: var(--border);
+  color: var(--ink-muted);
+}
+
+.setup-tab.active {
+  border-color: var(--accent);
+  color: var(--ink);
+}
+
+.setup-snippet {
+  position: relative;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px;
+  margin-bottom: 4px;
+}
+
+.setup-snippet pre {
+  margin: 0;
+  overflow-x: auto;
+  font-size: 13px;
+  white-space: pre;
+}
+
+.copy-btn {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  font-size: 12px;
+  padding: 2px 8px;
+}
+
+.bookmarklet-link {
+  display: inline-block;
+  padding: 6px 14px;
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  color: var(--accent);
+  text-decoration: none;
+  font-size: 15px;
+}
+
 /* --- Command --- */
 
 .command-buttons {

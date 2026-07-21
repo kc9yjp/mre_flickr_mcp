@@ -63,6 +63,36 @@ export interface SyncStatus {
   rows: SyncRow[];
 }
 
+export interface QueueRow {
+  id: number;
+  photo_id: string;
+  photo_title: string;
+  photo_url: string;
+  group_id: string;
+  group_name: string;
+  group_url: string;
+  retry_at: string | null;
+  queued_at: string;
+  error_msg: string;
+  completed_at: string | null;
+}
+
+export interface QueueData {
+  counts: { waiting: number; success: number; error: number };
+  waiting: QueueRow[];
+  errors: QueueRow[];
+  successes: QueueRow[];
+}
+
+export interface SetupData {
+  base_url: string;
+  mcp_url: string;
+  sse_url: string;
+  has_api_key: boolean;
+  snippets: Record<string, string>;
+  bookmarklet: string;
+}
+
 export interface Conversation {
   id: string;
   title: string;

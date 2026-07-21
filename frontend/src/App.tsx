@@ -12,6 +12,8 @@ import { PhotoBrowser } from "./panels/PhotoBrowser";
 import { Summary } from "./panels/Summary";
 import { Command } from "./panels/Command";
 import { Chat } from "./panels/Chat";
+import { MobileLayout } from "./MobileLayout";
+import { useIsMobile } from "./useIsMobile";
 
 const LAYOUT_KEY = "workbench-layout-v1";
 
@@ -70,6 +72,7 @@ function openOrFocusPanel(api: DockviewApi, id: string) {
 }
 
 export default function App() {
+  const isMobile = useIsMobile();
   const [me, setMe] = useState<Me | null>(null);
   const [openPanels, setOpenPanels] = useState<Set<string>>(new Set(PANEL_ORDER));
   const [viewOpen, setViewOpen] = useState(false);
@@ -125,6 +128,8 @@ export default function App() {
     // Deep link (#photo=123) from the bookmarklet: let panels mount first.
     window.setTimeout(emitHashFocus, 100);
   };
+
+  if (isMobile) return <MobileLayout me={me} />;
 
   return (
     <div className="workbench">

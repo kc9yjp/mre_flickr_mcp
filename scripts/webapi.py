@@ -238,6 +238,213 @@ async def api_sync_trigger(request: Request):
     return JSONResponse({"started": True, "type": sync_type, "full": full})
 
 
+async def api_queue(request: Request):
+    """GET /api/queue — queue data; POST /api/queue — retry/delete actions."""
+    user = _session_user(request)
+    if not user:
+        return _unauthorized()
+    if err := _no_db(user["username"]):
+        return err
+
+    from db import _current_user as _ctx
+    from tools.groups import _flush_group_queue, _fmt_chicago
+
+    username = user["username"]
+
+    if request.method == "POST":
+        try:
+            body = await request.json()
+        except ValueError:
+            return JSONResponse({"error": "invalid JSON"}, status_code=400)
+        action = body.get("action", "")
+        token = _ctx.set(user)
+        try:
+            with get_db_for_user(username) as conn:
+                if action == "delete_item":
+                    item_id = body.get("item_id")
+                    if not isinstance(item_id, int):
+                        return JSONResponse({"error": "item_id required"}, status_code=400)
+                    deleted = conn.execute(
+                        "DELETE FROM pending_group_adds WHERE id=? AND status='waiting'",
+                        (item_id,),
+                    ).rowcount
+                    return JSONResponse({"ok": True, "deleted": deleted})
+                elif action in ("retry_ready", "retry_all"):
+                    flushed = _flush_group_queue(conn, force=(action == "retry_all"))
+                    ok  = sum(1 for r in flushed if r["result"] == "success")
+                    lim = sum(1 for r in flushed if r["result"] == "still_limited")
+                    err = sum(1 for r in flushed if r["result"].startswith("error"))
+                    return JSONResponse({"ok": True, "added": ok, "limited": lim, "errors": err})
+                else:
+                    return JSONResponse({"error": f"unknown action: {action}"}, status_code=400)
+        except Exception as e:
+            logging.exception("api_queue action error")
+            return JSONResponse({"error": str(e)}, status_code=500)
+        finally:
+            _ctx.reset(token)
+
+    def _row(r):
+        return {
+            "id":           r["id"],
+            "photo_id":     r["photo_id"],
+            "photo_title":  r["photo_title"] or r["photo_id"],
+            "photo_url":    r["photo_url"] or f"https://www.flickr.com/photo.gne?id={r['photo_id']}",
+            "group_id":     r["group_id"],
+            "group_name":   r["group_name"] or r["group_id"],
+            "group_url":    f"https://www.flickr.com/groups/{r['group_id']}/pool/",
+            "retry_at":     _fmt_chicago(r["retry_after"]) if r["retry_after"] else None,
+            "queued_at":    _fmt_chicago(r["queued_at"]),
+            "error_msg":    r["error_msg"] or "",
+            "completed_at": _fmt_chicago(r["completed_at"]) if r["completed_at"] else None,
+        }
+
+    try:
+        with get_db_for_user(username) as conn:
+            counts = {row["status"]: row["n"] for row in conn.execute(
+                "SELECT status, COUNT(*) AS n FROM pending_group_adds GROUP BY status"
+            ).fetchall()}
+            counts.setdefault("waiting", 0)
+            counts.setdefault("success", 0)
+            counts.setdefault("error", 0)
+
+            waiting_rows = [_row(r) for r in conn.execute(
+                "SELECT pga.id, pga.photo_id, pga.group_id, pga.retry_after, pga.queued_at, "
+                "       NULL AS error_msg, NULL AS completed_at, "
+                "       p.title AS photo_title, p.url_photopage AS photo_url, g.name AS group_name "
+                "FROM pending_group_adds pga "
+                "LEFT JOIN photos p ON pga.photo_id = p.id "
+                "LEFT JOIN groups g ON pga.group_id = g.id "
+                "WHERE pga.status='waiting' ORDER BY pga.retry_after ASC"
+            ).fetchall()]
+
+            error_rows = [_row(r) for r in conn.execute(
+                "SELECT pga.id, pga.photo_id, pga.group_id, pga.queued_at, pga.completed_at, pga.error_msg, "
+                "       NULL AS retry_after, "
+                "       p.title AS photo_title, p.url_photopage AS photo_url, g.name AS group_name "
+                "FROM pending_group_adds pga "
+                "LEFT JOIN photos p ON pga.photo_id = p.id "
+                "LEFT JOIN groups g ON pga.group_id = g.id "
+                "WHERE pga.status='error' ORDER BY pga.queued_at DESC LIMIT 30"
+            ).fetchall()]
+
+            success_rows = [_row(r) for r in conn.execute(
+                "SELECT pga.id, pga.photo_id, pga.group_id, pga.queued_at, pga.completed_at, "
+                "       NULL AS error_msg, NULL AS retry_after, "
+                "       p.title AS photo_title, p.url_photopage AS photo_url, g.name AS group_name "
+                "FROM pending_group_adds pga "
+                "LEFT JOIN photos p ON pga.photo_id = p.id "
+                "LEFT JOIN groups g ON pga.group_id = g.id "
+                "WHERE pga.status='success' ORDER BY pga.completed_at DESC LIMIT 20"
+            ).fetchall()]
+
+    except Exception as e:
+        logging.exception("api_queue load error")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+    return JSONResponse({
+        "counts": counts,
+        "waiting": waiting_rows,
+        "errors": error_rows,
+        "successes": success_rows,
+    })
+
+
+async def api_setup(request: Request):
+    """GET /api/setup — MCP client config snippets and bookmarklet."""
+    user = _session_user(request)
+    if not user:
+        return _unauthorized()
+
+    import json as _json
+    from web import _load_credentials, _load_env
+
+    base = str(request.base_url).rstrip("/")
+    sse_url = f"{base}/sse"
+    mcp_url = f"{base}/mcp"
+
+    mcp_api_key = ""
+    try:
+        mcp_api_key = _load_credentials(nsid=user["nsid"]).get("mcp_api_key", "")
+    except Exception:
+        pass
+
+    headers = {"Authorization": f"Bearer {mcp_api_key}"} if mcp_api_key else {}
+
+    claude_code_cfg = {"mcpServers": {"flickr": {"type": "http", "url": mcp_url}}}
+    if headers:
+        claude_code_cfg["mcpServers"]["flickr"]["headers"] = headers
+    claude_code_sse_cfg = {"mcpServers": {"flickr": {"type": "sse", "url": sse_url}}}
+    if headers:
+        claude_code_sse_cfg["mcpServers"]["flickr"]["headers"] = headers
+    cursor_cfg = {"mcpServers": {"flickr": {"url": mcp_url}}}
+    if headers:
+        cursor_cfg["mcpServers"]["flickr"]["headers"] = headers
+    opencode_cfg = {"mcp": {"flickr": {"type": "remote", "url": mcp_url}}}
+    if headers:
+        opencode_cfg["mcp"]["flickr"]["headers"] = headers
+
+    try:
+        flickr_api_key, flickr_api_secret = _load_env()
+    except Exception:
+        flickr_api_key, flickr_api_secret = "", ""
+
+    stdio_args = [
+        "run", "-i", "--rm",
+        "-e", f"FLICKR_API_KEY={flickr_api_key}",
+        "-e", f"FLICKR_API_SECRET={flickr_api_secret}",
+        "-e", "MCP_TRANSPORT=stdio",
+    ]
+    if mcp_api_key:
+        stdio_args += ["-e", f"MCP_API_KEY={mcp_api_key}"]
+    stdio_args += ["-v", "flickr-creds:/home/app/.flickr_mcp", "-v", "flickr-data:/app/data", "ejwettstein/flickr-mcp"]
+    stdio_cfg = {"mcpServers": {"flickr": {"command": "docker", "args": stdio_args}}}
+
+    bookmarklet = (
+        "javascript:(function(){"
+        "var m=location.href.match(/flickr\\.com\\/photos\\/[^\\/]+\\/(\\d+)/);"
+        f"if(m){{window.open('{base}/app/#photo='+m[1]);}}"
+        "else{alert('Not a Flickr photo page');}"
+        "})();"
+    )
+
+    return JSONResponse({
+        "base_url":    base,
+        "mcp_url":     mcp_url,
+        "sse_url":     sse_url,
+        "has_api_key": bool(mcp_api_key),
+        "snippets": {
+            "claude_code":     _json.dumps(claude_code_cfg, indent=2),
+            "claude_code_sse": _json.dumps(claude_code_sse_cfg, indent=2),
+            "claude_desktop":  _json.dumps(claude_code_cfg, indent=2),
+            "cursor":          _json.dumps(cursor_cfg, indent=2),
+            "windsurf":        _json.dumps(cursor_cfg, indent=2),
+            "opencode":        _json.dumps(opencode_cfg, indent=2),
+            "stdio":           _json.dumps(stdio_cfg, indent=2),
+        },
+        "bookmarklet": bookmarklet,
+    })
+
+
+async def api_reset(request: Request):
+    """POST /api/reset — delete the user's local database and trigger a fresh sync."""
+    import asyncio
+    from mcp_tools import SYNC_SCRIPT
+    user = _session_user(request)
+    if not user:
+        return _unauthorized()
+    username = user["username"]
+    path = db_file(username)
+    if os.path.exists(path):
+        os.remove(path)
+        logging.info("Database reset via API by user %s", username)
+    asyncio.create_task(_web._trigger_full_sync(
+        username, user["nsid"],
+        ["--nsid", user["nsid"], "--username", username],
+        os.path.dirname(SYNC_SCRIPT),
+    ))
+    return JSONResponse({"ok": True})
+
+
 def api_routes() -> list[Route]:
     """Routes to register in the main Starlette app (see ``web.main_sse``)."""
     return [
@@ -247,4 +454,7 @@ def api_routes() -> list[Route]:
         Route("/api/stats",        endpoint=api_stats),
         Route("/api/sync/status",  endpoint=api_sync_status),
         Route("/api/sync/{type}",  endpoint=api_sync_trigger, methods=["POST"]),
+        Route("/api/queue",        endpoint=api_queue, methods=["GET", "POST"]),
+        Route("/api/setup",        endpoint=api_setup),
+        Route("/api/reset",        endpoint=api_reset, methods=["POST"]),
     ]
