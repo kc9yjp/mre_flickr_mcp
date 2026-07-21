@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { SetupData, getJSON } from "../api";
+import { SetupData, getJSON, postJSON } from "../api";
 
 const CLIENT_TABS = [
   { id: "claude_code",     label: "Claude Code" },
@@ -29,12 +29,31 @@ export function SetupPage() {
   const [data, setData] = useState<SetupData | null>(null);
   const [error, setError] = useState("");
   const [tab, setTab] = useState<string>("claude_code");
+  const [regenMsg, setRegenMsg] = useState("");
+  const [regenErr, setRegenErr] = useState("");
+  const [regenLoading, setRegenLoading] = useState(false);
 
-  useEffect(() => {
+  const load = () =>
     getJSON<SetupData>("/api/setup")
       .then(setData)
       .catch((e) => setError(e.message));
-  }, []);
+
+  useEffect(() => { load(); }, []);
+
+  const regenKey = async () => {
+    setRegenMsg("");
+    setRegenErr("");
+    setRegenLoading(true);
+    try {
+      await postJSON("/api/regen-key", {});
+      setRegenMsg("API key regenerated. Update your MCP config snippets below.");
+      load();
+    } catch (e) {
+      setRegenErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setRegenLoading(false);
+    }
+  };
 
   if (error) return <div className="panel"><p className="error">{error}</p></div>;
   if (!data) return <div className="panel">Loading…</div>;
@@ -82,6 +101,14 @@ export function SetupPage() {
       <a className="bookmarklet-link" href={data.bookmarklet}>
         📷 Send to Workbench
       </a>
+
+      <h3 style={{ marginTop: 20 }}>API Key</h3>
+      <p className="hint">Regenerating creates a new key — update your MCP config after.</p>
+      {regenMsg && <p className="hint" style={{ color: "var(--accent)" }}>{regenMsg}</p>}
+      {regenErr && <p className="error">{regenErr}</p>}
+      <button onClick={regenKey} disabled={regenLoading}>
+        {regenLoading ? "Regenerating…" : "Regenerate API Key"}
+      </button>
     </div>
   );
 }

@@ -78,11 +78,15 @@ def test_logout_clears_session_without_deleting_credentials(tmp_path):
 
 
 def test_regen_key_rotates_api_key(tmp_path):
+    import importlib
     old_key = "old-api-key-value"
     new_creds = {}
 
     web = _load_web_with_log_dir(str(tmp_path))
     web._api_key_registry[old_key] = "12345@N00"
+
+    import webapi as _webapi
+    webapi = importlib.reload(_webapi)
 
     CSRF = "valid-csrf-token"
 
@@ -94,7 +98,7 @@ def test_regen_key_rotates_api_key(tmp_path):
 
     app = _make_app(web, [
         Route("/seed", endpoint=seed_session),
-        Route("/regen-key", endpoint=web.route_regen_key, methods=["POST"]),
+        Route("/api/regen-key", endpoint=webapi.api_regen_key, methods=["POST"]),
     ])
 
     def fake_load_credentials(nsid=None):
@@ -107,10 +111,15 @@ def test_regen_key_rotates_api_key(tmp_path):
          patch("web._save_credentials", side_effect=fake_save_credentials):
         with TestClient(app, raise_server_exceptions=False) as client:
             client.get("/seed")
-            response = client.post("/regen-key", data={"csrf_token": CSRF}, follow_redirects=False)
+            response = client.post(
+                "/api/regen-key",
+                json={},
+                headers={"X-CSRF-Token": CSRF},
+                follow_redirects=False,
+            )
 
-    assert response.status_code in (302, 303)
-    assert response.headers["location"].endswith("/setup")
+    assert response.status_code == 200
+    assert response.json().get("ok") is True
     assert old_key not in web._api_key_registry
     saved_key = new_creds.get("mcp_api_key", "")
     assert saved_key and saved_key != old_key

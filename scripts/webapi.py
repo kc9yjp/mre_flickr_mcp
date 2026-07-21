@@ -445,6 +445,24 @@ async def api_reset(request: Request):
     return JSONResponse({"ok": True})
 
 
+async def api_regen_key(request: Request):
+    """POST /api/regen-key — regenerate the user's MCP API key."""
+    user = _session_user(request)
+    if not user:
+        return _unauthorized()
+    from web import _load_credentials, _save_credentials, _api_key_registry
+    nsid = user["nsid"]
+    creds = _load_credentials(nsid=nsid)
+    old_key = creds.get("mcp_api_key", "")
+    new_key = str(__import__("uuid").uuid4())
+    if old_key in _api_key_registry:
+        del _api_key_registry[old_key]
+    creds["mcp_api_key"] = new_key
+    _save_credentials(creds, nsid)
+    _api_key_registry[new_key] = nsid
+    return JSONResponse({"ok": True})
+
+
 async def api_settings(request: Request):
     """GET /api/settings — list settings with values; POST — save updates."""
     user = _session_user(request)
@@ -536,4 +554,5 @@ def api_routes() -> list[Route]:
         Route("/api/setup",        endpoint=api_setup),
         Route("/api/reset",        endpoint=api_reset, methods=["POST"]),
         Route("/api/settings",     endpoint=api_settings, methods=["GET", "POST"]),
+        Route("/api/regen-key",    endpoint=api_regen_key, methods=["POST"]),
     ]
