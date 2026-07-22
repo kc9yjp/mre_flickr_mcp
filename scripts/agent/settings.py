@@ -16,6 +16,15 @@ DEFAULTS = {
     "max_tokens": 1024,
     "vision": False,
     "base_prompt": "",
+    # Sampling / tool-use controls. Blank ("") means "omit from the request
+    # and let the provider use its own default" — same convention as
+    # max_tokens used to have before it got a hard default.
+    "temperature": "",
+    "top_p": "",
+    "frequency_penalty": "",
+    "presence_penalty": "",
+    "seed": "",
+    "tool_choice": "auto",  # auto | required | none
 }
 
 

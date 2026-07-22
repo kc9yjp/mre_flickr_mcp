@@ -123,6 +123,12 @@ export interface LLMSettings {
   max_tokens: number;
   vision: boolean;
   base_prompt: string;
+  temperature: string;
+  top_p: string;
+  frequency_penalty: string;
+  presence_penalty: string;
+  seed: string;
+  tool_choice: string;
 }
 
 export type StreamEvent =

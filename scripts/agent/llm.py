@@ -21,6 +21,27 @@ def _auth_headers(cfg: dict) -> dict:
     return headers
 
 
+def _add_sampling_params(payload: dict, cfg: dict) -> None:
+    """Add optional sampling/tool-use params, omitting any left blank."""
+    for key in ("temperature", "top_p", "frequency_penalty", "presence_penalty"):
+        val = cfg.get(key)
+        if val in (None, ""):
+            continue
+        try:
+            payload[key] = float(val)
+        except (TypeError, ValueError):
+            pass
+    seed = cfg.get("seed")
+    if seed not in (None, ""):
+        try:
+            payload["seed"] = int(seed)
+        except (TypeError, ValueError):
+            pass
+    tool_choice = cfg.get("tool_choice")
+    if payload.get("tools") and tool_choice and tool_choice != "auto":
+        payload["tool_choice"] = tool_choice
+
+
 class _ToolCallAccumulator:
     """Assemble incremental tool_call deltas (index-keyed argument chunks)."""
 
@@ -69,6 +90,7 @@ async def stream_chat(
         payload["max_tokens"] = int(cfg["max_tokens"])
     if tools:
         payload["tools"] = tools
+    _add_sampling_params(payload, cfg)
 
     url = cfg.get("base_url", "").rstrip("/") + "/chat/completions"
     owns_client = client is None

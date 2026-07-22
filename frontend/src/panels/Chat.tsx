@@ -134,6 +134,79 @@ function SettingsForm({ onClose }: { onClose: () => void }) {
           {" "}— only enable if your model supports it; off by default to prevent hallucination
         </span>
       </label>
+
+      <h4>Sampling &amp; tool use</h4>
+      <p className="hint">Leave blank to use the provider's default.</p>
+      <label>
+        Temperature
+        <input
+          type="number"
+          step="0.1"
+          min="0"
+          max="2"
+          value={cfg.temperature}
+          onChange={(e) => setCfg({ ...cfg, temperature: e.target.value })}
+          placeholder="e.g. 0.2 for less confident/creative output"
+        />
+      </label>
+      <label>
+        Top P
+        <input
+          type="number"
+          step="0.05"
+          min="0"
+          max="1"
+          value={cfg.top_p}
+          onChange={(e) => setCfg({ ...cfg, top_p: e.target.value })}
+        />
+      </label>
+      <label>
+        Frequency penalty
+        <input
+          type="number"
+          step="0.1"
+          min="-2"
+          max="2"
+          value={cfg.frequency_penalty}
+          onChange={(e) => setCfg({ ...cfg, frequency_penalty: e.target.value })}
+        />
+      </label>
+      <label>
+        Presence penalty
+        <input
+          type="number"
+          step="0.1"
+          min="-2"
+          max="2"
+          value={cfg.presence_penalty}
+          onChange={(e) => setCfg({ ...cfg, presence_penalty: e.target.value })}
+        />
+      </label>
+      <label>
+        Seed
+        <input
+          type="number"
+          step="1"
+          value={cfg.seed}
+          onChange={(e) => setCfg({ ...cfg, seed: e.target.value })}
+          placeholder="for reproducible output, if the model supports it"
+        />
+      </label>
+      <label>
+        Tool choice
+        <select
+          value={cfg.tool_choice}
+          onChange={(e) => setCfg({ ...cfg, tool_choice: e.target.value })}
+        >
+          <option value="auto">auto (model decides)</option>
+          <option value="required">required (must call a tool)</option>
+          <option value="none">none (disable tool calls)</option>
+        </select>
+        <span className="hint">
+          {" "}— "required" is useful if the model narrates an action instead of calling the tool
+        </span>
+      </label>
+
       <label>
         Base prompt (standing instructions for this account)
         <textarea
