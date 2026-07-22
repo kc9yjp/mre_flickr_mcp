@@ -30,7 +30,7 @@ export interface PhotoDetail extends Photo {
   groups: { id: string; name: string }[];
   in_keeper_list: boolean;
   is_own: boolean;
-  owner?: { nsid: string; username: string; realname: string; profile_url: string };
+  owner?: { nsid: string; username: string; realname: string; profile_url: string; avatar_url: string };
 }
 
 export interface PhotoPage {

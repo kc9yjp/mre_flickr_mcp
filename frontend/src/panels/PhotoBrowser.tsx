@@ -11,6 +11,7 @@ import {
 } from "../api";
 import * as bus from "../bus";
 import { compactNumber } from "../format";
+import { FaveAndCommentPrompt } from "./FaveAndCommentPrompt";
 
 let photoCommands: WorkflowCommand[] = [];
 getJSON<{ commands: WorkflowCommand[] }>("/api/commands")
@@ -143,7 +144,8 @@ function DetailView({ detail, onBack }: { detail: PhotoDetail; onBack: () => voi
       {src && <img className="detail-image" src={src} alt={detail.title} />}
       <h2>{detail.title || detail.id}</h2>
       {!detail.is_own && detail.owner && (
-        <p className="hint">
+        <p className="hint other-photo-owner">
+          {detail.owner.avatar_url && <img className="owner-avatar" src={detail.owner.avatar_url} alt="" />}
           by{" "}
           <a href={detail.owner.profile_url} target="_blank" rel="noreferrer">
             {detail.owner.realname || detail.owner.username || detail.owner.nsid}
@@ -158,7 +160,7 @@ function DetailView({ detail, onBack }: { detail: PhotoDetail; onBack: () => voi
         <span>{detail.is_public ? "public" : "private"}</span>
         {detail.in_keeper_list && <span>keeper</span>}
       </div>
-      <FaveCommentBar photoId={detail.id} />
+      {detail.is_own ? <FaveCommentBar photoId={detail.id} /> : <FaveAndCommentPrompt photoId={detail.id} />}
       <dl className="detail-meta">
         <dt>Taken</dt>
         <dd>{detail.date_taken || "unknown"}</dd>

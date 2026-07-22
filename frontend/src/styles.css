@@ -284,6 +284,19 @@ select:focus {
   margin: 8px 0;
 }
 
+.other-photo-owner {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.owner-avatar {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  object-fit: cover;
+}
+
 .detail-fave-comment {
   display: flex;
   flex-direction: column;

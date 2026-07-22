@@ -2,6 +2,7 @@
 
 interface Events {
   focusPhoto: string;
+  focusOtherPhoto: string; // deep link to someone else's photo (bookmarklet/extension)
   runCommand: string;   // a chat prompt to send immediately
   photoOpened: string | null; // Photo Browser's current detail view, for chat context
   switchPanel: string;  // mobile: switch to named panel

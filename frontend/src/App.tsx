@@ -9,6 +9,7 @@ import {
 import { initSession, Me } from "./api";
 import * as bus from "./bus";
 import { PhotoBrowser } from "./panels/PhotoBrowser";
+import { OtherPhotoView } from "./panels/OtherPhotoView";
 import { Summary } from "./panels/Summary";
 import { Command } from "./panels/Command";
 import { Chat } from "./panels/Chat";
@@ -25,6 +26,7 @@ const LAYOUT_KEY = "workbench-layout-v1";
 
 const components: Record<string, React.FC<IDockviewPanelProps>> = {
   photos: PhotoBrowser,
+  "other-photo": OtherPhotoView,
   summary: Summary,
   command: Command,
   chat: Chat,
@@ -57,9 +59,13 @@ function defaultLayout(api: DockviewApi) {
   api.getPanel("chat")?.api.setActive();
 }
 
-function emitHashFocus() {
-  const match = window.location.hash.match(/photo=(\d+)/);
-  if (match) bus.emit("focusPhoto", match[1]);
+function parseHash(): { kind: "photo" | "other"; id: string } | null {
+  const hash = window.location.hash;
+  const photoMatch = hash.match(/photo=(\d+)/);
+  if (photoMatch) return { kind: "photo", id: photoMatch[1] };
+  const otherMatch = hash.match(/other=(\d+)/);
+  if (otherMatch) return { kind: "other", id: otherMatch[1] };
+  return null;
 }
 
 export default function App() {
@@ -86,12 +92,25 @@ export default function App() {
     setViewOpen(false);
   }, []);
 
+  const emitHashFocus = useCallback(() => {
+    const parsed = parseHash();
+    if (!parsed) return;
+    if (parsed.kind === "photo") {
+      bus.emit("focusPhoto", parsed.id);
+      return;
+    }
+    if (dockApi.current) openOrFocusPanel(dockApi.current, "other-photo");
+    bus.emit("switchPanel", "other-photo");
+    bus.emit("focusOtherPhoto", parsed.id);
+  }, []);
+
   useEffect(() => {
     initSession().then(setMe).catch(() => {});
+    emitHashFocus();
     const onHash = () => emitHashFocus();
     window.addEventListener("hashchange", onHash);
     return () => window.removeEventListener("hashchange", onHash);
-  }, []);
+  }, [emitHashFocus]);
 
   const onReady = (event: DockviewReadyEvent) => {
     dockApi.current = event.api;

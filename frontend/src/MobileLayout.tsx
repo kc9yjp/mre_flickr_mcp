@@ -4,6 +4,7 @@ import * as bus from "./bus";
 import { CommandPalette } from "./CommandPalette";
 import { Chat } from "./panels/Chat";
 import { PhotoBrowser } from "./panels/PhotoBrowser";
+import { OtherPhotoView } from "./panels/OtherPhotoView";
 import { Summary } from "./panels/Summary";
 import { Command } from "./panels/Command";
 import { SyncPage } from "./panels/SyncPage";
@@ -14,6 +15,7 @@ import { SettingsPage } from "./panels/SettingsPage";
 const PANELS = [
   { id: "summary",  label: "Stats" },
   { id: "photos",   label: "Photos" },
+  { id: "other-photo", label: "Other Photo" },
   { id: "sync",     label: "Sync" },
   { id: "queue",    label: "Queue" },
   { id: "commands", label: "Commands" },
@@ -29,6 +31,7 @@ const POSITION_KEY = "mobile-chat-position-v1";
 function ContentPanel({ id }: { id: PanelId }) {
   switch (id) {
     case "photos":   return <PhotoBrowser />;
+    case "other-photo": return <OtherPhotoView />;
     case "summary":  return <Summary />;
     case "commands": return <Command />;
     case "sync":     return <SyncPage />;

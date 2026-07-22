@@ -10,6 +10,7 @@ Handlers read the per-user SQLite database directly with ``get_db_for_user``
 handlers, so responses are structured JSON instead of formatted text.
 """
 
+import json
 import logging
 import os
 import secrets
@@ -203,6 +204,14 @@ async def _external_photo_detail(user: dict, photo_id: str) -> JSONResponse:
 
     tags = " ".join(t["raw"] for t in photo.get("tags", {}).get("tag", []))
 
+    iconserver = str(owner.get("iconserver", "0"))
+    iconfarm = owner.get("iconfarm", 0)
+    owner_nsid = owner.get("nsid", "")
+    if iconserver and iconserver != "0":
+        avatar_url = f"https://farm{iconfarm}.staticflickr.com/{iconserver}/buddyicons/{owner_nsid}.jpg"
+    else:
+        avatar_url = "https://www.flickr.com/images/buddyicon.gif"
+
     return JSONResponse({
         "id":             photo_id,
         "title":          photo.get("title", {}).get("_content", ""),
@@ -223,10 +232,11 @@ async def _external_photo_detail(user: dict, photo_id: str) -> JSONResponse:
         "in_keeper_list": False,
         "is_own":         False,
         "owner": {
-            "nsid":       owner.get("nsid", ""),
+            "nsid":       owner_nsid,
             "username":   owner.get("username", ""),
             "realname":   owner.get("realname", ""),
-            "profile_url": f"https://www.flickr.com/people/{owner.get('nsid', '')}/",
+            "profile_url": f"https://www.flickr.com/people/{owner_nsid}/",
+            "avatar_url": avatar_url,
         },
     })
 
@@ -523,11 +533,16 @@ async def api_setup(request: Request):
     stdio_args += ["-v", "flickr-creds:/home/app/.flickr_mcp", "-v", "flickr-data:/app/data", "ejwettstein/flickr-mcp"]
     stdio_cfg = {"mcpServers": {"flickr": {"command": "docker", "args": stdio_args}}}
 
+    you_username = _json.dumps(user["username"] or "")
+    you_nsid = _json.dumps(user["nsid"] or "")
     bookmarklet = (
         "javascript:(function(){"
-        "var m=location.href.match(/flickr\\.com\\/photos\\/[^\\/]+\\/(\\d+)/);"
-        f"if(m){{window.open('{base}/app/#photo='+m[1]);}}"
-        "else{alert('Not a Flickr photo page');}"
+        f"var YOU_USER={you_username},YOU_NSID={you_nsid};"
+        "var m=location.href.match(/flickr\\.com\\/photos\\/([^\\/]+)\\/(\\d+)/);"
+        "if(!m){alert('Not a Flickr photo page');return;}"
+        "var owner=decodeURIComponent(m[1]),id=m[2];"
+        "var mine=(owner===YOU_USER)||(owner===YOU_NSID);"
+        f"window.open('{base}/app/#'+(mine?'photo=':'other=')+id);"
         "})();"
     )
 
@@ -706,16 +721,21 @@ async def api_extension(request: Request):
 
     popup_js = textwrap.dedent(f"""\
         const BASE = {json.dumps(base)};
+        const YOU_USER = {json.dumps(user["username"] or "")};
+        const YOU_NSID = {json.dumps(user["nsid"] or "")};
         chrome.tabs.query({{active: true, currentWindow: true}}, function([tab]) {{
-          const m = tab && tab.url && tab.url.match(/flickr\\.com\\/photos\\/[^/]+\\/(\\d+)/);
+          const m = tab && tab.url && tab.url.match(/flickr\\.com\\/photos\\/([^/]+)\\/(\\d+)/);
           const btn = document.getElementById('btn');
           const msg = document.getElementById('msg');
           if (m) {{
+            const owner = decodeURIComponent(m[1]);
+            const id = m[2];
+            const mine = (owner === YOU_USER) || (owner === YOU_NSID);
             btn.onclick = function() {{
-              chrome.tabs.create({{url: BASE + '/app/#photo=' + m[1]}});
+              chrome.tabs.create({{url: BASE + '/app/#' + (mine ? 'photo=' : 'other=') + id}});
               window.close();
             }};
-            msg.textContent = 'Photo ' + m[1];
+            msg.textContent = (mine ? 'Your photo ' : 'Photo ') + id;
           }} else {{
             btn.disabled = true;
             msg.textContent = 'Not a Flickr photo page';

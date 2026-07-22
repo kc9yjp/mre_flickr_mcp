@@ -5,6 +5,7 @@ export const PANEL_SPECS: Record<
   { title: string; position?: Parameters<DockviewApi["addPanel"]>[0]["position"] }
 > = {
   photos:   { title: "Photo Browser" },
+  "other-photo": { title: "Other's Photo" },
   summary:  { title: "Summary",  position: { referencePanel: "photos",  direction: "right" } },
   chat:     { title: "Chat",     position: { referencePanel: "summary", direction: "below" } },
   command:  { title: "Commands", position: { referencePanel: "chat",    direction: "within" } },
@@ -15,7 +16,7 @@ export const PANEL_SPECS: Record<
 };
 
 export const PANEL_ORDER = [
-  "photos", "summary", "chat", "command", "sync", "queue", "setup", "settings",
+  "photos", "other-photo", "summary", "chat", "command", "sync", "queue", "setup", "settings",
 ];
 
 export function openOrFocusPanel(api: DockviewApi, id: string) {
