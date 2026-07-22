@@ -184,6 +184,26 @@ def _result_content(result: list, vision: bool) -> "str | list":
     return text
 
 
+_UPDATE_PHOTO_FIELDS = ("title", "description", "tags")
+
+
+def _proposed_but_omitted_fields(args: dict, messages: list, lookback: int = 8) -> list[str]:
+    """Heuristic: flag update_photo fields that were labeled (e.g. "Description:")
+    in a recent assistant message but aren't in this call's arguments.
+
+    Best-effort text match, not a guarantee — a false positive just adds a
+    note to the tool result; a false negative changes nothing. Exists so the
+    model can't tell the user a field was updated when it never sent it."""
+    omitted = [f for f in _UPDATE_PHOTO_FIELDS if f not in args]
+    if not omitted:
+        return []
+    recent_text = "\n".join(
+        m["content"] for m in messages[-lookback:]
+        if m.get("role") == "assistant" and isinstance(m.get("content"), str)
+    ).lower()
+    return [f for f in omitted if re.search(rf"\b{f}\b\s*:", recent_text)]
+
+
 def _focus_photo_id(name: str, args: dict) -> str | None:
     if name in ("sync",):
         return None
@@ -323,6 +343,18 @@ async def run_turn(
                 if args is not None:
                     try:
                         content = _result_content(await _execute_tool(user, name, args), vision)
+                        if name == "update_photo" and isinstance(content, str):
+                            omitted = _proposed_but_omitted_fields(args, messages)
+                            if omitted:
+                                fields = ", ".join(omitted)
+                                was_were = "was" if len(omitted) == 1 else "were"
+                                note = (
+                                    f"⚠️ This call did not include {fields}, even though "
+                                    f"{was_were} discussed earlier in this conversation. "
+                                    f"Do not tell the user {'it' if len(omitted) == 1 else 'they'} "
+                                    f"{was_were} changed."
+                                )
+                                content = f"{note}\n\n{content}"
                     except (FileNotFoundError, RuntimeError) as e:
                         content = str(e)
                     except Exception as e:
