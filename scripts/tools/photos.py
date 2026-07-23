@@ -66,7 +66,13 @@ TOOLS = [
     ),
     Tool(
         name="update_photo",
-        description="Update a photo's title, description, and/or tags on Flickr and in the local database.",
+        description=(
+            "Update a photo's title, description, and/or tags on Flickr and in the local "
+            "database. This tool supports all three fields, including description — never "
+            "claim it doesn't. Only the fields you include are changed; omitted fields are "
+            "left as-is. If you proposed a title, description, and/or tags and the user "
+            "approved them, include every approved field in this same call — do not drop one."
+        ),
         inputSchema={
             "type": "object",
             "properties": {

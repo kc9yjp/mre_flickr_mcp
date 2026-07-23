@@ -27,6 +27,8 @@ interface PendingConfirm {
   name: string;
   arguments: string;
   photo: { id: string; title: string; thumb_url: string | null } | null;
+  group: { id: string; name: string } | null;
+  warning: string | null;
 }
 
 function wireToRender(messages: WireMessage[]): ChatMsg[] {
@@ -298,7 +300,9 @@ export function Chat() {
               }));
               break;
             case "confirm_request":
-              if (autoApproveRef.current) {
+              // A flagged omission always requires a human look, even with
+              // auto-approve on — that's the whole point of the warning.
+              if (autoApproveRef.current && !event.warning) {
                 postJSON("/api/chat/confirm", { confirm_id: event.confirm_id, approve: true }).catch(() => {});
               } else {
                 setConfirm(event);
@@ -422,6 +426,7 @@ export function Chat() {
             <p>
               Run <strong>{confirm.name}</strong>?
             </p>
+            {confirm.warning && <p className="error">{confirm.warning}</p>}
             {confirm.photo && (
               <div className="confirm-photo">
                 {confirm.photo.thumb_url && <img src={confirm.photo.thumb_url} alt="" />}
@@ -429,6 +434,11 @@ export function Chat() {
                   {confirm.photo.title || "(untitled)"} — photo {confirm.photo.id}
                 </span>
               </div>
+            )}
+            {confirm.group && (
+              <p className="hint">
+                Group: {confirm.group.name || "(unknown)"} — {confirm.group.id}
+              </p>
             )}
             <pre>{prettyArgs(confirm.arguments)}</pre>
             <div>

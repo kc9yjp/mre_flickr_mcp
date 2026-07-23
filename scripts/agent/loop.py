@@ -67,7 +67,14 @@ SYSTEM_PROMPT = (
     "photo unless actual image data was provided in the tool result. If a tool "
     "result says vision is disabled, work from title, description, tags, and "
     "EXIF only, and tell the user explicitly that visual inspection is "
-    "unavailable. Guessing or fabricating visual details is not allowed."
+    "unavailable. Guessing or fabricating visual details is not allowed.\n"
+    "- CRITICAL: Tool schemas are provided to you exactly as they are. Never "
+    "claim a tool doesn't support a field, parameter, or capability without "
+    "rechecking its schema first — if it's in the schema, it's supported. "
+    "Never state you performed an action, or that a specific field was "
+    "updated, without checking the actual arguments you sent in that tool "
+    "call. If you made a mistake (e.g. left a field out of an update), say so "
+    "plainly instead of inventing an explanation for why it couldn't be done."
 )
 
 _REMEMBER_TOOL: dict = {
@@ -188,12 +195,14 @@ _UPDATE_PHOTO_FIELDS = ("title", "description", "tags")
 
 
 def _proposed_but_omitted_fields(args: dict, messages: list, lookback: int = 8) -> list[str]:
-    """Heuristic: flag update_photo fields that were labeled (e.g. "Description:")
-    in a recent assistant message but aren't in this call's arguments.
+    """Heuristic: flag update_photo fields that were labeled (e.g. "Description:"
+    or "**Description Suggestion:**") in a recent assistant message but aren't
+    in this call's arguments.
 
     Best-effort text match, not a guarantee — a false positive just adds a
-    note to the tool result; a false negative changes nothing. Exists so the
-    model can't tell the user a field was updated when it never sent it."""
+    warning; a false negative changes nothing. Exists so the model can't
+    silently drop a field it just proposed, or tell the user it was updated
+    when it never sent it."""
     omitted = [f for f in _UPDATE_PHOTO_FIELDS if f not in args]
     if not omitted:
         return []
@@ -201,7 +210,23 @@ def _proposed_but_omitted_fields(args: dict, messages: list, lookback: int = 8) 
         m["content"] for m in messages[-lookback:]
         if m.get("role") == "assistant" and isinstance(m.get("content"), str)
     ).lower()
-    return [f for f in omitted if re.search(rf"\b{f}\b\s*:", recent_text)]
+    # Matches a plain "field:" label, or the word inside a **bold** span
+    # (covers headers like "**Description Suggestion (Mood/Subject):**").
+    return [
+        f for f in omitted
+        if re.search(rf"\b{f}\b\s*:|\*\*[^*\n]*\b{f}\b[^*\n]*\*\*", recent_text)
+    ]
+
+
+def _omission_warning(fields: list[str]) -> str:
+    joined = ", ".join(fields)
+    was_were = "was" if len(fields) == 1 else "were"
+    pronoun = "it" if len(fields) == 1 else "they"
+    return (
+        f"⚠️ This call did not include {joined}, even though {was_were} "
+        f"discussed earlier in this conversation. Do not tell the user "
+        f"{pronoun} {was_were} changed."
+    )
 
 
 def _focus_photo_id(name: str, args: dict) -> str | None:
@@ -227,6 +252,24 @@ def _photo_preview_sync(user: dict, photo_id: str) -> dict | None:
             return {"id": row["id"], "title": row["title"], "thumb_url": row["url_medium"]}
     except Exception:
         logging.exception("agent: photo preview lookup failed for %s", photo_id)
+    finally:
+        _current_user.reset(token)
+    return None
+
+
+def _group_preview_sync(user: dict, group_id: str) -> dict | None:
+    """Best-effort group-name lookup for the confirm card. Never raises —
+    a missing preview just means the card falls back to showing the raw id."""
+    token = _current_user.set(user)
+    try:
+        with get_db() as conn:
+            row = conn.execute(
+                "SELECT id, name FROM groups WHERE id = ?", (group_id,)
+            ).fetchone()
+        if row:
+            return {"id": row["id"], "name": row["name"]}
+    except Exception:
+        logging.exception("agent: group preview lookup failed for %s", group_id)
     finally:
         _current_user.reset(token)
     return None
@@ -321,6 +364,10 @@ async def run_turn(
                     text = f"Unknown tool: {name}"
                     args = None
 
+                omitted_fields: list[str] = []
+                if args is not None and name == "update_photo":
+                    omitted_fields = _proposed_but_omitted_fields(args, messages)
+
                 if args is not None and name in schema.WRITE_TOOLS:
                     confirm_id = uuid.uuid4().hex
                     future = _register_confirm(confirm_id)
@@ -329,12 +376,19 @@ async def run_turn(
                         await asyncio.to_thread(_photo_preview_sync, user, target_id)
                         if target_id else None
                     )
+                    group_id = str(args.get("group_id", ""))
+                    group = (
+                        await asyncio.to_thread(_group_preview_sync, user, group_id)
+                        if group_id else None
+                    )
                     yield {
                         "type": "confirm_request",
                         "confirm_id": confirm_id,
                         "name": name,
                         "arguments": raw_args,
                         "photo": photo,
+                        "group": group,
+                        "warning": _omission_warning(omitted_fields) if omitted_fields else None,
                     }
                     if not await _await_confirmation(confirm_id, future):
                         text = f"User declined: {name} was not executed."
@@ -343,18 +397,8 @@ async def run_turn(
                 if args is not None:
                     try:
                         content = _result_content(await _execute_tool(user, name, args), vision)
-                        if name == "update_photo" and isinstance(content, str):
-                            omitted = _proposed_but_omitted_fields(args, messages)
-                            if omitted:
-                                fields = ", ".join(omitted)
-                                was_were = "was" if len(omitted) == 1 else "were"
-                                note = (
-                                    f"⚠️ This call did not include {fields}, even though "
-                                    f"{was_were} discussed earlier in this conversation. "
-                                    f"Do not tell the user {'it' if len(omitted) == 1 else 'they'} "
-                                    f"{was_were} changed."
-                                )
-                                content = f"{note}\n\n{content}"
+                        if omitted_fields and isinstance(content, str):
+                            content = f"{_omission_warning(omitted_fields)}\n\n{content}"
                     except (FileNotFoundError, RuntimeError) as e:
                         content = str(e)
                     except Exception as e:

@@ -141,6 +141,8 @@ export type StreamEvent =
       name: string;
       arguments: string;
       photo: { id: string; title: string; thumb_url: string | null } | null;
+      group: { id: string; name: string } | null;
+      warning: string | null;
     }
   | { type: "tool_result"; id: string; name: string; text: string }
   | { type: "focus"; photo_id: string }
