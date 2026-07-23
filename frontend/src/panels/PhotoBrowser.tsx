@@ -11,7 +11,6 @@ import {
 } from "../api";
 import * as bus from "../bus";
 import { compactNumber } from "../format";
-import { FaveAndCommentPrompt } from "./FaveAndCommentPrompt";
 
 let photoCommands: WorkflowCommand[] = [];
 getJSON<{ commands: WorkflowCommand[] }>("/api/commands")
@@ -160,7 +159,7 @@ function DetailView({ detail, onBack }: { detail: PhotoDetail; onBack: () => voi
         <span>{detail.is_public ? "public" : "private"}</span>
         {detail.in_keeper_list && <span>keeper</span>}
       </div>
-      {detail.is_own ? <FaveCommentBar photoId={detail.id} /> : <FaveAndCommentPrompt photoId={detail.id} />}
+      {detail.is_own && <FaveCommentBar photoId={detail.id} />}
       <dl className="detail-meta">
         <dt>Taken</dt>
         <dd>{detail.date_taken || "unknown"}</dd>
