@@ -10,6 +10,66 @@
   --good: #4fb06d;
 }
 
+/* Chat animations */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes slideInLeft {
+  from {
+    opacity: 0;
+    transform: translateX(-12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes slideUp {
+  from {
+    opacity: 0;
+    transform: translateY(12px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes slidingDots {
+  0%, 100% {
+    content: "…";
+    transform: translateX(0);
+  }
+  25% {
+    content: "…";
+    transform: translateX(4px);
+  }
+  50% {
+    content: "…";
+    transform: translateX(0);
+  }
+  75% {
+    content: "…";
+    transform: translateX(-4px);
+  }
+}
+
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.6;
+  }
+}
+
 * {
   box-sizing: border-box;
 }
@@ -479,16 +539,19 @@ select:focus {
   font-size: 15px;
   cursor: pointer;
   flex: none;
+  transition: all 0.2s ease-out;
 }
 
 .icon-btn:hover {
   color: var(--ink);
   border-color: var(--border);
+  transform: scale(1.05);
 }
 
 .icon-btn.active {
   color: var(--accent);
   border-color: var(--accent);
+  animation: pulse 2s ease-in-out infinite;
 }
 
 .chat-messages {
@@ -504,6 +567,7 @@ select:focus {
   display: flex;
   flex-direction: column;
   gap: 6px;
+  animation: fadeIn 0.4s ease-out;
 }
 
 .chat-bubble {
@@ -532,6 +596,7 @@ select:focus {
   border-radius: 8px;
   padding: 6px 10px;
   max-width: 92%;
+  animation: slideInLeft 0.3s ease-out;
 }
 
 .tool-card summary {
@@ -555,6 +620,7 @@ select:focus {
   border: 1px solid var(--accent);
   border-radius: 8px;
   padding: 10px;
+  animation: slideUp 0.4s ease-out;
 }
 
 .confirm-photo {
@@ -603,6 +669,12 @@ select:focus {
   border: 1px solid var(--border);
   border-radius: 6px;
   padding: 6px 8px;
+}
+
+.streaming-indicator {
+  display: inline-block;
+  animation: slidingDots 1.4s infinite;
+  min-width: 20px;
 }
 
 /* --- Photo detail workflows --- */

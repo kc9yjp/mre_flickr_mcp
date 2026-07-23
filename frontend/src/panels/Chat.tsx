@@ -449,7 +449,7 @@ export function Chat() {
             </div>
           </div>
         )}
-        {streaming && !confirm && <p className="hint">…</p>}
+        {streaming && !confirm && <p className="hint streaming-indicator">…</p>}
         {error && <p className="error">{error}</p>}
       </div>
       <form
