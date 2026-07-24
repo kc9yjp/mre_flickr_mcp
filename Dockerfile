@@ -1,3 +1,4 @@
+
 FROM node:22-alpine AS frontend
 WORKDIR /build
 COPY frontend/package.json frontend/package-lock.json ./
@@ -21,6 +22,8 @@ RUN useradd -m -u 1000 app && \
     chown app /home/app/.flickr_mcp && \
     mkdir -p /app/data && \
     chown app /app/data
+
+ARG CACHEBUST=0
 
 COPY --chown=app scripts/ ./scripts/
 COPY --chown=app templates/ ./templates/
