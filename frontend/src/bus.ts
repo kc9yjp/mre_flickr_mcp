@@ -6,6 +6,7 @@ interface Events {
   runCommand: string;   // a chat prompt to send immediately
   photoOpened: string | null; // Photo Browser's current detail view, for chat context
   switchPanel: string;  // mobile: switch to named panel
+  openPanel: string;    // request desktop dockview to open/focus a panel by id
 }
 
 type Handler<K extends keyof Events> = (payload: Events[K]) => void;

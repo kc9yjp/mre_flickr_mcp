@@ -141,3 +141,43 @@ async def stream_chat(
         "tool_calls": acc.result(),
         "finish_reason": finish_reason,
     }
+
+
+# ── Model listing ─────────────────────────────────────────────────────────────
+
+
+async def list_models(
+    base_url: str,
+    api_key: str = "",
+    client: httpx.AsyncClient | None = None,
+) -> list[str]:
+    """Fetch available model ids from ``GET {base_url}/models``.
+
+    Works for both Ollama and OpenCode Zen (both expose the OpenAI-compatible
+    /models endpoint).
+    """
+    url = base_url.rstrip("/") + "/models"
+    owns_client = client is None
+    if owns_client:
+        client = httpx.AsyncClient(timeout=httpx.Timeout(30.0, connect=10.0))
+    headers = {"Content-Type": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    try:
+        resp = await client.get(url, headers=headers)
+        if resp.status_code != 200:
+            body = resp.text[:500]
+            raise LLMError(f"Model list returned {resp.status_code}: {body}")
+        data = resp.json()
+        models = data.get("data") or data.get("models") or []
+        ids = []
+        for m in models:
+            mid = m.get("id") if isinstance(m, dict) else m
+            if isinstance(mid, str) and mid.strip():
+                ids.append(mid.strip())
+        return sorted(set(ids))
+    except httpx.HTTPError as e:
+        raise LLMError(f"Failed to reach model list endpoint: {e}") from e
+    finally:
+        if owns_client:
+            await client.aclose()

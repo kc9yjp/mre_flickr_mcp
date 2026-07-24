@@ -1,4 +1,4 @@
-"""Starlette endpoints for the chat agent: /api/chat/*, /api/llm-settings, /api/commands."""
+"""Starlette endpoints for the chat agent: /api/chat/*, /api/llm-settings, /api/llm-models, /api/commands."""
 
 import asyncio
 import json
@@ -10,7 +10,7 @@ from starlette.routing import Route
 
 from webapi import _session_user, _unauthorized
 
-from agent import commands, loop, settings, store
+from agent import commands, llm, loop, settings, store
 
 _PING_INTERVAL = 15  # seconds between SSE keepalive comments
 
@@ -58,14 +58,18 @@ async def chat_stream(request: Request):
     if not message:
         return JSONResponse({"error": "message is required"}, status_code=400)
 
-    cfg = settings.load_settings(user["nsid"])
+    nsid = user["nsid"]
+    username = user["username"]
+    provider_override = (body.get("provider") or "").strip() or None
+    model_override = (body.get("model") or "").strip() or None
+
+    cfg = settings.resolve_cfg(nsid, provider_override, model_override)
     if not cfg.get("model"):
         return JSONResponse(
-            {"error": "No LLM model configured — open the chat settings first."},
+            {"error": "No LLM model configured — open the models panel first."},
             status_code=400,
         )
 
-    username = user["username"]
     lock = loop.get_turn_lock(username)
     if lock.locked():
         return JSONResponse({"error": "A chat turn is already running."}, status_code=409)
@@ -74,8 +78,20 @@ async def chat_stream(request: Request):
     if conversation_id:
         if not store.conversation_exists(username, conversation_id):
             return JSONResponse({"error": "conversation not found"}, status_code=404)
+        # Use per-conversation provider/model unless caller explicitly overrides.
+        if not provider_override and not model_override:
+            meta = store.get_conversation_meta(username, conversation_id)
+            if meta:
+                cprov = meta.get("provider") or None
+                cmodel = meta.get("model") or None
+                if cprov or cmodel:
+                    cfg = settings.resolve_cfg(nsid, cprov, cmodel)
     else:
-        conversation_id = store.create_conversation(username, message)
+        conv_provider = provider_override or settings.load_settings(nsid).get("active_provider", "")
+        conv_model = model_override or cfg.get("model", "")
+        conversation_id = store.create_conversation(
+            username, message, conv_provider, conv_model
+        )
 
     focused_photo_id = (body.get("focused_photo_id") or "").strip() or None
 
@@ -120,8 +136,11 @@ async def chat_conversation_detail(request: Request):
     conversation_id = request.path_params["id"]
     if not store.conversation_exists(user["username"], conversation_id):
         return JSONResponse({"error": "conversation not found"}, status_code=404)
+    meta = store.get_conversation_meta(user["username"], conversation_id) or {}
     return JSONResponse({
         "id": conversation_id,
+        "provider": meta.get("provider", ""),
+        "model": meta.get("model", ""),
         "messages": store.get_messages(user["username"], conversation_id),
     })
 
@@ -152,6 +171,34 @@ async def llm_settings(request: Request):
     return JSONResponse(settings.masked(settings.load_settings(user["nsid"])))
 
 
+async def llm_models(request: Request):
+    """Fetch available models for a provider's base_url/api_key."""
+    user = _session_user(request)
+    if not user:
+        return _unauthorized()
+    provider_id = request.query_params.get("provider") or ""
+    if not provider_id:
+        return JSONResponse({"error": "provider query param required"}, status_code=400)
+
+    s = settings.load_settings(user["nsid"])
+    providers = s.get("providers") or {}
+    prof = providers.get(provider_id)
+    if not prof:
+        return JSONResponse({"error": f"unknown provider: {provider_id}"}, status_code=404)
+
+    base_url = prof.get("base_url", "")
+    api_key = prof.get("api_key", "")
+    if not base_url:
+        return JSONResponse({"error": "provider has no base_url"}, status_code=400)
+
+    try:
+        models = await llm.list_models(base_url, api_key)
+    except llm.LLMError as e:
+        return JSONResponse({"error": str(e)}, status_code=502)
+
+    return JSONResponse({"models": models})
+
+
 async def api_commands(request: Request):
     user = _session_user(request)
     if not user:
@@ -167,5 +214,6 @@ def api_routes() -> list[Route]:
         Route("/api/chat/conversations/{id}", endpoint=chat_conversation_detail),
         Route("/api/chat/conversations/{id}/delete", endpoint=chat_conversation_delete, methods=["POST"]),
         Route("/api/llm-settings", endpoint=llm_settings, methods=["GET", "POST"]),
+        Route("/api/llm-models",   endpoint=llm_models),
         Route("/api/commands",     endpoint=api_commands),
     ]

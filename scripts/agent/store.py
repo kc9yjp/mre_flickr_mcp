@@ -31,6 +31,19 @@ CREATE TABLE IF NOT EXISTS messages (
 CREATE INDEX IF NOT EXISTS idx_messages_conv ON messages(conversation_id, seq);
 """
 
+# Schema migrations — each is a (check_sql, alter_sql) pair.  The check
+# returns a non-empty Row when the column is missing and the alter adds it.
+_MIGRATIONS = [
+    (
+        "SELECT 1 FROM pragma_table_info('conversations') WHERE name='provider'",
+        "ALTER TABLE conversations ADD COLUMN provider TEXT DEFAULT ''",
+    ),
+    (
+        "SELECT 1 FROM pragma_table_info('conversations') WHERE name='model'",
+        "ALTER TABLE conversations ADD COLUMN model TEXT DEFAULT ''",
+    ),
+]
+
 
 def _chat_db_path(username: str) -> str:
     return os.path.join(_db._DATA_DIR, username, "chat.db")
@@ -43,6 +56,9 @@ def _chat_db(username: str):
     conn = sqlite3.connect(path)
     conn.row_factory = sqlite3.Row
     conn.executescript(_SCHEMA)
+    for check_sql, alter_sql in _MIGRATIONS:
+        if conn.execute(check_sql).fetchone() is None:
+            conn.execute(alter_sql)
     try:
         yield conn
         conn.commit()
@@ -53,13 +69,16 @@ def _chat_db(username: str):
         conn.close()
 
 
-def create_conversation(username: str, title: str) -> str:
+def create_conversation(
+    username: str, title: str, provider: str = "", model: str = ""
+) -> str:
     conv_id = uuid.uuid4().hex
     now = int(time.time())
     with _chat_db(username) as conn:
         conn.execute(
-            "INSERT INTO conversations (id, title, created_at, updated_at) VALUES (?,?,?,?)",
-            (conv_id, title[:80], now, now),
+            "INSERT INTO conversations (id, title, created_at, updated_at, provider, model) "
+            "VALUES (?,?,?,?,?,?)",
+            (conv_id, title[:80], now, now, provider, model),
         )
     return conv_id
 
@@ -74,10 +93,19 @@ def conversation_exists(username: str, conversation_id: str) -> bool:
 def list_conversations(username: str) -> list[dict]:
     with _chat_db(username) as conn:
         rows = conn.execute(
-            "SELECT id, title, created_at, updated_at FROM conversations "
-            "ORDER BY updated_at DESC LIMIT 100"
+            "SELECT id, title, created_at, updated_at, provider, model "
+            "FROM conversations ORDER BY updated_at DESC LIMIT 100"
         ).fetchall()
     return [dict(r) for r in rows]
+
+
+def get_conversation_meta(username: str, conversation_id: str) -> dict | None:
+    with _chat_db(username) as conn:
+        row = conn.execute(
+            "SELECT provider, model FROM conversations WHERE id = ?",
+            (conversation_id,),
+        ).fetchone()
+    return dict(row) if row else None
 
 
 def get_messages(username: str, conversation_id: str) -> list[dict]:

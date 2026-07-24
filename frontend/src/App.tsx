@@ -13,6 +13,7 @@ import { OtherPhotoView } from "./panels/OtherPhotoView";
 import { Summary } from "./panels/Summary";
 import { Command } from "./panels/Command";
 import { Chat } from "./panels/Chat";
+import { ModelsPage } from "./panels/ModelsPage";
 import { SyncPage } from "./panels/SyncPage";
 import { QueuePage } from "./panels/QueuePage";
 import { SetupPage } from "./panels/SetupPage";
@@ -30,6 +31,7 @@ const components: Record<string, React.FC<IDockviewPanelProps>> = {
   summary: Summary,
   command: Command,
   chat: Chat,
+  models: ModelsPage,
   sync: SyncPage,
   queue: QueuePage,
   setup: SetupPage,
@@ -111,6 +113,11 @@ export default function App() {
     window.addEventListener("hashchange", onHash);
     return () => window.removeEventListener("hashchange", onHash);
   }, [emitHashFocus]);
+
+  // Allow any panel to request opening/focusing another panel via bus
+  useEffect(() => bus.on("openPanel", (id) => {
+    if (dockApi.current) openOrFocusPanel(dockApi.current, id);
+  }), []);
 
   const onReady = (event: DockviewReadyEvent) => {
     dockApi.current = event.api;

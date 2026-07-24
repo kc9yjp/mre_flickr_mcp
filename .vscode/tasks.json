@@ -19,7 +19,7 @@
     {
       "label": "Docker: Rebuild & Restart (keep data)",
       "type": "shell",
-      "command": "docker compose down && docker compose build --no-cache && docker compose up -d",
+      "command": "docker compose down && docker compose build && docker compose up -d",
       "presentation": {
         "reveal": "always",
         "panel": "shared",

@@ -9,6 +9,7 @@ export const PANEL_SPECS: Record<
   summary:  { title: "Summary",  position: { referencePanel: "photos",  direction: "right" } },
   chat:     { title: "Chat",     position: { referencePanel: "summary", direction: "below" } },
   command:  { title: "Commands", position: { referencePanel: "chat",    direction: "within" } },
+  models:   { title: "Models",   position: { referencePanel: "chat",    direction: "within" } },
   sync:     { title: "Sync",     position: { referencePanel: "command", direction: "within" } },
   queue:    { title: "Queue",    position: { referencePanel: "command", direction: "within" } },
   setup:    { title: "Setup",    position: { referencePanel: "command", direction: "within" } },
@@ -16,7 +17,7 @@ export const PANEL_SPECS: Record<
 };
 
 export const PANEL_ORDER = [
-  "photos", "other-photo", "summary", "chat", "command", "sync", "queue", "setup", "settings",
+  "photos", "other-photo", "summary", "chat", "command", "models", "sync", "queue", "setup", "settings",
 ];
 
 export function openOrFocusPanel(api: DockviewApi, id: string) {

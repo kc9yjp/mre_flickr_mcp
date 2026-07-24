@@ -95,11 +95,36 @@ export interface SetupData {
   bookmarklet: string;
 }
 
+// ── LLM / model config ────────────────────────────────────────────────────
+
+export interface ProviderProfile {
+  label: string;
+  base_url: string;
+  api_key: string;
+}
+
+export interface LLMSettings {
+  providers: Record<string, ProviderProfile>;
+  active_provider: string;
+  active_model: string;
+  max_tokens: number;
+  vision: boolean;
+  base_prompt: string;
+  temperature: string;
+  top_p: string;
+  frequency_penalty: string;
+  presence_penalty: string;
+  seed: string;
+  tool_choice: string;
+}
+
 export interface Conversation {
   id: string;
   title: string;
   created_at: number;
   updated_at: number;
+  provider: string;
+  model: string;
 }
 
 export interface WireMessage {
@@ -114,21 +139,6 @@ export interface WorkflowCommand {
   label: string;
   context: "photo" | "global";
   prompt: string;
-}
-
-export interface LLMSettings {
-  base_url: string;
-  api_key: string;
-  model: string;
-  max_tokens: number;
-  vision: boolean;
-  base_prompt: string;
-  temperature: string;
-  top_p: string;
-  frequency_penalty: string;
-  presence_penalty: string;
-  seed: string;
-  tool_choice: string;
 }
 
 export type StreamEvent =
@@ -203,9 +213,14 @@ export async function postJSON<T>(url: string, body?: unknown): Promise<T> {
   );
 }
 
+export async function listModels(provider: string): Promise<string[]> {
+  const r = await getJSON<{ models: string[] }>(`/api/llm-models`, { provider });
+  return r.models;
+}
+
 /** POST to /api/chat/stream and invoke onEvent for every SSE data event. */
 export async function streamChat(
-  body: { conversation_id?: string; message: string; focused_photo_id?: string | null },
+  body: { conversation_id?: string; message: string; focused_photo_id?: string | null; provider?: string; model?: string },
   onEvent: (event: StreamEvent) => void,
 ): Promise<void> {
   const response = await fetch("/api/chat/stream", {
