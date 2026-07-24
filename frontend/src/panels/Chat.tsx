@@ -9,6 +9,7 @@ import {
   streamChat,
 } from "../api";
 import * as bus from "../bus";
+import { SessionStatsPanel } from "../components/SessionStats";
 
 interface ToolCard {
   id: string;
@@ -82,6 +83,7 @@ export function Chat() {
   const [confirm, setConfirm] = useState<PendingConfirm | null>(null);
   const [error, setError] = useState("");
   const [autoApprove, setAutoApprove] = useState(false);
+  const [showStats, setShowStats] = useState(false);
 
   // Provider / model selector state
   const [llmCfg, setLlmCfg] = useState<LLMSettings | null>(null);
@@ -110,15 +112,22 @@ export function Chat() {
 
   // Load LLM settings + initial model list
   useEffect(() => {
-    getJSON<LLMSettings>("/api/llm-settings").then((s) => {
-      setLlmCfg(s);
-      const pid = s.active_provider || Object.keys(s.providers)[0] || "";
-      setProviderId(pid);
-      setModelId(s.active_model || "");
-      if (pid) {
-        listModels(pid).then(setModelOptions).catch(() => {});
-      }
-    }).catch(() => {});
+    getJSON<LLMSettings>("/api/llm-settings")
+      .then((s) => {
+        setLlmCfg(s);
+        const pid = s.active_provider || (s.providers && Object.keys(s.providers)[0]) || "";
+        setProviderId(pid);
+        setModelId(s.active_model || "");
+        if (pid) {
+          listModels(pid)
+            .then(setModelOptions)
+            .catch((e) => console.error("Failed to list models for provider:", pid, e));
+        }
+      })
+      .catch((e) => {
+        console.error("Failed to load LLM settings:", e);
+        setError("Failed to load LLM settings: " + (e instanceof Error ? e.message : String(e)));
+      });
   }, []);
 
   const switchProvider = useCallback(
@@ -265,7 +274,23 @@ export function Chat() {
 
   return (
     <div className="panel chat">
-      <div className="chat-header">
+      {error && !llmCfg && (
+        <div style={{ padding: 12 }}>
+          <p className="error">{error}</p>
+          <p className="hint">
+            This usually means the backend `/api/llm-settings` endpoint failed.
+            Check the browser console (F12) for details.
+          </p>
+        </div>
+      )}
+      {!llmCfg && !error && (
+        <div style={{ padding: 12 }}>
+          <p className="hint">Loading LLM settings…</p>
+        </div>
+      )}
+      {llmCfg && (
+        <>
+          <div className="chat-header">
         <select
           value={activeId ?? ""}
           onChange={(e) => (e.target.value ? openConversation(e.target.value) : newConversation())}
@@ -323,6 +348,13 @@ export function Chat() {
           ⚡
         </button>
         <button
+          onClick={() => setShowStats((s) => !s)}
+          title="Show session stats"
+          className={showStats ? "icon-btn active" : "icon-btn"}
+        >
+          📊
+        </button>
+        <button
           onClick={openModelsPanel}
           title="Open models &amp; providers panel"
           className="icon-btn"
@@ -330,8 +362,12 @@ export function Chat() {
           ⚙
         </button>
       </div>
+      {showStats && activeId && <SessionStatsPanel conversationId={activeId} />}
       <div className="chat-messages" ref={scrollRef}>
-        {msgs.length === 0 && (
+        {error && (
+          <p className="error" style={{ marginBottom: 12 }}>{error}</p>
+        )}
+        {msgs.length === 0 && !error && (
           <p className="hint">
             Ask about your photos, or use a workflow button from the Commands panel or a
             photo's detail view. Configure providers via the ⚙ panel first.
@@ -398,7 +434,9 @@ export function Chat() {
         <button type="submit" disabled={streaming || !input.trim()}>
           Send
         </button>
-      </form>
+       </form>
+        </>
+      )}
     </div>
   );
 }

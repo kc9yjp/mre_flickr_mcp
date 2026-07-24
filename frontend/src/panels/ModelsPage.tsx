@@ -1,5 +1,5 @@
 import { FormEvent, useCallback, useEffect, useState } from "react";
-import { getJSON, postJSON, listModels, LLMSettings, ProviderProfile } from "../api";
+import { getJSON, postJSON, listModels, modelSupportsVision, LLMSettings, ProviderProfile } from "../api";
 
 const PROVIDER_IDS = ["ollama", "zen"];
 
@@ -12,8 +12,13 @@ export function ModelsPage() {
 
   useEffect(() => {
     getJSON<LLMSettings>("/api/llm-settings")
-      .then(setCfg)
-      .catch((e) => setError(e.message));
+      .then((s) => {
+        if (!s.providers) {
+          setError("Error: providers not in response. Backend may be misconfigured.");
+        }
+        setCfg(s);
+      })
+      .catch((e) => setError((e instanceof Error ? e.message : String(e))));
   }, []);
 
   const save = async (e: FormEvent) => {
@@ -67,7 +72,7 @@ export function ModelsPage() {
       <form onSubmit={save}>
         <h3>Providers</h3>
         {PROVIDER_IDS.map((pid) => {
-          const prof: ProviderProfile = cfg.providers[pid] ?? { label: pid, base_url: "", api_key: "" };
+          const prof: ProviderProfile = (cfg?.providers?.[pid]) ?? { label: pid, base_url: "", api_key: "" };
           return (
             <div key={pid} className="settings-item">
               <label className="settings-label">
@@ -168,6 +173,9 @@ export function ModelsPage() {
             Enable vision (send images to LLM)
             <span className="hint">
               {" "}— only enable if the model supports vision
+              {cfg.active_model && !modelSupportsVision(cfg.active_model) && (
+                <> (current model does not support vision)</>
+              )}
             </span>
           </label>
         </div>

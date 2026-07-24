@@ -206,6 +206,19 @@ async def api_commands(request: Request):
     return JSONResponse({"commands": commands.commands_for_api(user["nsid"])})
 
 
+async def chat_stats(request: Request):
+    """Get accumulated stats for a conversation session."""
+    user = _session_user(request)
+    if not user:
+        return _unauthorized()
+    conversation_id = request.query_params.get("conversation_id") or ""
+    if not conversation_id:
+        return JSONResponse({"error": "conversation_id query param required"}, status_code=400)
+    
+    stats = loop.get_session_stats(conversation_id)
+    return JSONResponse(stats)
+
+
 def api_routes() -> list[Route]:
     return [
         Route("/api/chat/stream",  endpoint=chat_stream, methods=["POST"]),
@@ -213,6 +226,7 @@ def api_routes() -> list[Route]:
         Route("/api/chat/conversations", endpoint=chat_conversations),
         Route("/api/chat/conversations/{id}", endpoint=chat_conversation_detail),
         Route("/api/chat/conversations/{id}/delete", endpoint=chat_conversation_delete, methods=["POST"]),
+        Route("/api/chat/stats",    endpoint=chat_stats),
         Route("/api/llm-settings", endpoint=llm_settings, methods=["GET", "POST"]),
         Route("/api/llm-models",   endpoint=llm_models),
         Route("/api/commands",     endpoint=api_commands),

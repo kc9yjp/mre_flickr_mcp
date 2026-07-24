@@ -5,6 +5,7 @@ isolated here so provider drift is fixed in one place.
 """
 
 import json
+import time
 from typing import AsyncIterator
 
 import httpx
@@ -79,7 +80,10 @@ async def stream_chat(
     """Stream one assistant turn.
 
     Yields ``{"type": "delta", "text": str}`` for content tokens, then exactly
-    one ``{"type": "message", "content": str, "tool_calls": list, "finish_reason": str}``.
+    one ``{"type": "message", "content": str, "tool_calls": list, "finish_reason": str, 
+    "usage": {...}, "latency_ms": int}``.
+    
+    Usage contains: prompt_tokens, completion_tokens, total_tokens (if provided by LLM).
     """
     payload: dict = {
         "model": cfg.get("model", ""),
@@ -100,6 +104,8 @@ async def stream_chat(
     content_parts: list[str] = []
     acc = _ToolCallAccumulator()
     finish_reason = ""
+    usage: dict = {}
+    start_time = time.time()
 
     try:
         async with client.stream("POST", url, json=payload, headers=_auth_headers(cfg)) as response:
@@ -117,6 +123,9 @@ async def stream_chat(
                     chunk = json.loads(data)
                 except ValueError:
                     continue
+                # Capture usage from final chunk if present
+                if chunk.get("usage"):
+                    usage = chunk["usage"]
                 choices = chunk.get("choices") or []
                 if not choices:
                     continue
@@ -135,12 +144,75 @@ async def stream_chat(
         if owns_client:
             await client.aclose()
 
+    latency_ms = int((time.time() - start_time) * 1000)
+    
     yield {
         "type": "message",
         "content": "".join(content_parts),
         "tool_calls": acc.result(),
         "finish_reason": finish_reason,
+        "usage": usage,
+        "latency_ms": latency_ms,
     }
+
+
+# ── Model filtering ──────────────────────────────────────────────────────────
+
+# OpenCode Zen models that use /v1/responses instead of /v1/chat/completions
+# These are not supported by the current chat client
+_ZEN_RESPONSES_ONLY_MODELS = {
+    "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna",
+    "gpt-5.5", "gpt-5.5-pro",
+    "gpt-5.4", "gpt-5.4-pro", "gpt-5.4-mini", "gpt-5.4-nano",
+    "gpt-5.3-codex", "gpt-5.3-codex-spark",
+    "gpt-5.2", "gpt-5.2-codex",
+    "gpt-5.1", "gpt-5.1-codex", "gpt-5.1-codex-max", "gpt-5.1-codex-mini",
+    "gpt-5", "gpt-5-codex", "gpt-5-nano",
+}
+
+# Models known to NOT support vision
+_VISION_UNSUPPORTED_MODELS = {
+    # Most open-source models don't support vision
+    "llama2", "llama3", "llama3.1", "llama3.2",
+    "mistral", "mixtral",
+    "neural-chat", "dolphin-mixtral",
+    # Zen models without vision support
+    "deepseek-v4-pro", "deepseek-v4-flash",
+    "minimax-m3", "minimax-m2.7", "minimax-m2.5",
+    "glm-5.2", "glm-5.1", "glm-5",
+    "kimi-k2.5", "kimi-k2.6", "kimi-k2.7-code",
+    "big-pickle",
+    "mimo-v2.5-free",
+    "laguna-s-2.1-free",
+    "ling-3.0-flash-free",
+    "north-mini-code-free",
+    "nemotron-3-ultra-free",
+    "deepseek-v4-flash-free",
+    # Add others as needed
+}
+
+
+def _filter_models(model_ids: list[str], base_url: str) -> list[str]:
+    """Filter out unsupported models.
+    
+    - Removes /v1/responses-only models (unsupported by current chat client)
+    - Removes models that don't support vision when user has vision enabled
+    """
+    filtered = []
+    is_zen = "opencode.ai/zen" in base_url.lower()
+    
+    for mid in model_ids:
+        # Filter out Zen's /v1/responses models
+        if is_zen and mid in _ZEN_RESPONSES_ONLY_MODELS:
+            continue
+        filtered.append(mid)
+    
+    return sorted(filtered)
+
+
+def model_supports_vision(model_id: str) -> bool:
+    """Check if a model supports vision/image input."""
+    return model_id not in _VISION_UNSUPPORTED_MODELS
 
 
 # ── Model listing ─────────────────────────────────────────────────────────────
@@ -155,6 +227,10 @@ async def list_models(
 
     Works for both Ollama and OpenCode Zen (both expose the OpenAI-compatible
     /models endpoint).
+    
+    Filters out:
+    - Models that use /v1/responses instead of /v1/chat/completions (unsupported)
+    - Models that don't support vision
     """
     url = base_url.rstrip("/") + "/models"
     owns_client = client is None
@@ -175,7 +251,9 @@ async def list_models(
             mid = m.get("id") if isinstance(m, dict) else m
             if isinstance(mid, str) and mid.strip():
                 ids.append(mid.strip())
-        return sorted(set(ids))
+        
+        # Filter out unsupported models
+        return _filter_models(ids, base_url)
     except httpx.HTTPError as e:
         raise LLMError(f"Failed to reach model list endpoint: {e}") from e
     finally:

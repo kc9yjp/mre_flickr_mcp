@@ -7,9 +7,9 @@ export const PANEL_SPECS: Record<
   photos:   { title: "Photo Browser" },
   "other-photo": { title: "Other's Photo" },
   summary:  { title: "Summary",  position: { referencePanel: "photos",  direction: "right" } },
-  chat:     { title: "Chat",     position: { referencePanel: "summary", direction: "below" } },
+  chat:     { title: "Chat" },  // No position constraint so it can be added dynamically
   command:  { title: "Commands", position: { referencePanel: "chat",    direction: "within" } },
-  models:   { title: "Models",   position: { referencePanel: "chat",    direction: "within" } },
+  models:   { title: "Models" },  // No position constraint for dynamic opening
   sync:     { title: "Sync",     position: { referencePanel: "command", direction: "within" } },
   queue:    { title: "Queue",    position: { referencePanel: "command", direction: "within" } },
   setup:    { title: "Setup",    position: { referencePanel: "command", direction: "within" } },

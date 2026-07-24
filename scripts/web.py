@@ -552,6 +552,26 @@ class CSRFMiddleware(BaseHTTPMiddleware):
         return await call_next(request)
 
 
+class StaticCacheMiddleware(BaseHTTPMiddleware):
+    """Set cache headers for the workbench SPA.
+
+    Vite's build gives JS/CSS content-hashed filenames under /app/assets/,
+    so those are safe to cache forever. index.html (and the SPA fallback for
+    unmatched /app/* routes) is not hashed, so without an explicit no-cache
+    header browsers can serve a stale shell pointing at an old bundle after
+    a rebuild until a hard refresh.
+    """
+
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+        path = request.url.path
+        if path.startswith("/app/assets/"):
+            response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+        elif path.startswith("/app"):
+            response.headers["Cache-Control"] = "no-cache"
+        return response
+
+
 async def main_sse():
     """Start the MCP SSE server with the Starlette web application.
 
@@ -578,6 +598,7 @@ async def main_sse():
         ),
         Middleware(CSRFMiddleware),
         Middleware(ApiKeyMiddleware),
+        Middleware(StaticCacheMiddleware),
     ]
 
     app = Starlette(

@@ -105,6 +105,9 @@ _turn_locks: dict[str, asyncio.Lock] = {}
 # confirm_id -> Future resolved with True (approve) / False (deny)
 _pending_confirms: dict[str, asyncio.Future] = {}
 
+# Session stats per conversation: {conversation_id: {turns: N, tokens: N, latency_ms: N}}
+_session_stats: dict[str, dict] = {}
+
 
 def get_turn_lock(username: str) -> asyncio.Lock:
     return _turn_locks.setdefault(username, asyncio.Lock())
@@ -117,6 +120,17 @@ def resolve_confirm(confirm_id: str, approve: bool) -> bool:
         return False
     future.set_result(bool(approve))
     return True
+
+
+def get_session_stats(conversation_id: str) -> dict:
+    """Get accumulated stats for a conversation session."""
+    return _session_stats.get(conversation_id, {
+        "turns": 0,
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "total_tokens": 0,
+        "total_latency_ms": 0,
+    })
 
 
 def _register_confirm(confirm_id: str) -> asyncio.Future:
@@ -324,6 +338,23 @@ async def run_turn(
                     yield event
                 else:
                     final = event
+
+            # Track session stats
+            if final:
+                stats = _session_stats.setdefault(conversation_id, {
+                    "turns": 0,
+                    "prompt_tokens": 0,
+                    "completion_tokens": 0,
+                    "total_tokens": 0,
+                    "total_latency_ms": 0,
+                })
+                stats["turns"] += 1
+                if final.get("usage"):
+                    usage = final["usage"]
+                    stats["prompt_tokens"] += usage.get("prompt_tokens", 0)
+                    stats["completion_tokens"] += usage.get("completion_tokens", 0)
+                    stats["total_tokens"] += usage.get("total_tokens", 0)
+                stats["total_latency_ms"] += final.get("latency_ms", 0)
 
             assistant_msg: dict = {"role": "assistant", "content": final["content"] or None}
             if final["tool_calls"]:

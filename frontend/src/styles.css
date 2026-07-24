@@ -1009,3 +1009,38 @@ select:focus {
 .command-message {
   color: var(--ink-secondary);
 }
+
+/* --- Session Stats --- */
+
+.session-stats {
+  padding: 8px;
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+  background: var(--surface-subtle, rgba(255, 255, 255, 0.02));
+}
+
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 8px;
+}
+
+.stat-item {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 6px;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.2);
+}
+
+.stat-label {
+  color: var(--ink-muted);
+  font-size: 11px;
+}
+
+.stat-value {
+  color: var(--accent, #4a9eff);
+  font-weight: 600;
+  font-size: 13px;
+}

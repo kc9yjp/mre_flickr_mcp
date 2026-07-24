@@ -118,6 +118,14 @@ export interface LLMSettings {
   tool_choice: string;
 }
 
+export interface SessionStats {
+  turns: number;
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+  total_latency_ms: number;
+}
+
 export interface Conversation {
   id: string;
   title: string;
@@ -216,6 +224,34 @@ export async function postJSON<T>(url: string, body?: unknown): Promise<T> {
 export async function listModels(provider: string): Promise<string[]> {
   const r = await getJSON<{ models: string[] }>(`/api/llm-models`, { provider });
   return r.models;
+}
+
+export async function getSessionStats(conversationId: string): Promise<SessionStats> {
+  return getJSON<SessionStats>("/api/chat/stats", { conversation_id: conversationId });
+}
+
+// Models known to not support vision
+const VISION_UNSUPPORTED = new Set([
+  // Ollama models
+  "llama2", "llama3", "llama3.1", "llama3.2",
+  "mistral", "mixtral",
+  "neural-chat", "dolphin-mixtral",
+  // Zen models
+  "deepseek-v4-pro", "deepseek-v4-flash",
+  "minimax-m3", "minimax-m2.7", "minimax-m2.5",
+  "glm-5.2", "glm-5.1", "glm-5",
+  "kimi-k2.5", "kimi-k2.6", "kimi-k2.7-code",
+  "big-pickle",
+  "mimo-v2.5-free",
+  "laguna-s-2.1-free",
+  "ling-3.0-flash-free",
+  "north-mini-code-free",
+  "nemotron-3-ultra-free",
+  "deepseek-v4-flash-free",
+]);
+
+export function modelSupportsVision(modelId: string): boolean {
+  return !VISION_UNSUPPORTED.has(modelId);
 }
 
 /** POST to /api/chat/stream and invoke onEvent for every SSE data event. */
