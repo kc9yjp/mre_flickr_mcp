@@ -2,6 +2,7 @@ FROM node:22-alpine AS frontend
 WORKDIR /build
 COPY frontend/package.json frontend/package-lock.json ./
 RUN npm ci
+ARG CACHEBUST=0
 COPY frontend/ ./
 RUN npm run build
 
