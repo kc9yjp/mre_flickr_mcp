@@ -1,3 +1,7 @@
+// Ctrl/Cmd-K command palette: fuzzy-searches panels and workflow commands,
+// then opens/focuses the result via the dockview API (desktop) or a
+// switchPanel bus event (mobile).
+
 import { useCallback, useEffect, useRef, useState } from "react";
 import * as bus from "./bus";
 import { DockviewApi } from "dockview";

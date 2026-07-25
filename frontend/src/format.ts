@@ -1,3 +1,6 @@
+// Shared number/time formatting helpers (compact counts, relative timestamps)
+// used across panel displays.
+
 const compact = new Intl.NumberFormat("en", {
   notation: "compact",
   maximumFractionDigits: 1,

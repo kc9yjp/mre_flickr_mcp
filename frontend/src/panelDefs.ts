@@ -1,3 +1,6 @@
+// Central registry of dockview panel ids, titles, and default positions,
+// shared by App, MobileLayout, and the command palette.
+
 import { DockviewApi } from "dockview";
 
 export const PANEL_SPECS: Record<

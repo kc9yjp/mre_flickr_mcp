@@ -1,3 +1,6 @@
+// Setup panel: per-client MCP config snippets, the bookmarklet, browser
+// extension download, and API key regeneration.
+
 import { useEffect, useState } from "react";
 import { SetupData, getJSON, postJSON } from "../api";
 

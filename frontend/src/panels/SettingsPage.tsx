@@ -1,3 +1,6 @@
+// Settings panel: edit the per-user settings registry (retry timezone,
+// default group-queue retry time, background sync interval).
+
 import { FormEvent, useEffect, useState } from "react";
 import { getJSON, postJSON } from "../api";
 

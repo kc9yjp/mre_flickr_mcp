@@ -1,3 +1,7 @@
+// Detail view for a Flickr photo you don't own, opened via the bookmarklet
+// or browser extension; falls back to the Flickr API when the photo isn't
+// in the local database.
+
 import { useEffect, useState } from "react";
 import { getJSON, PhotoDetail } from "../api";
 import * as bus from "../bus";

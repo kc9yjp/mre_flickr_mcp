@@ -1,3 +1,6 @@
+// Models panel: edit per-user LLM provider profiles (base URL/API key),
+// output/sampling settings, and pick the active provider + model.
+
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import { getJSON, postJSON, listModels, modelSupportsVision, LLMSettings, ProviderProfile } from "../api";
 

@@ -1,3 +1,5 @@
+// Small stats readout (turns/tokens/latency) for the active chat conversation.
+
 import { useEffect, useState } from "react";
 import { SessionStats, getSessionStats } from "../api";
 

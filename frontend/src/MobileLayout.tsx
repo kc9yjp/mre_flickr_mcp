@@ -1,3 +1,6 @@
+// Two-pane layout for viewports under 768px: a persistent Chat pane plus a
+// single-select content pane, replacing the desktop dockview grid.
+
 import { useEffect, useState } from "react";
 import { Me } from "./api";
 import * as bus from "./bus";

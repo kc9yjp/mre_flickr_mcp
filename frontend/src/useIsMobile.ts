@@ -1,3 +1,5 @@
+// Hook that tracks whether the viewport is below the mobile breakpoint.
+
 import { useEffect, useState } from "react";
 
 const MOBILE_BREAKPOINT = 768;

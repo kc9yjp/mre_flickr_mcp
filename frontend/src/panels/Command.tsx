@@ -1,3 +1,6 @@
+// Commands panel: sync trigger buttons plus workflow-command shortcuts
+// scoped to the currently focused photo (or global commands).
+
 import { useState } from "react";
 import { ApiError, postJSON } from "../api";
 import * as bus from "../bus";

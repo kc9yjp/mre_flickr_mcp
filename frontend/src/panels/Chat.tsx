@@ -1,3 +1,6 @@
+// Chat panel: streams agent turns over SSE (deltas, tool calls/results,
+// confirm cards), manages conversations, and emits focusPhoto bus events.
+
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Conversation,

@@ -1,3 +1,5 @@
+// Vite entry point: mounts the workbench React app into #root.
+
 import React from "react";
 import ReactDOM from "react-dom/client";
 import "dockview/dist/styles/dockview.css";

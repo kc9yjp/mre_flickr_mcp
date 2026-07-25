@@ -1,3 +1,6 @@
+// Photo Browser panel: search/filter/sort/paginate your own photo library
+// and open a photo's detail view with metadata, groups, and albums.
+
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import {
   Album,

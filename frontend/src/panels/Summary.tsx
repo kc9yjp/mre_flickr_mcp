@@ -1,3 +1,6 @@
+// Summary panel: collection stat tiles (photos, views, groups, albums,
+// contacts) and the top-20 tag list.
+
 import { useEffect, useRef, useState } from "react";
 import { getJSON, Stats, SyncStatus } from "../api";
 import { compactNumber, relativeTime } from "../format";

@@ -1,3 +1,6 @@
+// Queue panel: waiting/errored/completed group-add queue items, with retry
+// and delete actions.
+
 import { useEffect, useState } from "react";
 import { QueueData, getJSON, postJSON } from "../api";
 

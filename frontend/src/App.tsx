@@ -1,3 +1,6 @@
+// Root workbench shell: dockview panel layout (with localStorage persistence),
+// the View menu, bookmarklet hash deep-linking, and the mobile layout switch.
+
 import { useEffect, useRef, useState, useCallback } from "react";
 import {
   DockviewReact,

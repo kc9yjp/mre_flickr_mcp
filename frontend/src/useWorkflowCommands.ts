@@ -1,3 +1,6 @@
+// Fetches and filters the server-side workflow command list (backed by
+// agent.prompts_store) for use by the Command panel and command palette.
+
 import { useEffect, useState } from "react";
 import { WorkflowCommand, getJSON } from "./api";
 import * as bus from "./bus";

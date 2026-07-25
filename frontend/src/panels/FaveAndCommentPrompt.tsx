@@ -1,3 +1,6 @@
+// Single-button fave+comment action for a photo you don't own, prompting for
+// comment text via a native prompt() dialog.
+
 import { useState } from "react";
 import { ApiError, commentOnPhoto, favePhoto } from "../api";
 

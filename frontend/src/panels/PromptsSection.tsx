@@ -1,3 +1,6 @@
+// Editor for user-defined and built-in prompts, their categories, and the
+// template variables ({photo_id}, {user_nsid}) they can reference.
+
 import { FormEvent, useEffect, useState } from "react";
 import { Prompt, PromptCategory, PromptVariable, PromptsData, getJSON, postJSON } from "../api";
 import * as bus from "../bus";

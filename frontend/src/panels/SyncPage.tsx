@@ -1,3 +1,6 @@
+// Sync panel: per-type sync status table, trigger buttons, and the
+// database reset action.
+
 import { useEffect, useRef, useState } from "react";
 import { SyncStatus, getJSON, postJSON } from "../api";
 import { relativeTime } from "../format";
