@@ -28,6 +28,7 @@ export interface Photo {
 
 export interface PhotoDetail extends Photo {
   groups: { id: string; name: string }[];
+  albums: { id: string; title: string }[];
   in_keeper_list: boolean;
   is_own: boolean;
   owner?: { nsid: string; username: string; realname: string; profile_url: string; avatar_url: string };
@@ -36,6 +37,22 @@ export interface PhotoDetail extends Photo {
 export interface PhotoPage {
   total: number;
   offset: number;
+  photos: Photo[];
+}
+
+export interface Album {
+  id: string;
+  title: string;
+  description: string;
+  count_photos: number;
+  count_views: number;
+  thumb_url: string | null;
+}
+
+export interface AlbumPhotoPage {
+  total: number;
+  page: number;
+  pages: number;
   photos: Photo[];
 }
 

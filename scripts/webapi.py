@@ -129,6 +129,18 @@ async def api_photos(request: Request):
     })
 
 
+def _photo_albums(photo_id: str) -> list[dict]:
+    """Best-effort album (photoset) membership for a photo, fetched from the
+    Flickr API — photo-album membership isn't tracked in the local DB.
+    Caller must have already set the ``_current_user`` context."""
+    try:
+        data = flickr_api._api_get("flickr.photos.getAllContexts", {"photo_id": photo_id})
+        return [{"id": s["id"], "title": s.get("title", "")} for s in data.get("set", [])]
+    except Exception as e:
+        logging.warning("failed to fetch albums for photo %s: %s", photo_id, e)
+        return []
+
+
 async def api_photo_detail(request: Request):
     user = _session_user(request)
     if not user:
@@ -155,9 +167,18 @@ async def api_photo_detail(request: Request):
             "SELECT 1 FROM keeper_list WHERE photo_id = ?", (photo_id,)
         ).fetchone()
 
+    from db import _current_user as _ctx
+
+    token = _ctx.set(user)
+    try:
+        albums = _photo_albums(photo_id)
+    finally:
+        _ctx.reset(token)
+
     return JSONResponse({
         **dict(row),
         "groups": [dict(g) for g in groups],
+        "albums": albums,
         "in_keeper_list": bool(keeper),
         "is_own": True,
     })
@@ -179,6 +200,7 @@ async def _external_photo_detail(user: dict, photo_id: str) -> JSONResponse:
             favorites = int(faves_data.get("photo", {}).get("total", 0) or 0)
         except Exception:
             favorites = 0
+        albums = _photo_albums(photo_id)
     except flickr_api.FlickrAPIError as e:
         status = 404 if e.code == 1 else 502
         return JSONResponse({"error": e.flickr_message}, status_code=status)
@@ -229,6 +251,7 @@ async def _external_photo_detail(user: dict, photo_id: str) -> JSONResponse:
         "is_public":      1 if photo.get("visibility", {}).get("ispublic", 1) else 0,
         "synced_at":      0,
         "groups":         [],
+        "albums":         albums,
         "in_keeper_list": False,
         "is_own":         False,
         "owner": {
@@ -290,6 +313,96 @@ async def api_photo_comment(request: Request):
     finally:
         _ctx.reset(token)
     return JSONResponse({"ok": True, "comment_id": data.get("comment", {}).get("id", "")})
+
+
+async def api_albums(request: Request):
+    """GET /api/albums — the user's albums, with a cover thumbnail if synced."""
+    user = _session_user(request)
+    if not user:
+        return _unauthorized()
+    if err := _no_db(user["username"]):
+        return err
+
+    with get_db_for_user(user["username"]) as conn:
+        rows = conn.execute(
+            "SELECT a.id, a.title, a.description, a.count_photos, a.count_views, "
+            "       p.url_medium, p.url_original "
+            "FROM albums a LEFT JOIN photos p ON p.id = a.primary_photo_id "
+            "ORDER BY a.title COLLATE NOCASE"
+        ).fetchall()
+
+    return JSONResponse({
+        "albums": [
+            {
+                "id":           r["id"],
+                "title":        r["title"],
+                "description":  r["description"],
+                "count_photos": r["count_photos"],
+                "count_views":  r["count_views"],
+                "thumb_url":    r["url_medium"] or r["url_original"],
+            }
+            for r in rows
+        ],
+    })
+
+
+async def api_album_photos(request: Request):
+    """GET /api/albums/{id}/photos — photos in an album, joined against the
+    local DB for thumbnails/stats. Order follows the album's Flickr order."""
+    user = _session_user(request)
+    if not user:
+        return _unauthorized()
+    if err := _no_db(user["username"]):
+        return err
+
+    album_id = request.path_params["id"]
+    qp = request.query_params
+    try:
+        limit = min(int(qp.get("limit", 60)), 200)
+        page = max(int(qp.get("page", 1)), 1)
+    except ValueError:
+        return JSONResponse({"error": "limit/page must be integers"}, status_code=400)
+
+    from db import _current_user as _ctx
+
+    token = _ctx.set(user)
+    try:
+        creds = flickr_api._load_credentials()
+        data = flickr_api._api_get("flickr.photosets.getPhotos", {
+            "photoset_id": album_id,
+            "user_id": creds["user_nsid"],
+            "per_page": str(limit),
+            "page": str(page),
+        })
+    except flickr_api.FlickrAPIError as e:
+        status = 404 if e.code == 1 else 502
+        return JSONResponse({"error": e.flickr_message}, status_code=status)
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=502)
+    finally:
+        _ctx.reset(token)
+
+    photoset = data.get("photoset", {})
+    ids = [p["id"] for p in photoset.get("photo", [])]
+    total = int(photoset.get("total", 0) or 0)
+    pages = int(photoset.get("pages", 0) or 0)
+
+    photos_by_id: dict = {}
+    if ids:
+        placeholders = ",".join("?" * len(ids))
+        with get_db_for_user(user["username"]) as conn:
+            rows = conn.execute(
+                f"SELECT {_PHOTO_COLUMNS} FROM photos WHERE id IN ({placeholders})",
+                ids,
+            ).fetchall()
+        photos_by_id = {r["id"]: dict(r) for r in rows}
+
+    return JSONResponse({
+        "total": total,
+        "page": page,
+        "pages": pages,
+        "photos": [photos_by_id[i] for i in ids if i in photos_by_id],
+    })
 
 
 async def api_stats(request: Request):
@@ -766,6 +879,8 @@ def api_routes() -> list[Route]:
         Route("/api/photos/{id}",  endpoint=api_photo_detail),
         Route("/api/photos/{id}/fave",    endpoint=api_photo_fave, methods=["POST"]),
         Route("/api/photos/{id}/comment", endpoint=api_photo_comment, methods=["POST"]),
+        Route("/api/albums",       endpoint=api_albums),
+        Route("/api/albums/{id}/photos", endpoint=api_album_photos),
         Route("/api/stats",        endpoint=api_stats),
         Route("/api/sync/status",  endpoint=api_sync_status),
         Route("/api/sync/{type}",  endpoint=api_sync_trigger, methods=["POST"]),

@@ -312,6 +312,19 @@ select:focus {
   margin: 12px auto;
 }
 
+.album-select {
+  display: block;
+  margin-bottom: 8px;
+  max-width: 320px;
+}
+
+.album-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
 .photo-detail .detail-toolbar {
   display: flex;
   justify-content: space-between;

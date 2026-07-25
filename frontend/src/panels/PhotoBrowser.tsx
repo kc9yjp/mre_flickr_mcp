@@ -1,8 +1,7 @@
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import {
-  ApiError,
-  commentOnPhoto,
-  favePhoto,
+  Album,
+  AlbumPhotoPage,
   getJSON,
   Photo,
   PhotoDetail,
@@ -60,62 +59,6 @@ function Thumb({ photo, onClick }: { photo: Photo; onClick: () => void }) {
   );
 }
 
-function FaveCommentBar({ photoId }: { photoId: string }) {
-  const [comment, setComment] = useState("");
-  const [faveStatus, setFaveStatus] = useState("");
-  const [commentStatus, setCommentStatus] = useState("");
-  const [busy, setBusy] = useState(false);
-
-  const doFave = async () => {
-    setFaveStatus("");
-    setBusy(true);
-    try {
-      await favePhoto(photoId);
-      setFaveStatus("★ Faved");
-    } catch (e) {
-      setFaveStatus(e instanceof ApiError ? e.message : "Fave failed");
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const submitComment = async (e: FormEvent) => {
-    e.preventDefault();
-    if (!comment.trim()) return;
-    setCommentStatus("");
-    setBusy(true);
-    try {
-      await commentOnPhoto(photoId, comment.trim());
-      setComment("");
-      setCommentStatus("Comment posted.");
-    } catch (e) {
-      setCommentStatus(e instanceof ApiError ? e.message : "Comment failed");
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <div className="detail-fave-comment">
-      <div className="detail-fave-row">
-        <button onClick={doFave} disabled={busy}>★ Fave</button>
-        {faveStatus && <span className="hint">{faveStatus}</span>}
-      </div>
-      <form className="detail-comment-form" onSubmit={submitComment}>
-        <textarea
-          rows={2}
-          placeholder="Write a comment…"
-          value={comment}
-          onChange={(e) => setComment(e.target.value)}
-        />
-        <button type="submit" disabled={busy || !comment.trim()}>
-          Comment
-        </button>
-      </form>
-      {commentStatus && <span className="hint">{commentStatus}</span>}
-    </div>
-  );
-}
 
 function DetailView({ detail, onBack }: { detail: PhotoDetail; onBack: () => void }) {
   const src = detail.url_original || detail.url_medium;
@@ -159,7 +102,7 @@ function DetailView({ detail, onBack }: { detail: PhotoDetail; onBack: () => voi
         <span>{detail.is_public ? "public" : "private"}</span>
         {detail.in_keeper_list && <span>keeper</span>}
       </div>
-      {detail.is_own && <FaveCommentBar photoId={detail.id} />}
+
       <dl className="detail-meta">
         <dt>Taken</dt>
         <dd>{detail.date_taken || "unknown"}</dd>
@@ -185,6 +128,16 @@ function DetailView({ detail, onBack }: { detail: PhotoDetail; onBack: () => voi
                   ))
                 : "none"}
             </dd>
+            <dt>Albums</dt>
+            <dd>
+              {detail.albums.length
+                ? detail.albums.map((a) => (
+                    <span key={a.id} className="chip">
+                      {a.title}
+                    </span>
+                  ))
+                : "none"}
+            </dd>
           </>
         )}
       </dl>
@@ -200,6 +153,10 @@ export function PhotoBrowser() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [detail, setDetail] = useState<PhotoDetail | null>(null);
+  const [albums, setAlbums] = useState<Album[]>([]);
+  const [selectedAlbum, setSelectedAlbum] = useState<Album | null>(null);
+  const [albumPage, setAlbumPage] = useState(1);
+  const [albumPages, setAlbumPages] = useState(1);
 
   const load = useCallback(async (f: Filters, offset: number) => {
     setLoading(true);
@@ -215,6 +172,41 @@ export function PhotoBrowser() {
     }
   }, []);
 
+  const loadAlbumPhotos = useCallback(async (album: Album, page: number) => {
+    setLoading(true);
+    setError("");
+    try {
+      const data = await getJSON<AlbumPhotoPage>(`/api/albums/${album.id}/photos`, {
+        page: String(page),
+        limit: String(PAGE_SIZE),
+      });
+      setTotal(data.total);
+      setAlbumPages(data.pages);
+      setPhotos((prev) => (page === 1 ? data.photos : [...prev, ...data.photos]));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  const selectAlbum = useCallback(
+    (album: Album) => {
+      setDetail(null);
+      setSelectedAlbum(album);
+      setAlbumPage(1);
+      loadAlbumPhotos(album, 1);
+    },
+    [loadAlbumPhotos],
+  );
+
+  const clearAlbum = useCallback(() => {
+    setSelectedAlbum(null);
+    setFilters(DEFAULT_FILTERS);
+    setDraft(DEFAULT_FILTERS);
+    load(DEFAULT_FILTERS, 0);
+  }, [load]);
+
   const openDetail = useCallback(async (id: string) => {
     setError("");
     try {
@@ -227,6 +219,9 @@ export function PhotoBrowser() {
 
   useEffect(() => {
     load(DEFAULT_FILTERS, 0);
+    getJSON<{ albums: Album[] }>("/api/albums")
+      .then((r) => setAlbums(r.albums))
+      .catch(() => {});
     const match = window.location.hash.match(/photo=(\d+)/);
     if (match) openDetail(match[1]);
     return bus.on("focusPhoto", openDetail);
@@ -252,38 +247,72 @@ export function PhotoBrowser() {
     );
   }
 
+  const loadMoreAlbum = () => {
+    if (!selectedAlbum) return;
+    const next = albumPage + 1;
+    setAlbumPage(next);
+    loadAlbumPhotos(selectedAlbum, next);
+  };
+
   return (
     <div className="panel photo-browser">
-      <form className="toolbar" onSubmit={submit}>
-        <input
-          placeholder="Search title/description…"
-          value={draft.query}
-          onChange={(e) => setDraft({ ...draft, query: e.target.value })}
-        />
-        <input
-          placeholder="Tags…"
-          value={draft.tags}
-          onChange={(e) => setDraft({ ...draft, tags: e.target.value })}
-        />
-        <select value={draft.sort} onChange={(e) => setDraft({ ...draft, sort: e.target.value })}>
-          <option value="date_taken">Newest</option>
-          <option value="views">Most viewed</option>
-          <option value="favorites">Most faved</option>
-          <option value="comments">Most commented</option>
-          <option value="random">Random</option>
-        </select>
+      {albums.length > 0 && (
         <select
-          value={draft.visibility}
-          onChange={(e) => setDraft({ ...draft, visibility: e.target.value })}
+          className="album-select"
+          value={selectedAlbum?.id ?? ""}
+          onChange={(e) => {
+            const album = albums.find((a) => a.id === e.target.value);
+            if (album) selectAlbum(album);
+            else clearAlbum();
+          }}
         >
-          <option value="">All</option>
-          <option value="1">Public</option>
-          <option value="0">Private</option>
+          <option value="">All albums…</option>
+          {albums.map((a) => (
+            <option key={a.id} value={a.id}>
+              {(a.title || a.id) + ` (${a.count_photos})`}
+            </option>
+          ))}
         </select>
-        <button type="submit" disabled={loading}>
-          Search
-        </button>
-      </form>
+      )}
+      {selectedAlbum ? (
+        <div className="album-banner">
+          <span>
+            Album: <strong>{selectedAlbum.title || selectedAlbum.id}</strong>
+          </span>
+          <button onClick={clearAlbum}>✕ Clear</button>
+        </div>
+      ) : (
+        <form className="toolbar" onSubmit={submit}>
+          <input
+            placeholder="Search title/description…"
+            value={draft.query}
+            onChange={(e) => setDraft({ ...draft, query: e.target.value })}
+          />
+          <input
+            placeholder="Tags…"
+            value={draft.tags}
+            onChange={(e) => setDraft({ ...draft, tags: e.target.value })}
+          />
+          <select value={draft.sort} onChange={(e) => setDraft({ ...draft, sort: e.target.value })}>
+            <option value="date_taken">Newest</option>
+            <option value="views">Most viewed</option>
+            <option value="favorites">Most faved</option>
+            <option value="comments">Most commented</option>
+            <option value="random">Random</option>
+          </select>
+          <select
+            value={draft.visibility}
+            onChange={(e) => setDraft({ ...draft, visibility: e.target.value })}
+          >
+            <option value="">All</option>
+            <option value="1">Public</option>
+            <option value="0">Private</option>
+          </select>
+          <button type="submit" disabled={loading}>
+            Search
+          </button>
+        </form>
+      )}
       {error && <p className="error">{error}</p>}
       <p className="result-count">
         {total.toLocaleString("en")} photo{total === 1 ? "" : "s"}
@@ -293,11 +322,17 @@ export function PhotoBrowser() {
           <Thumb key={p.id} photo={p} onClick={() => openDetail(p.id)} />
         ))}
       </div>
-      {photos.length < total && (
-        <button className="load-more" disabled={loading} onClick={() => load(filters, photos.length)}>
-          {loading ? "Loading…" : `Load more (${photos.length} of ${total.toLocaleString("en")})`}
-        </button>
-      )}
+      {selectedAlbum
+        ? albumPage < albumPages && (
+            <button className="load-more" disabled={loading} onClick={loadMoreAlbum}>
+              {loading ? "Loading…" : `Load more (${photos.length} of ${total.toLocaleString("en")})`}
+            </button>
+          )
+        : photos.length < total && (
+            <button className="load-more" disabled={loading} onClick={() => load(filters, photos.length)}>
+              {loading ? "Loading…" : `Load more (${photos.length} of ${total.toLocaleString("en")})`}
+            </button>
+          )}
     </div>
   );
 }
