@@ -1,6 +1,7 @@
-import { useEffect, useState } from "react";
-import { ApiError, WorkflowCommand, getJSON, postJSON } from "../api";
+import { useState } from "react";
+import { ApiError, postJSON } from "../api";
 import * as bus from "../bus";
+import { useWorkflowCommands } from "../useWorkflowCommands";
 
 const SYNCS: { type: string; label: string; full?: boolean }[] = [
   { type: "photos", label: "Sync photos" },
@@ -15,13 +16,7 @@ const SYNCS: { type: string; label: string; full?: boolean }[] = [
 export function Command() {
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
-  const [commands, setCommands] = useState<WorkflowCommand[]>([]);
-
-  useEffect(() => {
-    getJSON<{ commands: WorkflowCommand[] }>("/api/commands")
-      .then((r) => setCommands(r.commands.filter((c) => c.context === "global")))
-      .catch(() => {});
-  }, []);
+  const commands = useWorkflowCommands("global");
 
   const trigger = async (type: string, label: string, full?: boolean) => {
     setBusy(true);

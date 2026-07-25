@@ -6,15 +6,10 @@ import {
   Photo,
   PhotoDetail,
   PhotoPage,
-  WorkflowCommand,
 } from "../api";
 import * as bus from "../bus";
 import { compactNumber } from "../format";
-
-let photoCommands: WorkflowCommand[] = [];
-getJSON<{ commands: WorkflowCommand[] }>("/api/commands")
-  .then((r) => (photoCommands = r.commands.filter((c) => c.context === "photo")))
-  .catch(() => {});
+import { useWorkflowCommands } from "../useWorkflowCommands";
 
 const PAGE_SIZE = 60;
 
@@ -62,6 +57,7 @@ function Thumb({ photo, onClick }: { photo: Photo; onClick: () => void }) {
 
 function DetailView({ detail, onBack }: { detail: PhotoDetail; onBack: () => void }) {
   const [src, setSrc] = useState(detail.url_original || detail.url_medium);
+  const photoCommands = useWorkflowCommands("photo");
   useEffect(() => {
     setSrc(detail.url_original || detail.url_medium);
   }, [detail.id, detail.url_original, detail.url_medium]);

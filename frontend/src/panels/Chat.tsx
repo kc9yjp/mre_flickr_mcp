@@ -60,6 +60,25 @@ function wireToRender(messages: WireMessage[]): ChatMsg[] {
   return out;
 }
 
+const LAST_MODEL_KEY = "chat-last-model-v1";
+
+function loadLastModel(): { provider: string; model: string } | null {
+  try {
+    const raw = localStorage.getItem(LAST_MODEL_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+function saveLastModel(provider: string, model: string) {
+  try {
+    localStorage.setItem(LAST_MODEL_KEY, JSON.stringify({ provider, model }));
+  } catch {
+    // localStorage unavailable (private browsing, quota) — not fatal, just skip persisting
+  }
+}
+
 function prettyArgs(raw: string): string {
   try {
     return JSON.stringify(JSON.parse(raw), null, 2);
@@ -141,14 +160,19 @@ export function Chat() {
 
   useEffect(refreshConversations, [refreshConversations]);
 
-  // Load LLM settings + initial model list
+  // Load LLM settings + initial model list. Prefers the last provider/model
+  // used in this browser (localStorage) over the saved default in Models &
+  // Providers, so switching models in the chat header survives a reload.
   useEffect(() => {
     getJSON<LLMSettings>("/api/llm-settings")
       .then((s) => {
         setLlmCfg(s);
-        const pid = s.active_provider || (s.providers && Object.keys(s.providers)[0]) || "";
+        const last = loadLastModel();
+        const lastProviderValid = !!(last && s.providers?.[last.provider]);
+        const pid = (lastProviderValid ? last!.provider : "")
+          || s.active_provider || (s.providers && Object.keys(s.providers)[0]) || "";
         setProviderId(pid);
-        setModelId(s.active_model || "");
+        setModelId((lastProviderValid && last!.provider === pid ? last!.model : s.active_model) || "");
         if (pid) {
           listModels(pid)
             .then(setModelOptions)
@@ -160,6 +184,12 @@ export function Chat() {
         setError("Failed to load LLM settings: " + (e instanceof Error ? e.message : String(e)));
       });
   }, []);
+
+  // Persist whatever provider/model is active so a reload restores it.
+  useEffect(() => {
+    if (!llmCfg || !providerId) return;
+    saveLastModel(providerId, modelId);
+  }, [llmCfg, providerId, modelId]);
 
   const switchProvider = useCallback(
     (newPid: string) => {

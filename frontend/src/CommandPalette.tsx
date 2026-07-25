@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { WorkflowCommand, getJSON } from "./api";
 import * as bus from "./bus";
 import { DockviewApi } from "dockview";
 import { PANEL_SPECS, PANEL_ORDER, openOrFocusPanel } from "./panelDefs";
+import { useWorkflowCommands } from "./useWorkflowCommands";
 
 interface PaletteItem {
   id: string;
@@ -32,14 +32,8 @@ export function CommandPalette({ dockApiRef }: Props) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState(0);
-  const [commands, setCommands] = useState<WorkflowCommand[]>([]);
+  const commands = useWorkflowCommands("global");
   const inputRef = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    getJSON<{ commands: WorkflowCommand[] }>("/api/commands")
-      .then((r) => setCommands(r.commands.filter((c) => c.context === "global")))
-      .catch(() => {});
-  }, []);
 
   const allItems: PaletteItem[] = [
     ...buildPanelItems(),

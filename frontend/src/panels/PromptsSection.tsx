@@ -26,6 +26,9 @@ export function PromptsSection() {
       .then((d) => {
         setData(d);
         setNewPrompt((p) => ({ ...p, category_id: p.category_id || d.categories[0]?.id || "" }));
+        // Tell Command/PhotoBrowser/CommandPalette to refetch /api/commands —
+        // otherwise their workflow buttons keep sending stale prompt text.
+        bus.emit("promptsChanged", undefined);
       })
       .catch((e) => setError(e instanceof Error ? e.message : String(e)));
 
