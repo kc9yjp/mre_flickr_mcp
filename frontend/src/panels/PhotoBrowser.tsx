@@ -61,7 +61,10 @@ function Thumb({ photo, onClick }: { photo: Photo; onClick: () => void }) {
 
 
 function DetailView({ detail, onBack }: { detail: PhotoDetail; onBack: () => void }) {
-  const src = detail.url_original || detail.url_medium;
+  const [src, setSrc] = useState(detail.url_original || detail.url_medium);
+  useEffect(() => {
+    setSrc(detail.url_original || detail.url_medium);
+  }, [detail.id, detail.url_original, detail.url_medium]);
   return (
     <div className="photo-detail">
       <div className="detail-toolbar">
@@ -83,7 +86,18 @@ function DetailView({ detail, onBack }: { detail: PhotoDetail; onBack: () => voi
           ))}
         </div>
       )}
-      {src && <img className="detail-image" src={src} alt={detail.title} />}
+      {src && (
+        <img
+          className="detail-image"
+          src={src}
+          alt={detail.title}
+          onError={() => {
+            if (src === detail.url_original && detail.url_medium && detail.url_medium !== src) {
+              setSrc(detail.url_medium);
+            }
+          }}
+        />
+      )}
       <h2>{detail.title || detail.id}</h2>
       {!detail.is_own && detail.owner && (
         <p className="hint other-photo-owner">
