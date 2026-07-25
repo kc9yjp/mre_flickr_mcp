@@ -19,7 +19,8 @@ CREATE TABLE IF NOT EXISTS photos (
     url_photopage TEXT, url_original TEXT, tags TEXT,
     views INTEGER DEFAULT 0, favorites INTEGER DEFAULT 0,
     comments INTEGER DEFAULT 0, synced_at INTEGER,
-    reviewed_at INTEGER DEFAULT NULL, is_public INTEGER DEFAULT 1
+    reviewed_at INTEGER DEFAULT NULL, is_public INTEGER DEFAULT 1,
+    url_medium TEXT
 );
 CREATE TABLE IF NOT EXISTS groups (
     id TEXT PRIMARY KEY, name TEXT, members INTEGER,
@@ -48,7 +49,8 @@ CREATE TABLE IF NOT EXISTS never_follow (
 );
 CREATE TABLE IF NOT EXISTS sync_log (
     id INTEGER PRIMARY KEY AUTOINCREMENT, synced_at INTEGER,
-    mode TEXT, photos_fetched INTEGER, type TEXT DEFAULT 'photos'
+    mode TEXT, photos_fetched INTEGER, type TEXT DEFAULT 'photos',
+    duration_seconds INTEGER
 );
 CREATE TABLE IF NOT EXISTS photo_groups (
     photo_id TEXT NOT NULL, group_id TEXT NOT NULL,
@@ -63,6 +65,9 @@ CREATE TABLE IF NOT EXISTS pending_group_adds (
 );
 CREATE TABLE IF NOT EXISTS settings (
     key TEXT PRIMARY KEY, value TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS keeper_list (
+    photo_id TEXT PRIMARY KEY, note TEXT, added_at INTEGER NOT NULL
 );
 """
 
@@ -93,11 +98,12 @@ def mem_db(tmp_path) -> str:
     conn.executescript(SCHEMA)
     now = int(time.time())
     conn.execute(
-        "INSERT INTO photos VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        "INSERT INTO photos VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         ("photo1", "Test Photo", "A description", "2024-01-15 12:00:00",
          now - 86400, now - 86400, "https://flickr.com/photos/x/photo1/",
          "https://live.staticflickr.com/x/photo1_orig.jpg",
-         "sunset landscape", 100, 5, 2, now, None, 1),
+         "sunset landscape", 100, 5, 2, now, None, 1,
+         "https://live.staticflickr.com/x/photo1_z.jpg"),
     )
     conn.execute(
         "INSERT INTO albums VALUES (?,?,?,?,?,?,?)",
@@ -112,8 +118,8 @@ def mem_db(tmp_path) -> str:
         ("contact1@N00", "jsmith", "John Smith", 0, 0, now),
     )
     conn.execute(
-        "INSERT INTO sync_log VALUES (?,?,?,?,?)",
-        (None, now, "incremental", 10, "photos"),
+        "INSERT INTO sync_log (synced_at, mode, photos_fetched, type, duration_seconds) VALUES (?,?,?,?,?)",
+        (now, "incremental", 10, "photos", 42),
     )
     conn.commit()
     conn.close()

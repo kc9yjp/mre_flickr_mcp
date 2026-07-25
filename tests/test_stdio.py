@@ -159,7 +159,9 @@ class TestStdioToolCalls:
         with patch("flickr_api._api_post", return_value={"stat": "ok"}):
             async with create_connected_server_and_client_session(live_server) as session:
                 result = await session.call_tool(
-                    "update_photo", {"id": "photo1", "title": "Via Stdio"}
+                    "update_photo",
+                    {"id": "photo1", "title": "Via Stdio", "description": "A description", "tags": "rain"},
                 )
 
         assert "title/description" in result.content[0].text
+        assert "tags" in result.content[0].text

@@ -1,3 +1,12 @@
+"""Legacy terminal OAuth 1.0a flow (out-of-band verifier, no browser redirect).
+
+Superseded by the browser-based login at ``/login`` (see ``web.py``), which
+handles the callback automatically and writes per-user credentials. Kept for
+scripted/headless logins where pasting a verifier code is preferable to a
+web server. Run with no arguments to get a request token + authorize URL;
+run as ``exchange <token> <token_secret> <verifier>`` to complete the flow.
+"""
+
 import os
 import sys
 import time
