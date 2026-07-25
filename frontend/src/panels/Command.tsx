@@ -55,7 +55,10 @@ export function Command() {
       <p className="hint">Each button starts the workflow in the Chat panel.</p>
       <div className="command-buttons">
         {commands.map((c) => (
-          <button key={c.id} onClick={() => bus.emit("runCommand", c.prompt)}>
+          <button
+            key={c.id}
+            onClick={() => bus.emit("runCommand", { title: c.label, text: c.prompt, promptId: c.prompt_id })}
+          >
             {c.label}
           </button>
         ))}

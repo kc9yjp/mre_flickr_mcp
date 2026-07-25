@@ -14,7 +14,6 @@ Storage shape (v2 — provider profiles)::
       "active_model": "",
       "max_tokens": 1024,
       "vision": false,
-      "base_prompt": "",
       "temperature": "", "top_p": "", "frequency_penalty": "", "presence_penalty": "",
       "seed": "", "tool_choice": "auto"
     }
@@ -47,7 +46,6 @@ DEFAULT_PROVIDERS: dict[str, dict] = {
 DEFAULTS = {
     "max_tokens": 1024,
     "vision": False,
-    "base_prompt": "",
     # Sampling / tool-use controls. Blank ("") means "omit from the request
     # and let the provider use its own default".
     "temperature": "",

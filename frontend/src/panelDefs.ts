@@ -10,6 +10,7 @@ export const PANEL_SPECS: Record<
   chat:     { title: "Chat" },  // No position constraint so it can be added dynamically
   command:  { title: "Commands", position: { referencePanel: "chat",    direction: "within" } },
   models:   { title: "Models" },  // No position constraint for dynamic opening
+  prompts:  { title: "Prompts",  position: { referencePanel: "models",  direction: "within" } },
   sync:     { title: "Sync",     position: { referencePanel: "command", direction: "within" } },
   queue:    { title: "Queue",    position: { referencePanel: "command", direction: "within" } },
   setup:    { title: "Setup",    position: { referencePanel: "command", direction: "within" } },
@@ -17,7 +18,7 @@ export const PANEL_SPECS: Record<
 };
 
 export const PANEL_ORDER = [
-  "photos", "other-photo", "summary", "chat", "command", "models", "sync", "queue", "setup", "settings",
+  "photos", "other-photo", "summary", "chat", "command", "models", "prompts", "sync", "queue", "setup", "settings",
 ];
 
 export function openOrFocusPanel(api: DockviewApi, id: string) {

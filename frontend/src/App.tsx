@@ -14,6 +14,7 @@ import { Summary } from "./panels/Summary";
 import { Command } from "./panels/Command";
 import { Chat } from "./panels/Chat";
 import { ModelsPage } from "./panels/ModelsPage";
+import { PromptsPage } from "./panels/PromptsPage";
 import { SyncPage } from "./panels/SyncPage";
 import { QueuePage } from "./panels/QueuePage";
 import { SetupPage } from "./panels/SetupPage";
@@ -32,6 +33,7 @@ const components: Record<string, React.FC<IDockviewPanelProps>> = {
   command: Command,
   chat: Chat,
   models: ModelsPage,
+  prompts: PromptsPage,
   sync: SyncPage,
   queue: QueuePage,
   setup: SetupPage,

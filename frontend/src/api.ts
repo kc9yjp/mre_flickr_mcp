@@ -126,13 +126,52 @@ export interface LLMSettings {
   active_model: string;
   max_tokens: number;
   vision: boolean;
-  base_prompt: string;
   temperature: string;
   top_p: string;
   frequency_penalty: string;
   presence_penalty: string;
   seed: string;
   tool_choice: string;
+}
+
+// ── Prompts ────────────────────────────────────────────────────────────────
+
+export interface PromptCategory {
+  id: string;
+  name: string;
+  description: string;
+  sort_order: number;
+  builtin: boolean;
+}
+
+export interface Prompt {
+  id: string;
+  code: string;
+  name: string;
+  description: string;
+  category_id: string;
+  context: "photo" | "global";
+  text: string;
+  builtin: boolean;
+  default_text: string | null;
+  enabled: boolean;
+  sort_order: number;
+  created_at: number;
+  updated_at: number;
+}
+
+export interface PromptVariable {
+  code: string;
+  label: string;
+  description: string;
+  resolved_by: string;
+  builtin: boolean;
+}
+
+export interface PromptsData {
+  categories: PromptCategory[];
+  prompts: Prompt[];
+  variables: PromptVariable[];
 }
 
 export interface SessionStats {
@@ -161,6 +200,7 @@ export interface WireMessage {
 
 export interface WorkflowCommand {
   id: string;
+  prompt_id: string;
   label: string;
   context: "photo" | "global";
   prompt: string;

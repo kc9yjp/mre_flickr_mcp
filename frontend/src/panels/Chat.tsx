@@ -18,10 +18,16 @@ interface ToolCard {
   result?: string;
 }
 
+interface PromptOrigin {
+  title: string;
+  promptId: string;
+}
+
 interface ChatMsg {
   role: "user" | "assistant";
   text: string;
   tools: ToolCard[];
+  origin?: PromptOrigin;
 }
 
 interface PendingConfirm {
@@ -74,6 +80,30 @@ function ToolCardView({ card }: { card: ToolCard }) {
   );
 }
 
+/** A user message sent from a workflow prompt: collapsed to just its title,
+ * openable to see the exact text that was sent and to jump to editing the
+ * stored prompt (which only affects future runs, not this one). */
+function PromptOriginMsg({ text, origin }: { text: string; origin: PromptOrigin }) {
+  return (
+    <details className="prompt-origin chat-bubble">
+      <summary>▶ {origin.title}</summary>
+      <pre>{text}</pre>
+      {origin.promptId && (
+        <button
+          type="button"
+          className="edit-prompt-link"
+          onClick={() => {
+            bus.emit("openPanel", "prompts");
+            bus.requestEditPrompt(origin.promptId);
+          }}
+        >
+          Edit prompt →
+        </button>
+      )}
+    </details>
+  );
+}
+
 export function Chat() {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -81,6 +111,7 @@ export function Chat() {
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
   const [confirm, setConfirm] = useState<PendingConfirm | null>(null);
+  const [denyReason, setDenyReason] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [autoApprove, setAutoApprove] = useState(false);
   const [showStats, setShowStats] = useState(false);
@@ -148,7 +179,7 @@ export function Chat() {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
   }, [msgs, confirm]);
 
-  const send = useCallback(async (message: string) => {
+  const send = useCallback(async (message: string, origin?: PromptOrigin) => {
     const text = message.trim();
     if (!text) return;
     setError("");
@@ -156,7 +187,7 @@ export function Chat() {
     setStreaming(true);
     setMsgs((prev) => [
       ...prev,
-      { role: "user", text, tools: [] },
+      { role: "user", text, tools: [], origin },
       { role: "assistant", text: "", tools: [] },
     ]);
 
@@ -195,6 +226,7 @@ export function Chat() {
               break;
             case "tool_result":
               setConfirm(null);
+              setDenyReason(null);
               patchLast((m) => ({
                 ...m,
                 tools: m.tools.map((t) => (t.id === event.id ? { ...t, result: event.text } : t)),
@@ -216,17 +248,22 @@ export function Chat() {
     } finally {
       setStreaming(false);
       setConfirm(null);
+      setDenyReason(null);
       refreshConversations();
     }
   }, [refreshConversations]);
 
-  useEffect(() => bus.on("runCommand", send), [send]);
+  useEffect(
+    () => bus.on("runCommand", (cmd) => send(cmd.text, { title: cmd.title, promptId: cmd.promptId })),
+    [send],
+  );
 
-  const answerConfirm = async (approve: boolean) => {
+  const answerConfirm = async (approve: boolean, reason?: string) => {
     if (!confirm) return;
     setConfirm(null);
+    setDenyReason(null);
     try {
-      await postJSON("/api/chat/confirm", { confirm_id: confirm.confirm_id, approve });
+      await postJSON("/api/chat/confirm", { confirm_id: confirm.confirm_id, approve, reason });
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
@@ -270,6 +307,10 @@ export function Chat() {
 
   const openModelsPanel = useCallback(() => {
     bus.emit("openPanel", "models");
+  }, []);
+
+  const openPromptsPanel = useCallback(() => {
+    bus.emit("openPanel", "prompts");
   }, []);
 
   return (
@@ -361,6 +402,13 @@ export function Chat() {
         >
           ⚙
         </button>
+        <button
+          onClick={openPromptsPanel}
+          title="Open prompts panel"
+          className="icon-btn"
+        >
+          📝
+        </button>
       </div>
       {showStats && activeId && <SessionStatsPanel conversationId={activeId} />}
       <div className="chat-messages" ref={scrollRef}>
@@ -378,7 +426,11 @@ export function Chat() {
             {m.tools.map((t) => (
               <ToolCardView key={t.id} card={t} />
             ))}
-            {m.text && <div className="chat-bubble">{m.text}</div>}
+            {m.text && (
+              m.origin
+                ? <PromptOriginMsg text={m.text} origin={m.origin} />
+                : <div className="chat-bubble">{m.text}</div>
+            )}
           </div>
         ))}
         {confirm && (
@@ -401,12 +453,34 @@ export function Chat() {
               </p>
             )}
             <pre>{prettyArgs(confirm.arguments)}</pre>
-            <div>
-              <button className="approve" onClick={() => answerConfirm(true)}>
-                Approve
-              </button>
-              <button onClick={() => answerConfirm(false)}>Deny</button>
-            </div>
+            {denyReason === null ? (
+              <div>
+                <button className="approve" onClick={() => answerConfirm(true)}>
+                  Approve
+                </button>
+                <button onClick={() => setDenyReason("")}>Deny</button>
+              </div>
+            ) : (
+              <form
+                className="deny-reason"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  answerConfirm(false, denyReason);
+                }}
+              >
+                <input
+                  autoFocus
+                  type="text"
+                  placeholder="Why? (optional, helps it adjust)"
+                  value={denyReason}
+                  onChange={(e) => setDenyReason(e.target.value)}
+                />
+                <button type="submit">Send</button>
+                <button type="button" onClick={() => answerConfirm(false)}>
+                  Skip
+                </button>
+              </form>
+            )}
           </div>
         )}
         {streaming && !confirm && <p className="hint streaming-indicator">…</p>}

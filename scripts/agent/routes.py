@@ -10,7 +10,7 @@ from starlette.routing import Route
 
 from webapi import _session_user, _unauthorized
 
-from agent import commands, llm, loop, settings, store
+from agent import commands, llm, loop, prompts_store, settings, store
 
 _PING_INTERVAL = 15  # seconds between SSE keepalive comments
 
@@ -116,7 +116,11 @@ async def chat_confirm(request: Request):
         body = await request.json()
     except ValueError:
         return JSONResponse({"error": "invalid JSON body"}, status_code=400)
-    ok = loop.resolve_confirm(str(body.get("confirm_id", "")), bool(body.get("approve")))
+    ok = loop.resolve_confirm(
+        str(body.get("confirm_id", "")),
+        bool(body.get("approve")),
+        body.get("reason"),
+    )
     if not ok:
         return JSONResponse({"error": "unknown or expired confirmation"}, status_code=404)
     return JSONResponse({"ok": True})
@@ -206,6 +210,149 @@ async def api_commands(request: Request):
     return JSONResponse({"commands": commands.commands_for_api(user["nsid"])})
 
 
+async def prompts_collection(request: Request):
+    user = _session_user(request)
+    if not user:
+        return _unauthorized()
+    if request.method == "GET":
+        return JSONResponse(prompts_store.all_data(user["nsid"]))
+    try:
+        body = await request.json()
+    except ValueError:
+        return JSONResponse({"error": "invalid JSON body"}, status_code=400)
+    for field in ("code", "name", "category_id", "text"):
+        if not (body.get(field) or "").strip():
+            return JSONResponse({"error": f"{field} is required"}, status_code=400)
+    try:
+        prompt = prompts_store.create_prompt(
+            user["nsid"],
+            code=body["code"].strip(),
+            name=body["name"].strip(),
+            category_id=body["category_id"],
+            text=body["text"],
+            context=body.get("context", "global"),
+            description=body.get("description", ""),
+        )
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+    return JSONResponse(prompt)
+
+
+async def prompts_update(request: Request):
+    user = _session_user(request)
+    if not user:
+        return _unauthorized()
+    try:
+        body = await request.json()
+    except ValueError:
+        return JSONResponse({"error": "invalid JSON body"}, status_code=400)
+    prompt_id = request.path_params["id"]
+    updated = prompts_store.update_prompt(
+        user["nsid"],
+        prompt_id,
+        name=body.get("name"),
+        description=body.get("description"),
+        category_id=body.get("category_id"),
+        context=body.get("context"),
+        text=body.get("text"),
+        enabled=body.get("enabled"),
+    )
+    if updated is None:
+        return JSONResponse({"error": "prompt not found"}, status_code=404)
+    return JSONResponse(updated)
+
+
+async def prompts_delete(request: Request):
+    user = _session_user(request)
+    if not user:
+        return _unauthorized()
+    ok, error = prompts_store.delete_prompt(user["nsid"], request.path_params["id"])
+    if not ok:
+        return JSONResponse({"error": error}, status_code=400)
+    return JSONResponse({"ok": True})
+
+
+async def prompts_reset(request: Request):
+    user = _session_user(request)
+    if not user:
+        return _unauthorized()
+    reset = prompts_store.reset_prompt(user["nsid"], request.path_params["id"])
+    if reset is None:
+        return JSONResponse({"error": "prompt not found or not built-in"}, status_code=400)
+    return JSONResponse(reset)
+
+
+async def prompt_categories_create(request: Request):
+    user = _session_user(request)
+    if not user:
+        return _unauthorized()
+    try:
+        body = await request.json()
+    except ValueError:
+        return JSONResponse({"error": "invalid JSON body"}, status_code=400)
+    name = (body.get("name") or "").strip()
+    if not name:
+        return JSONResponse({"error": "name is required"}, status_code=400)
+    category = prompts_store.create_category(user["nsid"], name, body.get("description", ""))
+    return JSONResponse(category)
+
+
+async def prompt_categories_update(request: Request):
+    user = _session_user(request)
+    if not user:
+        return _unauthorized()
+    try:
+        body = await request.json()
+    except ValueError:
+        return JSONResponse({"error": "invalid JSON body"}, status_code=400)
+    updated = prompts_store.update_category(
+        user["nsid"], request.path_params["id"],
+        name=body.get("name"), description=body.get("description"),
+    )
+    if updated is None:
+        return JSONResponse({"error": "category not found"}, status_code=404)
+    return JSONResponse(updated)
+
+
+async def prompt_categories_delete(request: Request):
+    user = _session_user(request)
+    if not user:
+        return _unauthorized()
+    ok, error = prompts_store.delete_category(user["nsid"], request.path_params["id"])
+    if not ok:
+        return JSONResponse({"error": error}, status_code=400)
+    return JSONResponse({"ok": True})
+
+
+async def prompt_variables_create(request: Request):
+    user = _session_user(request)
+    if not user:
+        return _unauthorized()
+    try:
+        body = await request.json()
+    except ValueError:
+        return JSONResponse({"error": "invalid JSON body"}, status_code=400)
+    code = (body.get("code") or "").strip()
+    label = (body.get("label") or "").strip()
+    if not code or not label:
+        return JSONResponse({"error": "code and label are required"}, status_code=400)
+    try:
+        variable = prompts_store.create_variable(user["nsid"], code, label, body.get("description", ""))
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+    return JSONResponse(variable)
+
+
+async def prompt_variables_delete(request: Request):
+    user = _session_user(request)
+    if not user:
+        return _unauthorized()
+    ok, error = prompts_store.delete_variable(user["nsid"], request.path_params["code"])
+    if not ok:
+        return JSONResponse({"error": error}, status_code=400)
+    return JSONResponse({"ok": True})
+
+
 async def chat_stats(request: Request):
     """Get accumulated stats for a conversation session."""
     user = _session_user(request)
@@ -230,4 +377,13 @@ def api_routes() -> list[Route]:
         Route("/api/llm-settings", endpoint=llm_settings, methods=["GET", "POST"]),
         Route("/api/llm-models",   endpoint=llm_models),
         Route("/api/commands",     endpoint=api_commands),
+        Route("/api/prompts",            endpoint=prompts_collection, methods=["GET", "POST"]),
+        Route("/api/prompts/{id}",       endpoint=prompts_update, methods=["POST"]),
+        Route("/api/prompts/{id}/delete", endpoint=prompts_delete, methods=["POST"]),
+        Route("/api/prompts/{id}/reset", endpoint=prompts_reset, methods=["POST"]),
+        Route("/api/prompt-categories",  endpoint=prompt_categories_create, methods=["POST"]),
+        Route("/api/prompt-categories/{id}", endpoint=prompt_categories_update, methods=["POST"]),
+        Route("/api/prompt-categories/{id}/delete", endpoint=prompt_categories_delete, methods=["POST"]),
+        Route("/api/prompt-variables",   endpoint=prompt_variables_create, methods=["POST"]),
+        Route("/api/prompt-variables/{code}/delete", endpoint=prompt_variables_delete, methods=["POST"]),
     ]

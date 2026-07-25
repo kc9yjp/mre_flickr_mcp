@@ -249,17 +249,10 @@ export function ModelsPage() {
           </label>
         </div>
 
-        <h3>Base prompt</h3>
-        <div className="settings-item">
-          <label>
-            Standing instructions for this account
-            <textarea
-              rows={4}
-              value={cfg.base_prompt}
-              onChange={(e) => setCfg((c) => c ? { ...c, base_prompt: e.target.value } : c)}
-            />
-          </label>
-        </div>
+        <p className="hint">
+          Standing memory (formerly "base prompt") and all workflow prompts now
+          live in the Prompts panel.
+        </p>
 
         <div style={{ marginTop: 12 }}>
           <button type="submit">Save</button>

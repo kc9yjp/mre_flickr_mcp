@@ -639,6 +639,32 @@ select:focus {
   padding-top: 6px;
 }
 
+.prompt-origin summary {
+  cursor: pointer;
+  list-style: none;
+}
+
+.prompt-origin summary::-webkit-details-marker {
+  display: none;
+}
+
+.prompt-origin pre {
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  font-size: 13px;
+  margin: 8px 0 0;
+}
+
+.edit-prompt-link {
+  border: none;
+  background: none;
+  color: var(--accent);
+  padding: 0;
+  margin-top: 6px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
 .confirm-card {
   border: 1px solid var(--accent);
   border-radius: 8px;
@@ -673,6 +699,17 @@ select:focus {
 .confirm-card .approve {
   border-color: var(--good);
   margin-right: 8px;
+}
+
+.deny-reason {
+  display: flex;
+  gap: 6px;
+}
+
+.deny-reason input {
+  flex: 1;
+  font: inherit;
+  padding: 4px 6px;
 }
 
 .chat-input {

@@ -1,9 +1,16 @@
 // Tiny typed event bus for cross-panel coordination (chat/deep-link → viewer).
 
+interface RunCommandPayload {
+  title: string;
+  text: string;
+  promptId: string;
+}
+
 interface Events {
   focusPhoto: string;
   focusOtherPhoto: string; // deep link to someone else's photo (bookmarklet/extension)
-  runCommand: string;   // a chat prompt to send immediately
+  runCommand: RunCommandPayload; // a chat prompt to send immediately
+  editPrompt: string;   // request the Prompts panel open a prompt (by id) for editing
   photoOpened: string | null; // Photo Browser's current detail view, for chat context
   switchPanel: string;  // mobile: switch to named panel
   openPanel: string;    // request desktop dockview to open/focus a panel by id
@@ -25,4 +32,21 @@ export function on<K extends keyof Events>(event: K, handler: Handler<K>): () =>
 
 export function emit<K extends keyof Events>(event: K, payload: Events[K]): void {
   listeners.get(event)?.forEach((h) => h(payload));
+}
+
+// A single "pending edit" slot alongside the editPrompt event: emit() alone
+// is fire-and-forget, so a request that arrives before the Prompts panel has
+// mounted (and subscribed) would otherwise be silently dropped. The panel
+// checks this on mount in addition to subscribing live.
+let pendingEditPromptId: string | null = null;
+
+export function requestEditPrompt(promptId: string): void {
+  pendingEditPromptId = promptId;
+  emit("editPrompt", promptId);
+}
+
+export function consumePendingEditPrompt(): string | null {
+  const id = pendingEditPromptId;
+  pendingEditPromptId = null;
+  return id;
 }

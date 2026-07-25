@@ -29,6 +29,20 @@ def user_db(mem_db, tmp_path):
         yield str(user_dir)
 
 
+@pytest.fixture(autouse=True)
+def _agent_creds_dir(tmp_path):
+    """Keep agent.prompts_store / agent.settings storage inside tmp_path.
+
+    Without this, every test that reaches agent.loop.run_turn (or calls
+    prompts_store/commands directly) writes real files under the real
+    ~/.flickr_mcp on the machine running the tests.
+    """
+    creds_dir = str(tmp_path / "flickr_mcp_creds")
+    with patch("agent.prompts_store._CREDS_BASE", creds_dir), \
+         patch("agent.settings._CREDS_BASE", creds_dir):
+        yield
+
+
 # --- schema ---
 
 def test_write_tools_all_have_handlers():
@@ -197,6 +211,28 @@ async def test_run_turn_write_tool_denied(user_db):
     result = next(e for e in events if e["type"] == "tool_result")
     assert "declined" in result["text"]
     assert events[-1]["type"] == "done"
+
+
+@pytest.mark.asyncio
+async def test_run_turn_write_tool_denied_with_reason(user_db):
+    from agent import loop, store
+
+    conv = store.create_conversation(USERNAME, "t")
+    scripted = _scripted_llm([
+        {"tool_calls": [_tool_call("c1", "add_comment",
+                                   {"photo_id": "photo1", "text": "nice"})]},
+        {"content": "Okay, skipped."},
+    ])
+    events = []
+    with patch("agent.loop.llm.stream_chat", scripted):
+        async for event in loop.run_turn(USER, conv, "comment on it", CFG):
+            events.append(event)
+            if event["type"] == "confirm_request":
+                assert loop.resolve_confirm(event["confirm_id"], False, "too generic")
+
+    result = next(e for e in events if e["type"] == "tool_result")
+    assert "declined" in result["text"]
+    assert "too generic" in result["text"]
 
 
 @pytest.mark.asyncio
@@ -424,12 +460,9 @@ def test_commands_resolve_user_placeholder():
 # --- remember tool ---
 
 @pytest.mark.asyncio
-async def test_remember_appends_to_base_prompt(user_db, tmp_path):
-    """'remember' pseudo-tool appends guidance to base_prompt in llm.json."""
-    from agent import loop, store, settings as _settings
-
-    settings_dir = tmp_path / "creds" / NSID
-    settings_dir.mkdir(parents=True)
+async def test_remember_appends_to_user_memory(user_db):
+    """'remember' pseudo-tool appends guidance to the user-memory prompt."""
+    from agent import loop, prompts_store, store
 
     conv = store.create_conversation(USERNAME, "t")
     scripted = _scripted_llm([
@@ -437,17 +470,11 @@ async def test_remember_appends_to_base_prompt(user_db, tmp_path):
         {"content": "Got it."},
     ])
 
-    with patch("agent.loop.llm.stream_chat", scripted), \
-         patch("agent.loop._agent_settings.load_settings", return_value={
-             "base_url": "", "api_key": "", "model": "", "max_tokens": 512,
-             "vision": False, "base_prompt": "",
-         }) as mock_load, \
-         patch("agent.loop._agent_settings.save_settings") as mock_save:
+    with patch("agent.loop.llm.stream_chat", scripted):
         events = [e async for e in loop.run_turn(USER, conv, "remember: always be concise", CFG)]
 
-    mock_save.assert_called_once()
-    saved_cfg = mock_save.call_args[0][1]
-    assert "Always be concise." in saved_cfg["base_prompt"]
+    memory = prompts_store.get_prompt_by_code(NSID, "user-memory")
+    assert "Always be concise." in memory["text"]
 
     result = next(e for e in events if e["type"] == "tool_result")
     assert "Remembered" in result["text"]
@@ -455,9 +482,11 @@ async def test_remember_appends_to_base_prompt(user_db, tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_remember_appends_to_existing_base_prompt(user_db):
-    """'remember' appends new guidance after existing base_prompt content."""
-    from agent import loop, store
+async def test_remember_appends_to_existing_user_memory(user_db):
+    """'remember' appends new guidance after existing user-memory content."""
+    from agent import loop, prompts_store, store
+
+    prompts_store.append_user_memory(NSID, "First rule.")
 
     conv = store.create_conversation(USERNAME, "t")
     scripted = _scripted_llm([
@@ -465,18 +494,12 @@ async def test_remember_appends_to_existing_base_prompt(user_db):
         {"content": "Done."},
     ])
 
-    existing_cfg = {
-        "base_url": "", "api_key": "", "model": "", "max_tokens": 512,
-        "vision": False, "base_prompt": "First rule.",
-    }
-    with patch("agent.loop.llm.stream_chat", scripted), \
-         patch("agent.loop._agent_settings.load_settings", return_value=existing_cfg), \
-         patch("agent.loop._agent_settings.save_settings") as mock_save:
+    with patch("agent.loop.llm.stream_chat", scripted):
         [e async for e in loop.run_turn(USER, conv, "remember second rule", CFG)]
 
-    saved_cfg = mock_save.call_args[0][1]
-    assert "First rule." in saved_cfg["base_prompt"]
-    assert "Second rule." in saved_cfg["base_prompt"]
+    memory = prompts_store.get_prompt_by_code(NSID, "user-memory")
+    assert "First rule." in memory["text"]
+    assert "Second rule." in memory["text"]
 
 
 @pytest.mark.asyncio
@@ -490,12 +513,85 @@ async def test_remember_does_not_require_confirm(user_db):
         {"content": "Done."},
     ])
 
-    with patch("agent.loop.llm.stream_chat", scripted), \
-         patch("agent.loop._agent_settings.load_settings", return_value={
-             "base_url": "", "api_key": "", "model": "", "max_tokens": 512,
-             "vision": False, "base_prompt": "",
-         }), \
-         patch("agent.loop._agent_settings.save_settings"):
+    with patch("agent.loop.llm.stream_chat", scripted):
         events = [e async for e in loop.run_turn(USER, conv, "remember this", CFG)]
 
     assert not any(e["type"] == "confirm_request" for e in events)
+
+
+# --- prompts_store ---
+
+def test_prompts_seed_once_and_are_idempotent():
+    from agent import prompts_store
+
+    data = prompts_store.all_data(NSID)
+    assert {c["id"] for c in data["categories"]} == {
+        "system", "own_photo", "other_photo", "collection",
+    }
+    assert {p["code"] for p in data["prompts"]} == {
+        "system-core", "user-memory", "improve-photo", "suggest-groups",
+        "suggest-albums", "threshold-groups", "reply-comments", "weak-photos",
+    }
+    assert {v["code"] for v in data["variables"]} == {"photo_id", "user_nsid"}
+
+    # Calling again must not duplicate rows.
+    data2 = prompts_store.all_data(NSID)
+    assert len(data2["categories"]) == len(data["categories"])
+    assert len(data2["prompts"]) == len(data["prompts"])
+
+
+@pytest.mark.asyncio
+async def test_run_turn_uses_system_core_and_user_memory(user_db):
+    """run_turn's first two messages are the DB-backed system-core and
+    user-memory prompts (when memory is non-empty)."""
+    from agent import loop, prompts_store, store
+
+    prompts_store.update_prompt(NSID, prompts_store.get_prompt_by_code(NSID, "system-core")["id"],
+                                 text="CUSTOM SYSTEM PROMPT")
+    prompts_store.append_user_memory(NSID, "Remembered rule.")
+
+    conv = store.create_conversation(USERNAME, "t")
+    scripted = _scripted_llm([{"content": "hi"}])
+
+    captured = {}
+
+    async def capturing(cfg, messages, tools=None):
+        captured["messages"] = messages
+        async for event in scripted(cfg, messages, tools=tools):
+            yield event
+
+    with patch("agent.loop.llm.stream_chat", capturing):
+        [e async for e in loop.run_turn(USER, conv, "hello", CFG)]
+
+    assert captured["messages"][0] == {"role": "system", "content": "CUSTOM SYSTEM PROMPT"}
+    assert captured["messages"][1] == {"role": "system", "content": "Remembered rule."}
+
+
+def test_builtin_prompt_cannot_be_deleted_but_can_be_reset():
+    from agent import prompts_store
+
+    system_prompt = prompts_store.get_prompt_by_code(NSID, "system-core")
+    ok, error = prompts_store.delete_prompt(NSID, system_prompt["id"])
+    assert not ok and "built-in" in error
+
+    prompts_store.update_prompt(NSID, system_prompt["id"], text="edited")
+    assert prompts_store.get_prompt(NSID, system_prompt["id"])["text"] == "edited"
+
+    reset = prompts_store.reset_prompt(NSID, system_prompt["id"])
+    assert reset["text"] == system_prompt["text"]
+
+
+def test_category_in_use_cannot_be_deleted():
+    from agent import prompts_store
+
+    ok, error = prompts_store.delete_category(NSID, "own_photo")
+    assert not ok and "built-in" in error
+
+    in_use = prompts_store.create_category(NSID, "In-use category")
+    prompts_store.create_prompt(NSID, code="custom-1", name="Custom", category_id=in_use["id"], text="x")
+    ok, error = prompts_store.delete_category(NSID, in_use["id"])
+    assert not ok and "prompts assigned" in error
+
+    empty = prompts_store.create_category(NSID, "Empty category")
+    ok, error = prompts_store.delete_category(NSID, empty["id"])
+    assert ok and error is None

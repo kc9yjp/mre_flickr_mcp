@@ -1,0 +1,513 @@
+"""User-editable LLM prompt storage.
+
+Kept in ``~/.flickr_mcp/{nsid}/prompts.db`` — next to ``llm.json`` and the
+OAuth credentials, deliberately outside ``flickr.db`` so editing prompts
+survives a "Reset Database" (which deletes the whole ``flickr.db`` file).
+
+Three tables: ``prompt_categories`` (some shipped, user can add more),
+``prompts`` (named/described templates, each in one category, with an
+optional ``{photo_id}``/``{user_nsid}``-style placeholder convention matched
+by ``prompt_variables``, a reference catalog of what those placeholders mean
+and where they get substituted).
+
+Builtin rows (``builtin=1``) ship with a ``default_text``/definition so they
+can be reset; they can't be deleted, only edited or reset.
+"""
+
+import os
+import sqlite3
+import time
+import uuid
+from contextlib import contextmanager
+
+from flickr_api import _CREDS_BASE
+
+from agent import settings as _agent_settings
+
+_SCHEMA = """
+CREATE TABLE IF NOT EXISTS prompt_categories (
+    id          TEXT PRIMARY KEY,
+    name        TEXT NOT NULL,
+    description TEXT,
+    sort_order  INTEGER NOT NULL DEFAULT 0,
+    builtin     INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS prompts (
+    id           TEXT PRIMARY KEY,
+    code         TEXT NOT NULL UNIQUE,
+    name         TEXT NOT NULL,
+    description  TEXT,
+    category_id  TEXT NOT NULL REFERENCES prompt_categories(id),
+    context      TEXT NOT NULL DEFAULT 'global',
+    text         TEXT NOT NULL,
+    builtin      INTEGER NOT NULL DEFAULT 0,
+    default_text TEXT,
+    enabled      INTEGER NOT NULL DEFAULT 1,
+    sort_order   INTEGER NOT NULL DEFAULT 0,
+    created_at   INTEGER NOT NULL,
+    updated_at   INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS prompt_variables (
+    code        TEXT PRIMARY KEY,
+    label       TEXT NOT NULL,
+    description TEXT,
+    resolved_by TEXT NOT NULL DEFAULT 'server',
+    builtin     INTEGER NOT NULL DEFAULT 0
+);
+"""
+
+# Schema migrations — each is a (check_sql, alter_sql) pair, applied on every
+# connection open (mirrors agent/store.py; this file is small enough that a
+# PRAGMA user_version cursor like flickr_sync.py's would be overkill).
+_MIGRATIONS: list[tuple[str, str]] = []
+
+SYSTEM_PROMPT_DEFAULT = (
+    "You are the Flickr Workbench assistant. You manage the user's own Flickr "
+    "account through the provided tools: their photos, albums, groups, "
+    "galleries, and contacts, backed by a local database synced from Flickr.\n"
+    "Guidelines:\n"
+    "- Read current state before changing anything (e.g. get_photo before "
+    "update_photo).\n"
+    "- Propose changes and wait for the user's go-ahead; write tools "
+    "additionally require an explicit confirmation in the UI, and a declined "
+    "confirmation means skip it and move on.\n"
+    "- When suggesting groups or albums, use numbered lists so the user can "
+    "pick by number.\n"
+    "- Suggested tags: lowercase, compound words concatenated (oakpark), "
+    "never bare year tags.\n"
+    "- Keep responses concise. When you discuss a specific photo, mention its "
+    "photo id.\n"
+    "- Some turns include a note naming the photo currently open in the "
+    "user's Photo Browser panel. Treat that as the default target for "
+    "instructions that don't name a different photo — but an explicit photo "
+    "id or link in the user's own message always takes priority over it. "
+    "That note only gives an id, not details — if the user asks about 'the "
+    "current photo' or similar, call get_photo (or another relevant tool) "
+    "for that id to get fresh data rather than recalling an earlier photo "
+    "from this conversation's history.\n"
+    "- You CAN change what the user sees in the Photo Browser panel: calling "
+    "any tool with a photo id (get_photo is the cheapest) switches that panel "
+    "to show that photo. Whenever the user asks to see, open, switch to, or "
+    "pull up a specific photo by id, call get_photo for it — do not claim you "
+    "have no way to control the Photo Browser.\n"
+    "- When the user says 'remember' or 'memory' followed by guidance, or asks "
+    "you to remember a preference or rule for future conversations, call the "
+    "`remember` tool with that guidance. Keep each piece of guidance as a "
+    "concise, self-contained sentence or rule.\n"
+    "- CRITICAL: Never claim to have seen, viewed, or visually described a "
+    "photo unless actual image data was provided in the tool result. If a tool "
+    "result says vision is disabled, work from title, description, tags, and "
+    "EXIF only, and tell the user explicitly that visual inspection is "
+    "unavailable. Guessing or fabricating visual details is not allowed.\n"
+    "- CRITICAL: Tool schemas are provided to you exactly as they are. Never "
+    "claim a tool doesn't support a field, parameter, or capability without "
+    "rechecking its schema first — if it's in the schema, it's supported. "
+    "Never state you performed an action, or that a specific field was "
+    "updated, without checking the actual arguments you sent in that tool "
+    "call. If you made a mistake (e.g. left a field out of an update), say so "
+    "plainly instead of inventing an explanation for why it couldn't be done."
+)
+
+_STYLE_RULES = (
+    "Style rules: never include year tags (e.g. '2007'); compound tags are "
+    "concatenated lowercase (oakpark, not oak-park); don't add location tags "
+    "like oakpark/chicago unless the subject is location-relevant; never "
+    "include self-promotional URLs."
+)
+
+_SEED_CATEGORIES = [
+    ("system", "System", "Core agent behavior and standing memory.", 0),
+    ("own_photo", "My Photo", "Prompts about a single photo you own.", 1),
+    ("other_photo", "Someone Else's Photo",
+     "Prompts for photos you don't own — fave/comment style workflows.", 2),
+    ("collection", "My Collection",
+     "Prompts that operate across your whole photo library — weak-photo "
+     "review, threshold/boost groups, unearthing private photos, replying "
+     "to comments.", 3),
+]
+
+_SEED_VARIABLES = [
+    ("photo_id", "Photo ID", "The photo in context. Substituted client-side "
+     "from the selected photo before the prompt is sent.", "client"),
+    ("user_nsid", "Your Flickr NSID", "Your own Flickr user ID. Substituted "
+     "server-side when the workflow list is fetched.", "server"),
+]
+
+_SEED_PROMPTS = [
+    dict(code="system-core", name="System prompt", category_id="system",
+         context="global", text=SYSTEM_PROMPT_DEFAULT,
+         description="Core behavior contract sent as the first system "
+         "message on every turn."),
+    dict(code="user-memory", name="Standing memory", category_id="system",
+         context="global", text="",
+         description="Accumulated guidance saved via the `remember` tool "
+         "or edited here; sent as a second system message on every turn."),
+    dict(code="improve-photo", name="Improve metadata", category_id="own_photo",
+         context="photo", description="Suggest title/description/tags for "
+         "the current photo.",
+         text=(
+             "Review my photo {photo_id}. First fetch it with fetch_photo_image and "
+             "get its current metadata with get_photo — never overwrite without "
+             "reading first. Then suggest a concise descriptive title, a 1-2 "
+             "sentence description capturing mood and subject, and relevant tags. "
+             + _STYLE_RULES + " Show your suggestions and wait for my confirmation "
+             "before calling update_photo."
+         )),
+    dict(code="suggest-groups", name="Suggest groups", category_id="own_photo",
+         context="photo", description="Suggest Flickr groups for the current photo.",
+         text=(
+             "Look at my photo {photo_id} (fetch_photo_image, then get_photo and "
+             "get_photo_contexts to see which groups it's already in). Use "
+             "get_group_stats with limit=100 and pick relevant groups by name — "
+             "do not use find_groups, its keyword search is broken. Suggest up to "
+             "5 relevant groups it's not in yet as a NUMBERED list and wait for me "
+             "to pick numbers. Only add the groups whose numbers I pick, with "
+             "add_to_group."
+         )),
+    dict(code="suggest-albums", name="Suggest albums", category_id="own_photo",
+         context="photo", description="Suggest albums for the current photo.",
+         text=(
+             "Check which albums my photo {photo_id} should be in. Fetch it with "
+             "fetch_photo_image, then get_photo_contexts for current albums and "
+             "find_albums to see what exists. Suggest topical albums that match "
+             "the subject as a numbered list — but don't suggest more once the "
+             "photo is already in about 5 albums, and never suggest the 'Made "
+             "Explore' album unless I confirm the photo made Explore. Wait for my "
+             "picks, then add with add_to_album."
+         )),
+    dict(code="threshold-groups", name="Threshold groups", category_id="own_photo",
+         context="photo", description="Check the current photo against "
+         "view/fave threshold group requirements.",
+         text=(
+             "Check if my photo {photo_id} qualifies for view/fave threshold "
+             "groups. Get its stats with get_photo_stats, then compare against "
+             "these joined groups: 10,000 Views Unlimited (2337493@N25, 10k+ "
+             "views), 5,000 Views (48333387@N00, 5k+ views), 2,000 Views "
+             "Unlimited (2337875@N25, 2k+ views), Flickr's Finest 100+ Faves "
+             "(910466@N22), 100 faves minimum (14707878@N20), 50+ Favorites "
+             "(2888626@N21), 250 faves (2838082@N25), The Flickr Collection "
+             "(778902@N24, 250+ faves). Use get_photo_contexts to skip groups "
+             "it's already in. List qualifying groups as a numbered list and wait "
+             "for my picks before add_to_group."
+         )),
+    dict(code="reply-comments", name="Reply to comments", category_id="collection",
+         context="global", description="Draft replies to unanswered comments "
+         "across your photos.",
+         text=(
+             "Help me reply to recent comments on my photos. Call "
+             "get_photos_with_comments (limit=30), then get_photo_comments for "
+             "each. My NSID is {user_nsid}: a comment already has a reply if one "
+             "of my comments appears after it in the thread. Reply to group "
+             "notification comments too, not just personal ones. For each "
+             "unanswered comment, one at a time: show the photo title, commenter, "
+             "and comment text, then suggest 5 short reply options with variety "
+             "(emoji-only, brief thanks, specific, warm, casual), each formatted "
+             "as '[<author_url>] <message>' using author_url from the comment "
+             "data. Wait for me to pick or write my own before posting with "
+             "add_comment."
+         )),
+    dict(code="weak-photos", name="Review weak photos", category_id="collection",
+         context="global", description="Find and review your weakest photos "
+         "one at a time.",
+         text=(
+             "Find my weakest photos with find_weak_photos "
+             "(require_zero_favorites=true, limit=30). Take the top candidate "
+             "not yet reviewed in this conversation: fetch it with "
+             "fetch_photo_image, give an honest visual assessment (composition, "
+             "light, subject, technical quality — early smartphone photos get "
+             "more latitude), and recommend keep-public or make-private. Wait "
+             "for my decision. If private: suggest title/description/tags, apply "
+             "with update_photo, then set_visibility to private. If keep: "
+             "suggest improved metadata and ask about groups. "
+             + _STYLE_RULES
+         )),
+]
+
+
+def _prompts_db_path(nsid: str) -> str:
+    return os.path.join(_CREDS_BASE, nsid, "prompts.db")
+
+
+@contextmanager
+def _prompts_db(nsid: str):
+    path = _prompts_db_path(nsid)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    conn = sqlite3.connect(path)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON")
+    conn.executescript(_SCHEMA)
+    for check_sql, alter_sql in _MIGRATIONS:
+        if conn.execute(check_sql).fetchone() is None:
+            conn.execute(alter_sql)
+    _seed_defaults(conn, nsid)
+    try:
+        yield conn
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def _seed_defaults(conn: sqlite3.Connection, nsid: str) -> None:
+    """Insert builtin categories/prompts/variables if this is a fresh DB.
+
+    Carries over an existing user's ``base_prompt`` (from llm.json) into the
+    new ``user-memory`` row so no one's saved memory is lost in the move.
+    """
+    if conn.execute("SELECT 1 FROM prompt_categories LIMIT 1").fetchone():
+        return
+    now = int(time.time())
+    conn.executemany(
+        "INSERT INTO prompt_categories (id, name, description, sort_order, builtin) "
+        "VALUES (?, ?, ?, ?, 1)",
+        _SEED_CATEGORIES,
+    )
+    conn.executemany(
+        "INSERT INTO prompt_variables (code, label, description, resolved_by, builtin) "
+        "VALUES (?, ?, ?, ?, 1)",
+        _SEED_VARIABLES,
+    )
+
+    legacy_memory = ""
+    try:
+        legacy_memory = (_agent_settings.load_settings(nsid).get("base_prompt") or "").strip()
+    except Exception:
+        pass
+
+    for i, p in enumerate(_SEED_PROMPTS):
+        text = p["text"]
+        if p["code"] == "user-memory" and legacy_memory:
+            text = legacy_memory
+        conn.execute(
+            "INSERT INTO prompts (id, code, name, description, category_id, context, "
+            "text, builtin, default_text, enabled, sort_order, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, 1, ?, ?, ?)",
+            (uuid.uuid4().hex, p["code"], p["name"], p.get("description", ""),
+             p["category_id"], p["context"], text, p["text"], i, now, now),
+        )
+
+
+def _row(r: sqlite3.Row) -> dict:
+    d = dict(r)
+    for key in ("builtin", "enabled"):
+        if key in d:
+            d[key] = bool(d[key])
+    return d
+
+
+# ── Categories ────────────────────────────────────────────────────────────
+
+
+def list_categories(nsid: str) -> list[dict]:
+    with _prompts_db(nsid) as conn:
+        rows = conn.execute(
+            "SELECT * FROM prompt_categories ORDER BY sort_order, name"
+        ).fetchall()
+    return [_row(r) for r in rows]
+
+
+def create_category(nsid: str, name: str, description: str = "") -> dict:
+    cat_id = uuid.uuid4().hex
+    with _prompts_db(nsid) as conn:
+        sort_order = conn.execute(
+            "SELECT COALESCE(MAX(sort_order), -1) + 1 FROM prompt_categories"
+        ).fetchone()[0]
+        conn.execute(
+            "INSERT INTO prompt_categories (id, name, description, sort_order, builtin) "
+            "VALUES (?, ?, ?, ?, 0)",
+            (cat_id, name, description, sort_order),
+        )
+    return {"id": cat_id, "name": name, "description": description,
+            "sort_order": sort_order, "builtin": False}
+
+
+def update_category(nsid: str, category_id: str, name: str | None = None,
+                     description: str | None = None) -> dict | None:
+    with _prompts_db(nsid) as conn:
+        row = conn.execute(
+            "SELECT * FROM prompt_categories WHERE id = ?", (category_id,)
+        ).fetchone()
+        if not row:
+            return None
+        conn.execute(
+            "UPDATE prompt_categories SET name = ?, description = ? WHERE id = ?",
+            (name if name is not None else row["name"],
+             description if description is not None else row["description"],
+             category_id),
+        )
+        updated = conn.execute(
+            "SELECT * FROM prompt_categories WHERE id = ?", (category_id,)
+        ).fetchone()
+    return _row(updated)
+
+
+def delete_category(nsid: str, category_id: str) -> tuple[bool, str | None]:
+    """Returns (ok, error). Refuses builtin categories or ones still in use."""
+    with _prompts_db(nsid) as conn:
+        row = conn.execute(
+            "SELECT builtin FROM prompt_categories WHERE id = ?", (category_id,)
+        ).fetchone()
+        if not row:
+            return False, "category not found"
+        if row["builtin"]:
+            return False, "built-in categories can't be deleted"
+        in_use = conn.execute(
+            "SELECT 1 FROM prompts WHERE category_id = ? LIMIT 1", (category_id,)
+        ).fetchone()
+        if in_use:
+            return False, "category still has prompts assigned to it"
+        conn.execute("DELETE FROM prompt_categories WHERE id = ?", (category_id,))
+    return True, None
+
+
+# ── Prompts ───────────────────────────────────────────────────────────────
+
+
+def list_prompts(nsid: str, category_id: str | None = None) -> list[dict]:
+    with _prompts_db(nsid) as conn:
+        if category_id:
+            rows = conn.execute(
+                "SELECT * FROM prompts WHERE category_id = ? ORDER BY sort_order, name",
+                (category_id,),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM prompts ORDER BY category_id, sort_order, name"
+            ).fetchall()
+    return [_row(r) for r in rows]
+
+
+def get_prompt(nsid: str, prompt_id: str) -> dict | None:
+    with _prompts_db(nsid) as conn:
+        row = conn.execute("SELECT * FROM prompts WHERE id = ?", (prompt_id,)).fetchone()
+    return _row(row) if row else None
+
+
+def get_prompt_by_code(nsid: str, code: str) -> dict | None:
+    with _prompts_db(nsid) as conn:
+        row = conn.execute("SELECT * FROM prompts WHERE code = ?", (code,)).fetchone()
+    return _row(row) if row else None
+
+
+def create_prompt(nsid: str, code: str, name: str, category_id: str,
+                   text: str, context: str = "global", description: str = "") -> dict:
+    prompt_id = uuid.uuid4().hex
+    now = int(time.time())
+    with _prompts_db(nsid) as conn:
+        sort_order = conn.execute(
+            "SELECT COALESCE(MAX(sort_order), -1) + 1 FROM prompts WHERE category_id = ?",
+            (category_id,),
+        ).fetchone()[0]
+        conn.execute(
+            "INSERT INTO prompts (id, code, name, description, category_id, context, "
+            "text, builtin, default_text, enabled, sort_order, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, 0, NULL, 1, ?, ?, ?)",
+            (prompt_id, code, name, description, category_id, context, text,
+             sort_order, now, now),
+        )
+    return get_prompt(nsid, prompt_id)
+
+
+def update_prompt(nsid: str, prompt_id: str, **fields) -> dict | None:
+    """Update any of name/description/category_id/context/text/enabled."""
+    allowed = {"name", "description", "category_id", "context", "text", "enabled"}
+    updates = {k: v for k, v in fields.items() if k in allowed and v is not None}
+    if not updates:
+        return get_prompt(nsid, prompt_id)
+    with _prompts_db(nsid) as conn:
+        row = conn.execute("SELECT * FROM prompts WHERE id = ?", (prompt_id,)).fetchone()
+        if not row:
+            return None
+        set_clause = ", ".join(f"{k} = ?" for k in updates)
+        conn.execute(
+            f"UPDATE prompts SET {set_clause}, updated_at = ? WHERE id = ?",
+            (*updates.values(), int(time.time()), prompt_id),
+        )
+    return get_prompt(nsid, prompt_id)
+
+
+def delete_prompt(nsid: str, prompt_id: str) -> tuple[bool, str | None]:
+    with _prompts_db(nsid) as conn:
+        row = conn.execute(
+            "SELECT builtin FROM prompts WHERE id = ?", (prompt_id,)
+        ).fetchone()
+        if not row:
+            return False, "prompt not found"
+        if row["builtin"]:
+            return False, "built-in prompts can't be deleted — use reset instead"
+        conn.execute("DELETE FROM prompts WHERE id = ?", (prompt_id,))
+    return True, None
+
+
+def reset_prompt(nsid: str, prompt_id: str) -> dict | None:
+    """Restore a builtin prompt's text to its shipped default_text."""
+    with _prompts_db(nsid) as conn:
+        row = conn.execute("SELECT * FROM prompts WHERE id = ?", (prompt_id,)).fetchone()
+        if not row or not row["builtin"]:
+            return None
+        conn.execute(
+            "UPDATE prompts SET text = default_text, updated_at = ? WHERE id = ?",
+            (int(time.time()), prompt_id),
+        )
+    return get_prompt(nsid, prompt_id)
+
+
+def append_user_memory(nsid: str, guidance: str) -> str:
+    """Append guidance to the user-memory prompt's text. Returns the new text."""
+    with _prompts_db(nsid) as conn:
+        row = conn.execute(
+            "SELECT id, text FROM prompts WHERE code = 'user-memory'"
+        ).fetchone()
+        existing = (row["text"] or "").strip() if row else ""
+        updated = (existing + "\n" + guidance).strip() if existing else guidance
+        conn.execute(
+            "UPDATE prompts SET text = ?, updated_at = ? WHERE id = ?",
+            (updated, int(time.time()), row["id"]),
+        )
+    return updated
+
+
+# ── Variables ─────────────────────────────────────────────────────────────
+
+
+def list_variables(nsid: str) -> list[dict]:
+    with _prompts_db(nsid) as conn:
+        rows = conn.execute("SELECT * FROM prompt_variables ORDER BY code").fetchall()
+    return [_row(r) for r in rows]
+
+
+def create_variable(nsid: str, code: str, label: str, description: str = "") -> dict:
+    with _prompts_db(nsid) as conn:
+        conn.execute(
+            "INSERT INTO prompt_variables (code, label, description, resolved_by, builtin) "
+            "VALUES (?, ?, ?, 'documentation only', 0)",
+            (code, label, description),
+        )
+    return {"code": code, "label": label, "description": description,
+            "resolved_by": "documentation only", "builtin": False}
+
+
+def delete_variable(nsid: str, code: str) -> tuple[bool, str | None]:
+    with _prompts_db(nsid) as conn:
+        row = conn.execute(
+            "SELECT builtin FROM prompt_variables WHERE code = ?", (code,)
+        ).fetchone()
+        if not row:
+            return False, "variable not found"
+        if row["builtin"]:
+            return False, "built-in variables can't be deleted"
+        conn.execute("DELETE FROM prompt_variables WHERE code = ?", (code,))
+    return True, None
+
+
+# ── Bulk fetch for the API ───────────────────────────────────────────────
+
+
+def all_data(nsid: str) -> dict:
+    return {
+        "categories": list_categories(nsid),
+        "prompts": list_prompts(nsid),
+        "variables": list_variables(nsid),
+    }

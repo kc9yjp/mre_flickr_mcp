@@ -24,74 +24,27 @@ from mcp.types import TextContent, ImageContent
 import mcp_tools
 from db import _current_user, get_db
 
-from agent import llm, schema, store, settings as _agent_settings
+from agent import llm, prompts_store, schema, store
 
 MAX_ITERATIONS = 15
 CONFIRM_TIMEOUT = 300  # seconds to wait for the user's approve/deny
 RESULT_CHAR_CAP = 20_000
-
-SYSTEM_PROMPT = (
-    "You are the Flickr Workbench assistant. You manage the user's own Flickr "
-    "account through the provided tools: their photos, albums, groups, "
-    "galleries, and contacts, backed by a local database synced from Flickr.\n"
-    "Guidelines:\n"
-    "- Read current state before changing anything (e.g. get_photo before "
-    "update_photo).\n"
-    "- Propose changes and wait for the user's go-ahead; write tools "
-    "additionally require an explicit confirmation in the UI, and a declined "
-    "confirmation means skip it and move on.\n"
-    "- When suggesting groups or albums, use numbered lists so the user can "
-    "pick by number.\n"
-    "- Suggested tags: lowercase, compound words concatenated (oakpark), "
-    "never bare year tags.\n"
-    "- Keep responses concise. When you discuss a specific photo, mention its "
-    "photo id.\n"
-    "- Some turns include a note naming the photo currently open in the "
-    "user's Photo Browser panel. Treat that as the default target for "
-    "instructions that don't name a different photo — but an explicit photo "
-    "id or link in the user's own message always takes priority over it. "
-    "That note only gives an id, not details — if the user asks about 'the "
-    "current photo' or similar, call get_photo (or another relevant tool) "
-    "for that id to get fresh data rather than recalling an earlier photo "
-    "from this conversation's history.\n"
-    "- You CAN change what the user sees in the Photo Browser panel: calling "
-    "any tool with a photo id (get_photo is the cheapest) switches that panel "
-    "to show that photo. Whenever the user asks to see, open, switch to, or "
-    "pull up a specific photo by id, call get_photo for it — do not claim you "
-    "have no way to control the Photo Browser.\n"
-    "- When the user says 'remember' or 'memory' followed by guidance, or asks "
-    "you to remember a preference or rule for future conversations, call the "
-    "`remember` tool with that guidance. Keep each piece of guidance as a "
-    "concise, self-contained sentence or rule.\n"
-    "- CRITICAL: Never claim to have seen, viewed, or visually described a "
-    "photo unless actual image data was provided in the tool result. If a tool "
-    "result says vision is disabled, work from title, description, tags, and "
-    "EXIF only, and tell the user explicitly that visual inspection is "
-    "unavailable. Guessing or fabricating visual details is not allowed.\n"
-    "- CRITICAL: Tool schemas are provided to you exactly as they are. Never "
-    "claim a tool doesn't support a field, parameter, or capability without "
-    "rechecking its schema first — if it's in the schema, it's supported. "
-    "Never state you performed an action, or that a specific field was "
-    "updated, without checking the actual arguments you sent in that tool "
-    "call. If you made a mistake (e.g. left a field out of an update), say so "
-    "plainly instead of inventing an explanation for why it couldn't be done."
-)
 
 _REMEMBER_TOOL: dict = {
     "type": "function",
     "function": {
         "name": "remember",
         "description": (
-            "Save persistent guidance to your base prompt so it applies to all "
-            "future conversations. Call this when the user asks you to remember "
-            "a preference, rule, or context for future sessions."
+            "Save persistent guidance to your standing memory so it applies to "
+            "all future conversations. Call this when the user asks you to "
+            "remember a preference, rule, or context for future sessions."
         ),
         "parameters": {
             "type": "object",
             "properties": {
                 "guidance": {
                     "type": "string",
-                    "description": "Concise guidance to append to the base prompt.",
+                    "description": "Concise guidance to append to standing memory.",
                 }
             },
             "required": ["guidance"],
@@ -113,12 +66,16 @@ def get_turn_lock(username: str) -> asyncio.Lock:
     return _turn_locks.setdefault(username, asyncio.Lock())
 
 
-def resolve_confirm(confirm_id: str, approve: bool) -> bool:
-    """Resolve a pending write-tool confirmation. Returns False if unknown."""
+def resolve_confirm(confirm_id: str, approve: bool, reason: str | None = None) -> bool:
+    """Resolve a pending write-tool confirmation. Returns False if unknown.
+
+    ``reason`` is the user's explanation for a denial (ignored on approval) so
+    the model can adjust its next proposal instead of just seeing "declined".
+    """
     future = _pending_confirms.get(confirm_id)
     if future is None or future.done():
         return False
-    future.set_result(bool(approve))
+    future.set_result({"approve": bool(approve), "reason": (reason or "").strip() or None})
     return True
 
 
@@ -141,11 +98,11 @@ def _register_confirm(confirm_id: str) -> asyncio.Future:
     return future
 
 
-async def _await_confirmation(confirm_id: str, future: asyncio.Future) -> bool:
+async def _await_confirmation(confirm_id: str, future: asyncio.Future) -> dict:
     try:
         return await asyncio.wait_for(future, timeout=CONFIRM_TIMEOUT)
     except asyncio.TimeoutError:
-        return False
+        return {"approve": False, "reason": None}
     finally:
         _pending_confirms.pop(confirm_id, None)
 
@@ -307,15 +264,22 @@ async def run_turn(
     different photo, silently misdirecting later turns that replay history.
     """
     username = user["username"]
+    nsid = user["nsid"]
     vision = bool(cfg.get("vision", False))
     tools = schema.to_openai_tools() + [_REMEMBER_TOOL]
 
     user_msg = {"role": "user", "content": user_message}
     store.append_message(username, conversation_id, user_msg)
-    messages = [{"role": "system", "content": SYSTEM_PROMPT}]
-    base_prompt = (cfg.get("base_prompt") or "").strip()
-    if base_prompt:
-        messages.append({"role": "system", "content": base_prompt})
+    system_prompt = prompts_store.get_prompt_by_code(nsid, "system-core")
+    messages = [{
+        "role": "system",
+        "content": (system_prompt["text"] if system_prompt
+                    else prompts_store.SYSTEM_PROMPT_DEFAULT),
+    }]
+    user_memory = prompts_store.get_prompt_by_code(nsid, "user-memory")
+    memory_text = ((user_memory["text"] if user_memory else "") or "").strip()
+    if memory_text:
+        messages.append({"role": "system", "content": memory_text})
     messages += store.get_messages(username, conversation_id)
     if focused_photo_id:
         # Appended AFTER the full history (right before the model's turn),
@@ -381,11 +345,7 @@ async def run_turn(
                 if args is not None and name == "remember":
                     guidance = (args.get("guidance") or "").strip()
                     if guidance:
-                        nsid = user.get("nsid", "")
-                        cur = _agent_settings.load_settings(nsid)
-                        existing = (cur.get("base_prompt") or "").strip()
-                        updated = (existing + "\n" + guidance).strip() if existing else guidance
-                        _agent_settings.save_settings(nsid, {**cur, "base_prompt": updated})
+                        prompts_store.append_user_memory(nsid, guidance)
                         text = f"Remembered: {guidance}"
                     else:
                         text = "Nothing to remember (empty guidance)."
@@ -421,8 +381,11 @@ async def run_turn(
                         "group": group,
                         "warning": _omission_warning(omitted_fields) if omitted_fields else None,
                     }
-                    if not await _await_confirmation(confirm_id, future):
+                    decision = await _await_confirmation(confirm_id, future)
+                    if not decision["approve"]:
                         text = f"User declined: {name} was not executed."
+                        if decision["reason"]:
+                            text += f" Reason: {decision['reason']}"
                         args = None
 
                 if args is not None:

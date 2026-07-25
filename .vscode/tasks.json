@@ -17,6 +17,21 @@
       }
     },
     {
+      "label": "Podman: Stop, Rebuild & Restart",
+      "type": "shell",
+      "command": "podman compose down && podman compose build && podman compose up -d",
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "showReuseMessage": false
+      },
+      "problemMatcher": [],
+      "group": {
+        "kind": "build",
+        "isDefault": false
+      }
+    },
+    {
       "label": "Docker: Rebuild & Restart (keep data)",
       "type": "shell",
       "command": "docker compose down && docker compose build && docker compose up -d",

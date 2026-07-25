@@ -79,7 +79,11 @@ function DetailView({ detail, onBack }: { detail: PhotoDetail; onBack: () => voi
             <button
               key={c.id}
               title="Runs in the Chat panel"
-              onClick={() => bus.emit("runCommand", c.prompt.replaceAll("{photo_id}", detail.id))}
+              onClick={() => bus.emit("runCommand", {
+                title: c.label,
+                text: c.prompt.replaceAll("{photo_id}", detail.id),
+                promptId: c.prompt_id,
+              })}
             >
               ▶ {c.label}
             </button>

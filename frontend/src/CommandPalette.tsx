@@ -10,6 +10,7 @@ interface PaletteItem {
   kind: "panel" | "workflow";
   panelId?: string;
   prompt?: string;
+  promptId?: string;
 }
 
 interface Props {
@@ -47,6 +48,7 @@ export function CommandPalette({ dockApiRef }: Props) {
       label: c.label,
       kind: "workflow" as const,
       prompt: c.prompt,
+      promptId: c.prompt_id,
     })),
   ];
 
@@ -73,7 +75,7 @@ export function CommandPalette({ dockApiRef }: Props) {
           bus.emit("switchPanel", item.panelId!);
         }
       } else if (item.prompt) {
-        bus.emit("runCommand", item.prompt);
+        bus.emit("runCommand", { title: item.label, text: item.prompt, promptId: item.promptId ?? "" });
       }
     },
     [close, dockApiRef]
