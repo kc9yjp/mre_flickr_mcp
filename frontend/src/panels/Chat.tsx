@@ -268,6 +268,10 @@ export function Chat() {
             case "focus":
               bus.emit("focusPhoto", event.photo_id);
               break;
+            case "photo_list":
+              bus.emit("openPanel", "photos");
+              bus.emit("showPhotoList", event.photo_ids);
+              break;
             case "error":
               setError(event.message);
               break;

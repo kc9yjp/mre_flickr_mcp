@@ -221,6 +221,23 @@ _SEED_PROMPTS = [
              "suggest improved metadata and ask about groups. "
              + _STYLE_RULES
          )),
+    dict(code="unearth-private", name="Unearth private photos", category_id="collection",
+         context="global", description="Find old private photos and decide "
+         "which ones to publish.",
+         text=(
+             "Search my private photos with search_photos (is_public=false, "
+             "sort_by=date_taken, order=asc, limit=50) to find the oldest ones "
+             "not yet reviewed in this conversation. Take the top candidate: "
+             "fetch it with fetch_photo_image, give an honest visual "
+             "assessment (composition, light, subject, technical quality — "
+             "early smartphone photos get more latitude), and recommend "
+             "publish or keep-private. Wait for my decision. If publish: "
+             "suggest title/description/tags, apply with update_photo, then "
+             "set_visibility to public, and suggest a couple of relevant "
+             "groups with get_group_stats. If keep private: move to the next "
+             "candidate. "
+             + _STYLE_RULES
+         )),
 ]
 
 

@@ -133,6 +133,20 @@ def test_api_photos_bad_limit_returns_400(client):
     assert client.get("/api/photos", params={"limit": "abc"}).status_code == 400
 
 
+def test_api_photos_by_ids_returns_matching_photos_in_order(client):
+    _login(client)
+    data = client.get("/api/photos", params={"ids": "photo1,doesnotexist"}).json()
+    assert data["total"] == 1
+    assert [p["id"] for p in data["photos"]] == ["photo1"]
+
+
+def test_api_photos_by_ids_ignores_other_filters(client):
+    _login(client)
+    # "ids" takes an early-return path — other filter params should be ignored.
+    data = client.get("/api/photos", params={"ids": "photo1", "query": "nomatch"}).json()
+    assert data["total"] == 1
+
+
 def test_api_photo_detail_includes_groups_and_keeper_flag(client):
     _login(client)
     data = client.get("/api/photos/photo1").json()

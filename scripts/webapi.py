@@ -79,6 +79,21 @@ async def api_photos(request: Request):
         return err
 
     qp = request.query_params
+
+    if qp.get("ids"):
+        ids = [i for i in qp["ids"].split(",") if i]
+        rows = []
+        if ids:
+            with get_db_for_user(user["username"]) as conn:
+                rows = conn.execute(
+                    f"SELECT {_PHOTO_COLUMNS} FROM photos WHERE id IN "
+                    f"({','.join('?' * len(ids))})",
+                    ids,
+                ).fetchall()
+        by_id = {r["id"]: dict(r) for r in rows}
+        photos = [by_id[i] for i in ids if i in by_id]
+        return JSONResponse({"total": len(photos), "offset": 0, "photos": photos})
+
     conditions, params = [], []
     if qp.get("query"):
         conditions.append("(title LIKE ? OR description LIKE ?)")

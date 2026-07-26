@@ -8,6 +8,7 @@
     {"type": "confirm_request", "confirm_id", "name", "arguments"}
     {"type": "tool_result", "id", "name", "text"}
     {"type": "focus", "photo_id"}                        drive the photo viewer
+    {"type": "photo_list", "photo_ids"}                  populate the grid
     {"type": "error", "message"}
     {"type": "done"}
 """
@@ -210,6 +211,29 @@ def _focus_photo_id(name: str, args: dict) -> str | None:
     return None
 
 
+# Tools whose results are a JSON array of photo objects (each with an "id")
+# rather than a single photo or a scalar — their results should populate the
+# Photo Browser grid in one shot instead of just being narrated in chat.
+_LIST_TOOLS = {"find_weak_photos", "search_photos"}
+
+
+def _list_photo_ids(name: str, text: str) -> list[str] | None:
+    """Best-effort extraction of photo ids from a list-tool's JSON result.
+
+    Returns None (never an empty list) when the result isn't a non-empty
+    photo array, so callers can skip emitting a photo_list event entirely."""
+    if name not in _LIST_TOOLS:
+        return None
+    try:
+        parsed = json.loads(text)
+    except ValueError:
+        return None
+    if not isinstance(parsed, list) or not parsed:
+        return None
+    ids = [str(item["id"]) for item in parsed if isinstance(item, dict) and "id" in item]
+    return ids or None
+
+
 def _photo_preview_sync(user: dict, photo_id: str) -> dict | None:
     """Best-effort thumbnail/title lookup for the confirm card. Never raises —
     a missing preview just means the card falls back to showing the raw id."""
@@ -410,7 +434,9 @@ async def run_turn(
                 messages.append(tool_msg)
                 yield {"type": "tool_result", "id": call["id"], "name": name, "text": ui_text}
 
-                if args is not None and (photo_id := _focus_photo_id(name, args)):
+                if args is not None and (photo_ids := _list_photo_ids(name, ui_text)):
+                    yield {"type": "photo_list", "photo_ids": photo_ids}
+                elif args is not None and (photo_id := _focus_photo_id(name, args)):
                     yield {"type": "focus", "photo_id": photo_id}
         else:
             yield {

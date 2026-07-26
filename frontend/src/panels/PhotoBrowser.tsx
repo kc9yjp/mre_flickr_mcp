@@ -174,6 +174,7 @@ export function PhotoBrowser() {
   const [selectedAlbum, setSelectedAlbum] = useState<Album | null>(null);
   const [albumPage, setAlbumPage] = useState(1);
   const [albumPages, setAlbumPages] = useState(1);
+  const [photoListLabel, setPhotoListLabel] = useState<string | null>(null);
 
   const load = useCallback(async (f: Filters, offset: number) => {
     setLoading(true);
@@ -207,9 +208,24 @@ export function PhotoBrowser() {
     }
   }, []);
 
+  const loadPhotoList = useCallback(async (ids: string[]) => {
+    setLoading(true);
+    setError("");
+    try {
+      const page = await getJSON<PhotoPage>("/api/photos", { ids: ids.join(",") });
+      setTotal(page.total);
+      setPhotos(page.photos);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
   const selectAlbum = useCallback(
     (album: Album) => {
       setDetail(null);
+      setPhotoListLabel(null);
       setSelectedAlbum(album);
       setAlbumPage(1);
       loadAlbumPhotos(album, 1);
@@ -219,6 +235,7 @@ export function PhotoBrowser() {
 
   const clearAlbum = useCallback(() => {
     setSelectedAlbum(null);
+    setPhotoListLabel(null);
     setFilters(DEFAULT_FILTERS);
     setDraft(DEFAULT_FILTERS);
     load(DEFAULT_FILTERS, 0);
@@ -244,6 +261,19 @@ export function PhotoBrowser() {
     return bus.on("focusPhoto", openDetail);
   }, [load, openDetail]);
 
+  useEffect(
+    () =>
+      bus.on("showPhotoList", (ids) => {
+        setDetail(null);
+        setSelectedAlbum(null);
+        setPhotoListLabel(
+          ids.length ? `${ids.length.toLocaleString("en")} photo${ids.length === 1 ? "" : "s"} found` : "No photos found",
+        );
+        loadPhotoList(ids);
+      }),
+    [loadPhotoList],
+  );
+
   const closeDetail = useCallback(() => {
     setDetail(null);
     bus.emit("photoOpened", null);
@@ -252,6 +282,7 @@ export function PhotoBrowser() {
   const submit = (e: FormEvent) => {
     e.preventDefault();
     closeDetail();
+    setPhotoListLabel(null);
     setFilters(draft);
     load(draft, 0);
   };
@@ -291,7 +322,14 @@ export function PhotoBrowser() {
           ))}
         </select>
       )}
-      {selectedAlbum ? (
+      {photoListLabel ? (
+        <div className="album-banner">
+          <span>
+            <strong>{photoListLabel}</strong> — from a workflow, for review
+          </span>
+          <button onClick={clearAlbum}>✕ Clear</button>
+        </div>
+      ) : selectedAlbum ? (
         <div className="album-banner">
           <span>
             Album: <strong>{selectedAlbum.title || selectedAlbum.id}</strong>
@@ -345,7 +383,8 @@ export function PhotoBrowser() {
               {loading ? "Loading…" : `Load more (${photos.length} of ${total.toLocaleString("en")})`}
             </button>
           )
-        : photos.length < total && (
+        : !photoListLabel &&
+          photos.length < total && (
             <button className="load-more" disabled={loading} onClick={() => load(filters, photos.length)}>
               {loading ? "Loading…" : `Load more (${photos.length} of ${total.toLocaleString("en")})`}
             </button>
