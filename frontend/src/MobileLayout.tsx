@@ -33,24 +33,29 @@ type PanelId = (typeof PANELS)[number]["id"];
 const PANEL_KEY    = "mobile-panel-v1";
 const POSITION_KEY = "mobile-chat-position-v1";
 
-function ContentPanel({ id }: { id: PanelId }) {
-  switch (id) {
-    case "photos":   return <PhotoBrowser />;
-    case "other-photo": return <OtherPhotoView />;
-    case "summary":  return <Summary />;
-    case "commands": return <Command />;
-    case "sync":     return <SyncPage />;
-    case "queue":    return <QueuePage />;
-    case "setup":    return <SetupPage />;
-    case "settings": return <SettingsPage />;
-  }
-}
+const PANEL_COMPONENTS: Record<PanelId, React.FC> = {
+  photos: PhotoBrowser,
+  "other-photo": OtherPhotoView,
+  summary: Summary,
+  commands: Command,
+  sync: SyncPage,
+  queue: QueuePage,
+  setup: SetupPage,
+  settings: SettingsPage,
+};
 
 export function MobileLayout({ me }: { me: Me | null }) {
   const [panel, setPanel] = useState<PanelId>(() => {
     const saved = localStorage.getItem(PANEL_KEY) as PanelId | null;
     return saved && PANELS.some((p) => p.id === saved) ? saved : "summary";
   });
+  // Panels stay mounted once visited so switching tabs (e.g. to Chat to run a
+  // workflow, then back) doesn't lose in-progress state like a found-photos grid.
+  const [visited, setVisited] = useState<Set<PanelId>>(() => new Set([panel]));
+
+  useEffect(() => {
+    setVisited((prev) => (prev.has(panel) ? prev : new Set(prev).add(panel)));
+  }, [panel]);
 
   const [chatBottom, setChatBottom] = useState(() => {
     return localStorage.getItem(POSITION_KEY) !== "top";
@@ -103,7 +108,14 @@ export function MobileLayout({ me }: { me: Me | null }) {
         </div>
       </div>
       <div className="mobile-content-scroll">
-        <ContentPanel id={panel} />
+        {PANELS.filter((p) => visited.has(p.id)).map((p) => {
+          const Component = PANEL_COMPONENTS[p.id];
+          return (
+            <div key={p.id} style={{ display: panel === p.id ? "block" : "none" }}>
+              <Component />
+            </div>
+          );
+        })}
       </div>
     </div>
   );
