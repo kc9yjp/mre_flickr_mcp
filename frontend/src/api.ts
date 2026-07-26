@@ -253,6 +253,11 @@ export async function initSession(): Promise<Me> {
   return me;
 }
 
+export async function logout(): Promise<void> {
+  await fetch("/logout", { method: "POST", headers: { "X-CSRF-Token": csrfToken } });
+  window.location.href = "/login";
+}
+
 export async function getJSON<T>(url: string, params?: Record<string, string>): Promise<T> {
   const qs = params ? "?" + new URLSearchParams(params).toString() : "";
   return handle<T>(await fetch(url + qs));

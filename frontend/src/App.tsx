@@ -26,6 +26,7 @@ import { MobileLayout } from "./MobileLayout";
 import { useIsMobile } from "./useIsMobile";
 import { CommandPalette, paletteShortcut } from "./CommandPalette";
 import { ThemeMenu } from "./ThemeMenu";
+import { UserMenu } from "./UserMenu";
 import { PANEL_SPECS, PANEL_ORDER, openOrFocusPanel } from "./panelDefs";
 
 const LAYOUT_KEY = "workbench-layout-v1";
@@ -158,29 +159,29 @@ export default function App() {
     <div className="workbench">
       <header className="topbar">
         <span className="topbar-title">Mr. E's Photo Workbench</span>
-        <div className="view-dropdown" ref={viewRef}>
-          <button
-            className="view-dropdown-toggle"
-            onClick={() => setViewOpen((o) => !o)}
-            title={`Show/hide panels (${paletteShortcut})`}
-          >
-            View ▾
-          </button>
-          {viewOpen && (
-            <div className="view-dropdown-menu">
-              {PANEL_ORDER.map((id) => (
-                <button key={id} onClick={() => handlePanelClick(id)}>
-                  <span className="view-check">{openPanels.has(id) ? "✓" : " "}</span>
-                  {PANEL_SPECS[id].title}
-                </button>
-              ))}
-            </div>
-          )}
+        <div className="topbar-right">
+          <div className="view-dropdown" ref={viewRef}>
+            <button
+              className="view-dropdown-toggle"
+              onClick={() => setViewOpen((o) => !o)}
+              title={`Show/hide panels (${paletteShortcut})`}
+            >
+              View ▾
+            </button>
+            {viewOpen && (
+              <div className="view-dropdown-menu">
+                {PANEL_ORDER.map((id) => (
+                  <button key={id} onClick={() => handlePanelClick(id)}>
+                    <span className="view-check">{openPanels.has(id) ? "✓" : " "}</span>
+                    {PANEL_SPECS[id].title}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+          <ThemeMenu />
+          <UserMenu me={me} />
         </div>
-        <ThemeMenu />
-        <span className="topbar-user">
-          {me ? me.fullname || me.username : "…"}
-        </span>
       </header>
       <div className="dock-container">
         <DockviewReact components={components} onReady={onReady} theme={themeDark} />

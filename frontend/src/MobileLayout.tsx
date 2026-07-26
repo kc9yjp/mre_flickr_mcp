@@ -15,6 +15,7 @@ import { QueuePage } from "./panels/QueuePage";
 import { SetupPage } from "./panels/SetupPage";
 import { SettingsPage } from "./panels/SettingsPage";
 import { ThemeMenu } from "./ThemeMenu";
+import { UserMenu } from "./UserMenu";
 
 const PANELS = [
   { id: "summary",  label: "Stats" },
@@ -96,10 +97,10 @@ export function MobileLayout({ me }: { me: Me | null }) {
         >
           {chatBottom ? "⬆" : "⬇"}
         </button>
-        <ThemeMenu />
-        <span className="topbar-user mobile-user">
-          {me ? me.fullname || me.username : ""}
-        </span>
+        <div className="topbar-right">
+          <ThemeMenu />
+          <UserMenu me={me} className="mobile-user" />
+        </div>
       </div>
       <div className="mobile-content-scroll">
         <ContentPanel id={panel} />

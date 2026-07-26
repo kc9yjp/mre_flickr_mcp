@@ -197,7 +197,14 @@ body {
   font-weight: 600;
 }
 
-.view-dropdown {
+.topbar-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.view-dropdown,
+.user-menu {
   position: relative;
 }
 
@@ -255,14 +262,10 @@ body {
   display: inline-block;
 }
 
-.topbar-user {
-  color: var(--ink-secondary);
-}
-
-.topbar-user a {
-  margin-left: 12px;
-  color: var(--accent);
-  text-decoration: none;
+.user-menu-panel {
+  left: auto;
+  right: 0;
+  min-width: 120px;
 }
 
 .dock-container {
