@@ -14,6 +14,7 @@ import { SyncPage } from "./panels/SyncPage";
 import { QueuePage } from "./panels/QueuePage";
 import { SetupPage } from "./panels/SetupPage";
 import { SettingsPage } from "./panels/SettingsPage";
+import { ThemeMenu } from "./ThemeMenu";
 
 const PANELS = [
   { id: "summary",  label: "Stats" },
@@ -95,6 +96,7 @@ export function MobileLayout({ me }: { me: Me | null }) {
         >
           {chatBottom ? "⬆" : "⬇"}
         </button>
+        <ThemeMenu />
         <span className="topbar-user mobile-user">
           {me ? me.fullname || me.username : ""}
         </span>
