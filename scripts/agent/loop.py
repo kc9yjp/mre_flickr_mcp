@@ -217,6 +217,20 @@ def _focus_photo_id(name: str, args: dict) -> str | None:
 _LIST_TOOLS = {"find_weak_photos", "search_photos"}
 
 
+def _coerce_null_content(messages: list[dict]) -> None:
+    """Normalize a null assistant "content" field to "" in place.
+
+    Null content on a tool-call-only assistant turn is valid OpenAI wire
+    format, but some OpenAI-compatible proxies (e.g. OpenCode Zen, when
+    translating to Anthropic's Messages API) choke on it and return
+    "invalid message content type: <nil>". Conversations stored before this
+    was caught may still have a null persisted, so this also heals replayed
+    history, not just newly generated turns."""
+    for m in messages:
+        if m.get("role") == "assistant" and m.get("content") is None:
+            m["content"] = ""
+
+
 def _list_photo_ids(name: str, text: str) -> list[str] | None:
     """Best-effort extraction of photo ids from a list-tool's JSON result.
 
@@ -305,6 +319,7 @@ async def run_turn(
     if memory_text:
         messages.append({"role": "system", "content": memory_text})
     messages += store.get_messages(username, conversation_id)
+    _coerce_null_content(messages)
     if focused_photo_id:
         # Appended AFTER the full history (right before the model's turn),
         # not near the top: on a long-running conversation a note buried
@@ -344,7 +359,7 @@ async def run_turn(
                     stats["total_tokens"] += usage.get("total_tokens", 0)
                 stats["total_latency_ms"] += final.get("latency_ms", 0)
 
-            assistant_msg: dict = {"role": "assistant", "content": final["content"] or None}
+            assistant_msg: dict = {"role": "assistant", "content": final["content"]}
             if final["tool_calls"]:
                 assistant_msg["tool_calls"] = final["tool_calls"]
             store.append_message(username, conversation_id, assistant_msg)
