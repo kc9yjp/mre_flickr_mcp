@@ -1,13 +1,96 @@
-/* Text tokens (dark surface): primary / secondary / muted ink, one accent. */
+/* Theme tokens: surface / border / ink shades plus a couple of status colors.
+   `data-theme` is set on <html> by theme.ts; :root holds the Slate defaults
+   so there's no flash of unstyled content before that attribute lands. */
 :root {
-  --surface: #1b1d21;
-  --surface-raised: #24262c;
-  --border: #35383f;
-  --ink: #e6e7ea;
-  --ink-secondary: #a2a6ad;
-  --ink-muted: #71757d;
-  --accent: #5aa2e8;
-  --good: #4fb06d;
+  --surface: #22242a;
+  --surface-raised: #2b2e35;
+  --border: #3d414a;
+  --ink: #eef0f3;
+  --ink-secondary: #b7bbc3;
+  --ink-muted: #868b94;
+  --accent: #6fb1f0;
+  --good: #57c37f;
+  --danger: #ef8a76;
+  --user-bubble: #33507a;
+  --surface-subtle: rgba(255, 255, 255, 0.04);
+  color-scheme: dark;
+}
+
+:root[data-theme="dracula"] {
+  --surface: #282a36;
+  --surface-raised: #343746;
+  --border: #44475a;
+  --ink: #f8f8f2;
+  --ink-secondary: #c4c6da;
+  --ink-muted: #8f92ab;
+  --accent: #bd93f9;
+  --good: #50fa7b;
+  --danger: #ff6e6e;
+  --user-bubble: #44475a;
+  --surface-subtle: rgba(255, 255, 255, 0.04);
+  color-scheme: dark;
+}
+
+:root[data-theme="daylight"] {
+  --surface: #ffffff;
+  --surface-raised: #f2f4f7;
+  --border: #d8dce2;
+  --ink: #1b1e22;
+  --ink-secondary: #464b52;
+  --ink-muted: #6b7078;
+  --accent: #1c6fd6;
+  --good: #1f8a4c;
+  --danger: #c0392b;
+  --user-bubble: #dbe9fc;
+  --surface-subtle: rgba(0, 0, 0, 0.035);
+  color-scheme: light;
+}
+
+:root[data-theme="paper"] {
+  --surface: #f7f1e3;
+  --surface-raised: #efe4c9;
+  --border: #d9c79f;
+  --ink: #2b2417;
+  --ink-secondary: #5b4d33;
+  --ink-muted: #8a7b58;
+  --accent: #a1580c;
+  --good: #3f7a3a;
+  --danger: #a63a2b;
+  --user-bubble: #e8d4a6;
+  --surface-subtle: rgba(0, 0, 0, 0.045);
+  color-scheme: light;
+}
+
+:root[data-theme="mist"] {
+  --surface: #eef2f6;
+  --surface-raised: #e2e8ef;
+  --border: #c7d0da;
+  --ink: #1c232b;
+  --ink-secondary: #48525c;
+  --ink-muted: #707b86;
+  --accent: #2f6fb0;
+  --good: #207a4f;
+  --danger: #b23a2e;
+  --user-bubble: #cfe0f2;
+  --surface-subtle: rgba(0, 0, 0, 0.04);
+  color-scheme: light;
+}
+
+/* Bring dockview's own chrome (tabs, group backgrounds) in line with the
+   active theme instead of the fixed colors its "dark" preset ships with. */
+[data-theme] .dockview-theme-dark {
+  --dv-group-view-background-color: var(--surface);
+  --dv-tabs-and-actions-container-background-color: var(--surface-raised);
+  --dv-activegroup-visiblepanel-tab-background-color: var(--surface);
+  --dv-activegroup-hiddenpanel-tab-background-color: var(--surface-raised);
+  --dv-inactivegroup-visiblepanel-tab-background-color: var(--surface);
+  --dv-inactivegroup-hiddenpanel-tab-background-color: var(--surface-raised);
+  --dv-tab-divider-color: var(--border);
+  --dv-activegroup-visiblepanel-tab-color: var(--ink);
+  --dv-activegroup-hiddenpanel-tab-color: var(--ink-secondary);
+  --dv-inactivegroup-visiblepanel-tab-color: var(--ink-secondary);
+  --dv-inactivegroup-hiddenpanel-tab-color: var(--ink-muted);
+  --dv-separator-border: var(--border);
 }
 
 /* Chat animations */
@@ -81,10 +164,14 @@ body,
   margin: 0;
 }
 
+html {
+  font-size: var(--font-size-base, 16px);
+}
+
 body {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial,
     sans-serif;
-  font-size: 16px;
+  font-size: 1rem;
   color: var(--ink);
   background: var(--surface);
 }
@@ -120,7 +207,7 @@ body {
   color: var(--ink-secondary);
   border-radius: 4px;
   padding: 3px 10px;
-  font-size: 13px;
+  font-size: 0.8125rem;
   cursor: pointer;
 }
 
@@ -154,7 +241,7 @@ body {
   border-radius: 4px;
   display: flex;
   gap: 8px;
-  font-size: 14px;
+  font-size: 0.875rem;
 }
 
 .view-dropdown-menu button:hover {
@@ -192,7 +279,7 @@ body {
 .panel h2,
 .panel h3 {
   margin: 14px 0 8px;
-  font-size: 14px;
+  font-size: 0.875rem;
   font-weight: 600;
 }
 
@@ -202,7 +289,7 @@ body {
 }
 
 .error {
-  color: #e07a6a;
+  color: var(--danger);
 }
 
 button {
@@ -304,7 +391,7 @@ select:focus {
 
 .thumb-stats {
   color: var(--ink-muted);
-  font-size: 12px;
+  font-size: 0.75rem;
 }
 
 .load-more {
@@ -443,11 +530,11 @@ select:focus {
 
 .tile-label {
   color: var(--ink-secondary);
-  font-size: 12px;
+  font-size: 0.75rem;
 }
 
 .tile-value {
-  font-size: 22px;
+  font-size: 1.375rem;
   font-weight: 600;
 }
 
@@ -523,7 +610,7 @@ select:focus {
   flex-direction: column;
   gap: 3px;
   color: var(--ink-secondary);
-  font-size: 13px;
+  font-size: 0.8125rem;
 }
 
 .chat-settings textarea {
@@ -559,7 +646,7 @@ select:focus {
   color: var(--ink-muted);
   border-radius: 4px;
   padding: 3px 6px;
-  font-size: 15px;
+  font-size: 0.9375rem;
   cursor: pointer;
   flex: none;
   transition: all 0.2s ease-out;
@@ -606,7 +693,7 @@ select:focus {
 }
 
 .chat-user .chat-bubble {
-  background: #2c4160;
+  background: var(--user-bubble);
 }
 
 .chat-assistant .chat-bubble {
@@ -629,7 +716,7 @@ select:focus {
 
 .tool-card pre {
   overflow-x: auto;
-  font-size: 12px;
+  font-size: 0.75rem;
   max-height: 200px;
   overflow-y: auto;
 }
@@ -651,7 +738,7 @@ select:focus {
 .prompt-origin pre {
   white-space: pre-wrap;
   overflow-wrap: break-word;
-  font-size: 13px;
+  font-size: 0.8125rem;
   margin: 8px 0 0;
 }
 
@@ -661,7 +748,7 @@ select:focus {
   color: var(--accent);
   padding: 0;
   margin-top: 6px;
-  font-size: 13px;
+  font-size: 0.8125rem;
   cursor: pointer;
 }
 
@@ -677,7 +764,7 @@ select:focus {
   align-items: center;
   gap: 8px;
   margin: 6px 0;
-  font-size: 12px;
+  font-size: 0.75rem;
   color: var(--ink-secondary);
 }
 
@@ -691,7 +778,7 @@ select:focus {
 
 .confirm-card pre {
   overflow-x: auto;
-  font-size: 12px;
+  font-size: 0.75rem;
   max-height: 160px;
   overflow-y: auto;
 }
@@ -800,7 +887,7 @@ select:focus {
 
 .mobile-user {
   white-space: nowrap;
-  font-size: 13px;
+  font-size: 0.8125rem;
 }
 
 .mobile-content-scroll {
@@ -824,15 +911,15 @@ select:focus {
 }
 
 .btn-danger {
-  border-color: #e07a6a;
-  color: #e07a6a;
+  border-color: var(--danger);
+  color: var(--danger);
 }
 
 .btn-danger-sm {
-  border-color: #e07a6a;
-  color: #e07a6a;
+  border-color: var(--danger);
+  color: var(--danger);
   padding: 2px 8px;
-  font-size: 13px;
+  font-size: 0.8125rem;
 }
 
 .confirm-inline {
@@ -854,13 +941,13 @@ select:focus {
 .queue-stat-pill {
   border-radius: 999px;
   padding: 2px 12px;
-  font-size: 13px;
+  font-size: 0.8125rem;
   border: 1px solid var(--border);
 }
 
 .queue-stat-pill.waiting { border-color: var(--accent); color: var(--accent); }
 .queue-stat-pill.success { border-color: var(--good); color: var(--good); }
-.queue-stat-pill.errored { border-color: #e07a6a; color: #e07a6a; }
+.queue-stat-pill.errored { border-color: var(--danger); color: var(--danger); }
 
 .queue-section-header {
   display: flex;
@@ -884,7 +971,7 @@ select:focus {
 
 .queue-time {
   color: var(--ink-muted);
-  font-size: 13px;
+  font-size: 0.8125rem;
   white-space: nowrap;
 }
 
@@ -898,7 +985,7 @@ select:focus {
 }
 
 .setup-tab {
-  font-size: 13px;
+  font-size: 0.8125rem;
   padding: 4px 10px;
   border-color: var(--border);
   color: var(--ink-muted);
@@ -921,7 +1008,7 @@ select:focus {
 .setup-snippet pre {
   margin: 0;
   overflow-x: auto;
-  font-size: 13px;
+  font-size: 0.8125rem;
   white-space: pre;
 }
 
@@ -929,7 +1016,7 @@ select:focus {
   position: absolute;
   top: 8px;
   right: 8px;
-  font-size: 12px;
+  font-size: 0.75rem;
   padding: 2px 8px;
 }
 
@@ -940,7 +1027,7 @@ select:focus {
   border-radius: 6px;
   color: var(--accent);
   text-decoration: none;
-  font-size: 15px;
+  font-size: 0.9375rem;
 }
 
 /* --- Settings page --- */
@@ -1007,7 +1094,7 @@ select:focus {
   border-radius: 0;
   background: transparent;
   padding: 12px 14px;
-  font-size: 16px;
+  font-size: 1rem;
   width: 100%;
 }
 
@@ -1037,7 +1124,7 @@ select:focus {
 }
 
 .palette-item-kind {
-  font-size: 12px;
+  font-size: 0.75rem;
   color: var(--ink-muted);
   flex: none;
 }
@@ -1051,7 +1138,7 @@ select:focus {
   display: flex;
   gap: 14px;
   padding: 6px 14px;
-  font-size: 12px;
+  font-size: 0.75rem;
   color: var(--ink-muted);
   border-top: 1px solid var(--border);
 }
@@ -1073,8 +1160,8 @@ select:focus {
 .session-stats {
   padding: 8px;
   border-bottom: 1px solid var(--border);
-  font-size: 12px;
-  background: var(--surface-subtle, rgba(255, 255, 255, 0.02));
+  font-size: 0.75rem;
+  background: var(--surface-subtle);
 }
 
 .stats-grid {
@@ -1089,16 +1176,98 @@ select:focus {
   gap: 3px;
   padding: 6px;
   border-radius: 4px;
-  background: rgba(0, 0, 0, 0.2);
+  background: var(--surface-subtle);
 }
 
 .stat-label {
   color: var(--ink-muted);
-  font-size: 11px;
+  font-size: 0.6875rem;
 }
 
 .stat-value {
-  color: var(--accent, #4a9eff);
+  color: var(--accent);
   font-weight: 600;
-  font-size: 13px;
+  font-size: 0.8125rem;
+}
+
+/* --- Theme menu --- */
+
+.theme-menu {
+  position: relative;
+}
+
+.theme-menu-panel {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 220px;
+  z-index: 100;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+}
+
+.theme-menu-section-label {
+  color: var(--ink-muted);
+  font-size: 0.6875rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-top: 4px;
+}
+
+.theme-menu-section-label:first-child {
+  margin-top: 0;
+}
+
+.theme-swatch-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 6px;
+}
+
+.theme-swatch {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 8px;
+  border-radius: 4px;
+  font-size: 0.8125rem;
+  border: 1px solid var(--border);
+}
+
+.theme-swatch.active {
+  border-color: var(--accent);
+}
+
+.theme-swatch-check {
+  width: 1ch;
+  display: inline-block;
+}
+
+.theme-swatch-slate    { background: #22242a; color: #eef0f3; }
+.theme-swatch-dracula  { background: #282a36; color: #f8f8f2; }
+.theme-swatch-daylight { background: #ffffff; color: #1b1e22; }
+.theme-swatch-paper    { background: #f7f1e3; color: #2b2417; }
+.theme-swatch-mist     { background: #eef2f6; color: #1c232b; }
+
+.font-size-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.font-size-btn {
+  flex: 1;
+  padding: 4px 8px;
+  font-size: 0.75rem;
+}
+
+.font-size-btn.active {
+  border-color: var(--accent);
+  color: var(--accent);
 }

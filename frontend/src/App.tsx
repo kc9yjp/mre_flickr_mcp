@@ -25,6 +25,7 @@ import { SettingsPage } from "./panels/SettingsPage";
 import { MobileLayout } from "./MobileLayout";
 import { useIsMobile } from "./useIsMobile";
 import { CommandPalette, paletteShortcut } from "./CommandPalette";
+import { ThemeMenu } from "./ThemeMenu";
 import { PANEL_SPECS, PANEL_ORDER, openOrFocusPanel } from "./panelDefs";
 
 const LAYOUT_KEY = "workbench-layout-v1";
@@ -176,6 +177,7 @@ export default function App() {
             </div>
           )}
         </div>
+        <ThemeMenu />
         <span className="topbar-user">
           {me ? me.fullname || me.username : "…"}
         </span>
