@@ -13,6 +13,7 @@ import {
 } from "../api";
 import * as bus from "../bus";
 import { SessionStatsPanel } from "../components/SessionStats";
+import { Markdown } from "../markdown";
 
 interface ToolCard {
   id: string;
@@ -466,7 +467,13 @@ export function Chat() {
             {m.text && (
               m.origin
                 ? <PromptOriginMsg text={m.text} origin={m.origin} />
-                : <div className="chat-bubble">{m.text}</div>
+                : m.role === "assistant"
+                  ? (
+                    <div className="chat-bubble markdown-body">
+                      <Markdown text={m.text} />
+                    </div>
+                  )
+                  : <div className="chat-bubble">{m.text}</div>
             )}
           </div>
         ))}
