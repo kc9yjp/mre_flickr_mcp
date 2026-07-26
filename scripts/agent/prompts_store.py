@@ -162,8 +162,9 @@ _SEED_PROMPTS = [
          context="photo", description="Suggest title/description/tags for "
          "the current photo.",
          text=(
-             "Review my photo {photo_id}. First fetch it with fetch_photo_image and "
-             "get its current metadata with get_photo — never overwrite without "
+             "Review my photo {photo_id}. If you don't already have its image and "
+             "current metadata from earlier in this conversation, fetch it first "
+             "with fetch_photo_image and get_photo — never overwrite without "
              "reading first. Then suggest a concise descriptive title, a 1-2 "
              "sentence description capturing mood and subject, and relevant tags. "
              + _STYLE_RULES + " Show your suggestions and wait for my confirmation "
@@ -172,39 +173,44 @@ _SEED_PROMPTS = [
     dict(code="suggest-groups", name="Suggest groups", category_id="own_photo",
          context="photo", description="Suggest Flickr groups for the current photo.",
          text=(
-             "Look at my photo {photo_id} (fetch_photo_image, then get_photo and "
-             "get_photo_contexts to see which groups it's already in). Use "
-             "get_group_stats with limit=100 and pick relevant groups by name — "
-             "do not use find_groups, its keyword search is broken. Suggest up to "
-             "5 relevant groups it's not in yet as a NUMBERED list and wait for me "
-             "to pick numbers. Only add the groups whose numbers I pick, with "
-             "add_to_group."
+             "Look at my photo {photo_id}. If you don't already have its image and "
+             "group memberships from earlier in this conversation, fetch it first "
+             "(fetch_photo_image, then get_photo and get_photo_contexts to see "
+             "which groups it's already in). Search my joined groups with "
+             "find_groups using 2-3 keyword searches based on the photo's subject "
+             "and location, and also check get_group_stats with limit=100 to "
+             "browse by membership size. Suggest up to 5 relevant groups it's not "
+             "in yet as a NUMBERED list and wait for me to pick numbers. Only add "
+             "the groups whose numbers I pick, with add_to_group."
          )),
     dict(code="suggest-albums", name="Suggest albums", category_id="own_photo",
          context="photo", description="Suggest albums for the current photo.",
          text=(
-             "Check which albums my photo {photo_id} should be in. Fetch it with "
-             "fetch_photo_image, then get_photo_contexts for current albums and "
-             "find_albums to see what exists. Suggest topical albums that match "
-             "the subject as a numbered list — but don't suggest more once the "
-             "photo is already in about 5 albums, and never suggest the 'Made "
-             "Explore' album unless I confirm the photo made Explore. Wait for my "
-             "picks, then add with add_to_album."
+             "Check which albums my photo {photo_id} should be in. If you don't "
+             "already have its image and current albums from earlier in this "
+             "conversation, fetch it first (fetch_photo_image, then "
+             "get_photo_contexts for current albums) and find_albums to see what "
+             "exists. Suggest topical albums that match the subject as a numbered "
+             "list — but don't suggest more once the photo is already in about 5 "
+             "albums, and never suggest the 'Made Explore' album unless I confirm "
+             "the photo made Explore. Wait for my picks, then add with "
+             "add_to_album."
          )),
     dict(code="threshold-groups", name="Threshold groups", category_id="own_photo",
          context="photo", description="Check the current photo against "
          "view/fave threshold group requirements.",
          text=(
              "Check if my photo {photo_id} qualifies for view/fave threshold "
-             "groups. Get its stats with get_photo_stats, then compare against "
-             "these joined groups: 10,000 Views Unlimited (2337493@N25, 10k+ "
-             "views), 5,000 Views (48333387@N00, 5k+ views), 2,000 Views "
-             "Unlimited (2337875@N25, 2k+ views), Flickr's Finest 100+ Faves "
-             "(910466@N22), 100 faves minimum (14707878@N20), 50+ Favorites "
-             "(2888626@N21), 250 faves (2838082@N25), The Flickr Collection "
-             "(778902@N24, 250+ faves). Use get_photo_contexts to skip groups "
-             "it's already in. List qualifying groups as a numbered list and wait "
-             "for my picks before add_to_group."
+             "groups. If you don't already have its stats and group contexts "
+             "from earlier in this conversation, get them with get_photo_stats "
+             "and get_photo_contexts. Then compare its stats against these joined "
+             "groups, skipping any it's already in: 10,000 Views Unlimited "
+             "(2337493@N25, 10k+ views), 5,000 Views (48333387@N00, 5k+ views), "
+             "2,000 Views Unlimited (2337875@N25, 2k+ views), Flickr's Finest "
+             "100+ Faves (910466@N22), 100 faves minimum (14707878@N20), 50+ "
+             "Favorites (2888626@N21), 250 faves (2838082@N25), The Flickr "
+             "Collection (778902@N24, 250+ faves). List qualifying groups as a "
+             "numbered list and wait for my picks before add_to_group."
          )),
     dict(code="reply-comments", name="Reply to comments", category_id="collection",
          context="global", description="Draft replies to unanswered comments "

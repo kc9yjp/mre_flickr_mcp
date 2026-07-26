@@ -398,13 +398,24 @@ _KW_STOP = {
     "flickr", "photo", "photos", "picture", "pictures", "image", "images",
     "pic", "pics", "group", "pool", "please", "welcome", "add", "post",
     "feel", "free", "share", "join", "member", "members", "rule", "rules",
+    # residual HTML markup noise (in case tags survive stripping, e.g. from
+    # malformed markup or bare attribute text)
+    "href", "src", "img", "www", "com", "net", "org", "http", "https",
+    "jpg", "jpeg", "png", "gif", "target", "blank", "rel", "nofollow",
+    "noreferrer", "width", "height", "strong", "span", "div", "style",
+    "class", "alt",
 }
 
 
 def generate_group_keywords(name: str, description: str = "") -> str:
     """Derive searchable keywords from a group name and description."""
     name_text = html.unescape(name or "")
-    desc_text = html.unescape(description or "")[:600]
+    desc_text = html.unescape(description or "")
+    # Strip HTML tags and URLs so markup (href, img, src, jpg, width, alt...)
+    # doesn't leak into the keyword vocabulary.
+    desc_text = re.sub(r"<[^>]+>", " ", desc_text)
+    desc_text = re.sub(r"https?://\S+", " ", desc_text)
+    desc_text = desc_text[:600]
 
     # Split on hyphens/underscores so "wabi-sabi" → ["wabi", "sabi"]
     combined = re.sub(r"[-_]", " ", name_text + " " + desc_text)

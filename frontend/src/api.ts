@@ -203,6 +203,7 @@ export interface WorkflowCommand {
   prompt_id: string;
   label: string;
   context: "photo" | "global";
+  category_id: string;
   prompt: string;
 }
 

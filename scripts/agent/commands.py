@@ -20,6 +20,7 @@ def commands_for_api(nsid: str) -> list[dict]:
             "prompt_id": p["id"],
             "label": p["name"],
             "context": p["context"],
+            "category_id": p["category_id"],
             "prompt": p["text"].replace("{user_nsid}", nsid),
         }
         for p in data["prompts"]

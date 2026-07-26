@@ -163,6 +163,7 @@ function DetailView({ detail, onBack }: { detail: PhotoDetail; onBack: () => voi
 }
 
 export function PhotoBrowser() {
+  const collectionCommands = useWorkflowCommands("global").filter((c) => c.category_id === "collection");
   const [filters, setFilters] = useState<Filters>(DEFAULT_FILTERS);
   const [draft, setDraft] = useState<Filters>(DEFAULT_FILTERS);
   const [photos, setPhotos] = useState<Photo[]>([]);
@@ -304,6 +305,19 @@ export function PhotoBrowser() {
 
   return (
     <div className="panel photo-browser">
+      {collectionCommands.length > 0 && (
+        <div className="detail-workflows">
+          {collectionCommands.map((c) => (
+            <button
+              key={c.id}
+              title="Runs in the Chat panel"
+              onClick={() => bus.emit("runCommand", { title: c.label, text: c.prompt, promptId: c.prompt_id })}
+            >
+              ▶ {c.label}
+            </button>
+          ))}
+        </div>
+      )}
       {albums.length > 0 && (
         <select
           className="album-select"
