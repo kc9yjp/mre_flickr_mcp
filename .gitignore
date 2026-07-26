@@ -173,3 +173,10 @@ playwright/node_modules/
 playwright/test-results/
 playwright/playwright-report/
 playwright/.auth/
+
+# node modules
+frontend/node_modules/**
+frontend/tsconfig.tsbuildinfo
+
+# tailscale config
+tailscale/serve-config.json
