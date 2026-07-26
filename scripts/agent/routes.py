@@ -230,7 +230,6 @@ async def prompts_collection(request: Request):
             name=body["name"].strip(),
             category_id=body["category_id"],
             text=body["text"],
-            context=body.get("context", "global"),
             description=body.get("description", ""),
         )
     except Exception as e:
@@ -253,7 +252,6 @@ async def prompts_update(request: Request):
         name=body.get("name"),
         description=body.get("description"),
         category_id=body.get("category_id"),
-        context=body.get("context"),
         text=body.get("text"),
         enabled=body.get("enabled"),
     )

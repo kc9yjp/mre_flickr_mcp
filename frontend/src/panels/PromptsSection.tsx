@@ -1,14 +1,24 @@
-// Editor for user-defined and built-in prompts, their categories, and the
-// template variables ({photo_id}, {user_nsid}) they can reference.
+// Editor for user-defined and built-in prompts and the template variables
+// ({photo_id}, {user_nsid}) they can reference. Categories are fixed by the
+// system (not user-editable) — each one pins its prompts' workflow buttons
+// to a specific page, shown here as a badge rather than a picker.
 
 import { FormEvent, useEffect, useRef, useState } from "react";
 import { Prompt, PromptCategory, PromptVariable, PromptsData, getJSON, postJSON } from "../api";
 import * as bus from "../bus";
 
-const CONTEXTS: { value: Prompt["context"]; label: string }[] = [
-  { value: "global", label: "global (collection-wide)" },
-  { value: "photo", label: "photo (needs a selected photo)" },
-];
+// Where a category's prompts show up as workflow buttons — mirrors the
+// server-side category → context mapping in agent/prompts_store.py.
+const CATEGORY_PLACEMENT: Record<string, string> = {
+  system: "internal only — no button",
+  own_photo: "Photo Browser",
+  other_photo: "Photo Browser",
+  collection: "Chat / Command Palette",
+};
+
+function placementFor(categoryId: string): string {
+  return CATEGORY_PLACEMENT[categoryId] ?? "Chat / Command Palette";
+}
 
 interface ParsedPrompt {
   categoryName: string;
@@ -105,9 +115,8 @@ export function PromptsSection() {
   const [pendingEditId, setPendingEditId] = useState<string | null>(null);
   const [showAddPrompt, setShowAddPrompt] = useState(false);
   const [newPrompt, setNewPrompt] = useState({
-    code: "", name: "", description: "", category_id: "", context: "global", text: "",
+    code: "", name: "", description: "", category_id: "", text: "",
   });
-  const [newCategory, setNewCategory] = useState({ name: "", description: "" });
   const [newVariable, setNewVariable] = useState({ code: "", label: "", description: "" });
   const importInputRef = useRef<HTMLInputElement>(null);
 
@@ -131,7 +140,7 @@ export function PromptsSection() {
 
   const startEdit = (p: Prompt) => {
     setEditingId(p.id);
-    setDraft({ name: p.name, description: p.description, category_id: p.category_id, context: p.context, text: p.text });
+    setDraft({ name: p.name, description: p.description, category_id: p.category_id, text: p.text });
   };
 
   // A message sent from a workflow prompt (in Chat) can request this panel
@@ -195,28 +204,6 @@ export function PromptsSection() {
     }
   };
 
-  const createCategory = async (e: FormEvent) => {
-    e.preventDefault();
-    try {
-      await postJSON("/api/prompt-categories", newCategory);
-      setNewCategory({ name: "", description: "" });
-      flash("Category added.");
-      await load();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    }
-  };
-
-  const deleteCategory = async (id: string) => {
-    try {
-      await postJSON(`/api/prompt-categories/${id}/delete`, {});
-      flash("Category deleted.");
-      await load();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    }
-  };
-
   const createVariable = async (e: FormEvent) => {
     e.preventDefault();
     try {
@@ -272,36 +259,36 @@ export function PromptsSection() {
   const importMarkdown = async (file: File) => {
     if (!data) return;
     try {
+      // Categories are fixed by the system, not created from an import —
+      // prompts whose exported category name doesn't match an existing one
+      // are skipped rather than inventing a new category for them.
       const parsed = parseExportedMarkdown(await file.text());
       const categoriesByName = new Map(data.categories.map((c) => [c.name, c]));
-      for (const cat of parsed.categories) {
-        if (!categoriesByName.has(cat.name)) {
-          const created = await postJSON<PromptCategory>("/api/prompt-categories", cat);
-          categoriesByName.set(cat.name, created);
-        }
-      }
       const promptsByCode = new Map(data.prompts.map((p) => [p.code, p]));
       let created = 0;
       let updated = 0;
+      let skipped = 0;
       for (const p of parsed.prompts) {
         const category = categoriesByName.get(p.categoryName);
-        if (!category) continue;
+        if (!category) {
+          skipped++;
+          continue;
+        }
         const existing = promptsByCode.get(p.code);
         if (existing) {
           await postJSON(`/api/prompts/${existing.id}`, {
-            name: p.name, description: p.description, category_id: category.id,
-            context: p.context, text: p.text,
+            name: p.name, description: p.description, category_id: category.id, text: p.text,
           });
           updated++;
         } else {
           await postJSON("/api/prompts", {
             code: p.code, name: p.name, description: p.description,
-            category_id: category.id, context: p.context, text: p.text,
+            category_id: category.id, text: p.text,
           });
           created++;
         }
       }
-      flash(`Imported: ${created} created, ${updated} updated.`);
+      flash(`Imported: ${created} created, ${updated} updated${skipped ? `, ${skipped} skipped (unknown category)` : ""}.`);
       await load();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -316,31 +303,17 @@ export function PromptsSection() {
       {error && <p className="error">{error}</p>}
 
       <h3>Categories</h3>
+      <p className="hint">
+        Fixed by the system — each category decides which page its prompts' buttons appear on.
+      </p>
       <div className="settings-item">
         {data.categories.map((c: PromptCategory) => (
           <div key={c.id} className="settings-row">
             <strong>{c.name}</strong>
             <span className="hint">{c.description}</span>
-            {c.builtin ? (
-              <span className="hint">built-in</span>
-            ) : (
-              <button className="btn-danger-sm" onClick={() => deleteCategory(c.id)}>Delete</button>
-            )}
+            <span className="hint">→ {placementFor(c.id)}</span>
           </div>
         ))}
-        <form onSubmit={createCategory} className="settings-row">
-          <input
-            placeholder="New category name"
-            value={newCategory.name}
-            onChange={(e) => setNewCategory((c) => ({ ...c, name: e.target.value }))}
-          />
-          <input
-            placeholder="Description"
-            value={newCategory.description}
-            onChange={(e) => setNewCategory((c) => ({ ...c, description: e.target.value }))}
-          />
-          <button type="submit" disabled={!newCategory.name.trim()}>Add category</button>
-        </form>
       </div>
 
       <h3>Prompts</h3>
@@ -364,7 +337,7 @@ export function PromptsSection() {
         if (prompts.length === 0) return null;
         return (
           <div key={cat.id} className="settings-item">
-            <label className="settings-label">{cat.name}</label>
+            <label className="settings-label">{cat.name} <span className="hint">— {placementFor(cat.id)}</span></label>
             {prompts.map((p) => (
               <div key={p.id} className="settings-item">
                 {editingId === p.id ? (
@@ -382,12 +355,6 @@ export function PromptsSection() {
                           <option key={c.id} value={c.id}>{c.name}</option>
                         ))}
                       </select>
-                      <select
-                        value={draft.context ?? "global"}
-                        onChange={(e) => setDraft((d) => ({ ...d, context: e.target.value as Prompt["context"] }))}
-                      >
-                        {CONTEXTS.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
-                      </select>
                     </div>
                     <input
                       placeholder="Description"
@@ -402,18 +369,18 @@ export function PromptsSection() {
                       onChange={(e) => setDraft((d) => ({ ...d, text: e.target.value }))}
                     />
                     <div className="settings-row">
-                      <button onClick={() => saveEdit(p.id)}>Save</button>
-                      <button onClick={() => setEditingId(null)}>Cancel</button>
+                      <button className="btn-sm" onClick={() => saveEdit(p.id)}>Save</button>
+                      <button className="btn-sm" onClick={() => setEditingId(null)}>Cancel</button>
                     </div>
                   </>
                 ) : (
                   <div className="settings-row">
                     <strong>{p.name}</strong>
-                    <span className="hint">({p.code}, {p.context})</span>
+                    <span className="hint">({p.code})</span>
                     <span className="hint">{p.description}</span>
-                    <button onClick={() => startEdit(p)}>Edit</button>
+                    <button className="btn-sm" onClick={() => startEdit(p)}>Edit</button>
                     {p.builtin ? (
-                      <button onClick={() => resetPrompt(p.id)}>Reset to default</button>
+                      <button className="btn-sm" onClick={() => resetPrompt(p.id)}>Reset to default</button>
                     ) : (
                       <button className="btn-danger-sm" onClick={() => deletePrompt(p.id)}>Delete</button>
                     )}
@@ -444,13 +411,7 @@ export function PromptsSection() {
               value={newPrompt.category_id}
               onChange={(e) => setNewPrompt((p) => ({ ...p, category_id: e.target.value }))}
             >
-              {data.categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-            </select>
-            <select
-              value={newPrompt.context}
-              onChange={(e) => setNewPrompt((p) => ({ ...p, context: e.target.value }))}
-            >
-              {CONTEXTS.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
+              {data.categories.map((c) => <option key={c.id} value={c.id}>{c.name} — {placementFor(c.id)}</option>)}
             </select>
           </div>
           <input
