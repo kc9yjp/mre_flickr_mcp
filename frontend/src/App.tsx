@@ -126,6 +126,12 @@ export default function App() {
     if (dockApi.current) openOrFocusPanel(dockApi.current, id);
   }), []);
 
+  // Prompt buttons fire runCommand to send a chat message; bring Chat to the
+  // foreground so the user sees the response instead of a background tab.
+  useEffect(() => bus.on("runCommand", () => {
+    if (dockApi.current) openOrFocusPanel(dockApi.current, "chat");
+  }), []);
+
   const onReady = (event: DockviewReadyEvent) => {
     dockApi.current = event.api;
     const saved = localStorage.getItem(LAYOUT_KEY);
