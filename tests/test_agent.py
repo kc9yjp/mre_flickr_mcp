@@ -192,6 +192,37 @@ async def test_run_turn_executes_read_tool_without_confirm(user_db):
 
 
 @pytest.mark.asyncio
+async def test_run_turn_search_photos_emits_photo_list(user_db):
+    from agent import loop, store
+
+    conv = store.create_conversation(USERNAME, "t")
+    scripted = _scripted_llm([
+        {"tool_calls": [_tool_call("c1", "search_photos", {"query": "Test"})]},
+        {"content": "Found it."},
+    ])
+    with patch("agent.loop.llm.stream_chat", scripted):
+        events = [e async for e in loop.run_turn(USER, conv, "find test photos", CFG)]
+
+    photo_list = next(e for e in events if e["type"] == "photo_list")
+    assert photo_list["photo_ids"] == ["photo1"]
+
+
+@pytest.mark.asyncio
+async def test_run_turn_search_photos_no_results_emits_no_photo_list(user_db):
+    from agent import loop, store
+
+    conv = store.create_conversation(USERNAME, "t")
+    scripted = _scripted_llm([
+        {"tool_calls": [_tool_call("c1", "search_photos", {"query": "nomatch"})]},
+        {"content": "Nothing found."},
+    ])
+    with patch("agent.loop.llm.stream_chat", scripted):
+        events = [e async for e in loop.run_turn(USER, conv, "find nomatch", CFG)]
+
+    assert not any(e["type"] == "photo_list" for e in events)
+
+
+@pytest.mark.asyncio
 async def test_run_turn_write_tool_denied(user_db):
     from agent import loop, store
 
@@ -531,6 +562,7 @@ def test_prompts_seed_once_and_are_idempotent():
     assert {p["code"] for p in data["prompts"]} == {
         "system-core", "user-memory", "improve-photo", "suggest-groups",
         "suggest-albums", "threshold-groups", "reply-comments", "weak-photos",
+        "unearth-private",
     }
     assert {v["code"] for v in data["variables"]} == {"photo_id", "user_nsid"}
 

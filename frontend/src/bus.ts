@@ -13,6 +13,7 @@ interface Events {
   editPrompt: string;   // request the Prompts panel open a prompt (by id) for editing
   promptsChanged: void; // a prompt/category/variable was created, edited, deleted, or reset — refetch /api/commands
   photoOpened: string | null; // Photo Browser's current detail view, for chat context
+  showPhotoList: string[]; // a tool found these photo ids — show them in the Photo Browser grid
   switchPanel: string;  // mobile: switch to named panel
   openPanel: string;    // request desktop dockview to open/focus a panel by id
 }

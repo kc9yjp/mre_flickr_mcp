@@ -221,6 +221,7 @@ export type StreamEvent =
     }
   | { type: "tool_result"; id: string; name: string; text: string }
   | { type: "focus"; photo_id: string }
+  | { type: "photo_list"; photo_ids: string[] }
   | { type: "error"; message: string }
   | { type: "done" };
 
