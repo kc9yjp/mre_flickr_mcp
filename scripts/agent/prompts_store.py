@@ -126,6 +126,22 @@ _SEED_CATEGORIES = [
      "to comments.", 3),
 ]
 
+# Categories aren't user-editable — a fixed, known set, so the system (not
+# the user) can use a prompt's category to decide which page its workflow
+# button belongs on. "photo" categories surface in the Photo Browser panel;
+# everything else surfaces in the global Chat/Command Palette.
+_CATEGORY_CONTEXT = {
+    "system": "global",
+    "own_photo": "photo",
+    "other_photo": "photo",
+    "collection": "global",
+}
+
+
+def _context_for_category(category_id: str) -> str:
+    return _CATEGORY_CONTEXT.get(category_id, "global")
+
+
 _SEED_VARIABLES = [
     ("photo_id", "Photo ID", "The photo in context. Substituted client-side "
      "from the selected photo before the prompt is sent.", "client"),
@@ -409,9 +425,10 @@ def get_prompt_by_code(nsid: str, code: str) -> dict | None:
 
 
 def create_prompt(nsid: str, code: str, name: str, category_id: str,
-                   text: str, context: str = "global", description: str = "") -> dict:
+                   text: str, description: str = "") -> dict:
     prompt_id = uuid.uuid4().hex
     now = int(time.time())
+    context = _context_for_category(category_id)
     with _prompts_db(nsid) as conn:
         sort_order = conn.execute(
             "SELECT COALESCE(MAX(sort_order), -1) + 1 FROM prompts WHERE category_id = ?",
@@ -428,11 +445,18 @@ def create_prompt(nsid: str, code: str, name: str, category_id: str,
 
 
 def update_prompt(nsid: str, prompt_id: str, **fields) -> dict | None:
-    """Update any of name/description/category_id/context/text/enabled."""
-    allowed = {"name", "description", "category_id", "context", "text", "enabled"}
+    """Update any of name/description/category_id/text/enabled.
+
+    ``context`` isn't user-settable — it's derived from ``category_id``
+    whenever the category changes, so the system (not the user) decides
+    which page a prompt's workflow button belongs on.
+    """
+    allowed = {"name", "description", "category_id", "text", "enabled"}
     updates = {k: v for k, v in fields.items() if k in allowed and v is not None}
     if not updates:
         return get_prompt(nsid, prompt_id)
+    if "category_id" in updates:
+        updates["context"] = _context_for_category(updates["category_id"])
     with _prompts_db(nsid) as conn:
         row = conn.execute("SELECT * FROM prompts WHERE id = ?", (prompt_id,)).fetchone()
         if not row:

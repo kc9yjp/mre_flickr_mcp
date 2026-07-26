@@ -925,6 +925,11 @@ select:focus {
   font-size: 0.8125rem;
 }
 
+.btn-sm {
+  padding: 2px 8px;
+  font-size: 0.8125rem;
+}
+
 .confirm-inline {
   display: flex;
   align-items: center;
