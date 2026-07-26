@@ -1,7 +1,7 @@
 // Editor for user-defined and built-in prompts, their categories, and the
 // template variables ({photo_id}, {user_nsid}) they can reference.
 
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
 import { Prompt, PromptCategory, PromptVariable, PromptsData, getJSON, postJSON } from "../api";
 import * as bus from "../bus";
 
@@ -9,6 +9,92 @@ const CONTEXTS: { value: Prompt["context"]; label: string }[] = [
   { value: "global", label: "global (collection-wide)" },
   { value: "photo", label: "photo (needs a selected photo)" },
 ];
+
+interface ParsedPrompt {
+  categoryName: string;
+  name: string;
+  code: string;
+  context: string;
+  description: string;
+  text: string;
+}
+
+interface ParsedExport {
+  categories: { name: string; description: string }[];
+  prompts: ParsedPrompt[];
+}
+
+// Mirrors exportMarkdown's layout: "## Category", "### Prompt", a
+// "*Code: `code` — Context: context*" line, an optional description, then
+// the prompt text in a fenced code block.
+function parseExportedMarkdown(content: string): ParsedExport {
+  const lines = content.split("\n");
+  const categories: { name: string; description: string }[] = [];
+  const prompts: ParsedPrompt[] = [];
+  const metaRe = /^\*Code: `([^`]+)` — Context: (\w+)\*$/;
+
+  let i = 0;
+  let currentCategory: string | null = null;
+  let categoryDescLines: string[] = [];
+  const flushCategory = () => {
+    if (currentCategory !== null) {
+      categories.push({ name: currentCategory, description: categoryDescLines.join("\n").trim() });
+    }
+  };
+
+  while (i < lines.length) {
+    const line = lines[i];
+    if (line.startsWith("## ")) {
+      flushCategory();
+      currentCategory = line.slice(3).trim();
+      categoryDescLines = [];
+      i++;
+      while (i < lines.length && !lines[i].startsWith("### ") && !lines[i].startsWith("## ")) {
+        categoryDescLines.push(lines[i]);
+        i++;
+      }
+      continue;
+    }
+    if (line.startsWith("### ") && currentCategory !== null) {
+      const name = line.slice(4).trim();
+      i++;
+      let code = "";
+      let context = "global";
+      const meta = lines[i]?.match(metaRe);
+      if (meta) {
+        code = meta[1];
+        context = meta[2];
+        i++;
+      }
+      const descLines: string[] = [];
+      while (i < lines.length && lines[i].trim() !== "```") {
+        descLines.push(lines[i]);
+        i++;
+      }
+      if (lines[i]?.trim() === "```") i++;
+      const textLines: string[] = [];
+      while (i < lines.length && lines[i].trim() !== "```") {
+        textLines.push(lines[i]);
+        i++;
+      }
+      if (lines[i]?.trim() === "```") i++;
+      if (code) {
+        prompts.push({
+          categoryName: currentCategory,
+          name,
+          code,
+          context,
+          description: descLines.join("\n").trim(),
+          text: textLines.join("\n").trim(),
+        });
+      }
+      continue;
+    }
+    i++;
+  }
+  flushCategory();
+  return { categories, prompts };
+}
 
 export function PromptsSection() {
   const [data, setData] = useState<PromptsData | null>(null);
@@ -23,6 +109,7 @@ export function PromptsSection() {
   });
   const [newCategory, setNewCategory] = useState({ name: "", description: "" });
   const [newVariable, setNewVariable] = useState({ code: "", label: "", description: "" });
+  const importInputRef = useRef<HTMLInputElement>(null);
 
   const load = () =>
     getJSON<PromptsData>("/api/prompts")
@@ -156,6 +243,71 @@ export function PromptsSection() {
     navigator.clipboard?.writeText(`{${code}}`).then(() => flash(`Copied {${code}}`));
   };
 
+  const exportMarkdown = () => {
+    if (!data) return;
+    const lines: string[] = ["# Prompts Export", ""];
+    for (const cat of data.categories) {
+      const prompts = data.prompts.filter((p) => p.category_id === cat.id);
+      if (prompts.length === 0) continue;
+      lines.push(`## ${cat.name}`);
+      if (cat.description) lines.push("", cat.description);
+      lines.push("");
+      for (const p of prompts) {
+        lines.push(`### ${p.name}`);
+        lines.push(`*Code: \`${p.code}\` — Context: ${p.context}*`);
+        if (p.description) lines.push("", p.description);
+        lines.push("", "```", p.text, "```", "");
+      }
+    }
+    const blob = new Blob([lines.join("\n")], { type: "text/markdown" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `prompts-export-${new Date().toISOString().slice(0, 10)}.md`;
+    a.click();
+    URL.revokeObjectURL(url);
+    flash("Exported.");
+  };
+
+  const importMarkdown = async (file: File) => {
+    if (!data) return;
+    try {
+      const parsed = parseExportedMarkdown(await file.text());
+      const categoriesByName = new Map(data.categories.map((c) => [c.name, c]));
+      for (const cat of parsed.categories) {
+        if (!categoriesByName.has(cat.name)) {
+          const created = await postJSON<PromptCategory>("/api/prompt-categories", cat);
+          categoriesByName.set(cat.name, created);
+        }
+      }
+      const promptsByCode = new Map(data.prompts.map((p) => [p.code, p]));
+      let created = 0;
+      let updated = 0;
+      for (const p of parsed.prompts) {
+        const category = categoriesByName.get(p.categoryName);
+        if (!category) continue;
+        const existing = promptsByCode.get(p.code);
+        if (existing) {
+          await postJSON(`/api/prompts/${existing.id}`, {
+            name: p.name, description: p.description, category_id: category.id,
+            context: p.context, text: p.text,
+          });
+          updated++;
+        } else {
+          await postJSON("/api/prompts", {
+            code: p.code, name: p.name, description: p.description,
+            category_id: category.id, context: p.context, text: p.text,
+          });
+          created++;
+        }
+      }
+      flash(`Imported: ${created} created, ${updated} updated.`);
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  };
+
   if (!data) return <div>{error || "Loading…"}</div>;
 
   return (
@@ -192,6 +344,21 @@ export function PromptsSection() {
       </div>
 
       <h3>Prompts</h3>
+      <div className="settings-row">
+        <button onClick={exportMarkdown}>Export as Markdown</button>
+        <button onClick={() => importInputRef.current?.click()}>Import from Markdown</button>
+        <input
+          ref={importInputRef}
+          type="file"
+          accept=".md,text/markdown"
+          hidden
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            e.target.value = "";
+            if (file) importMarkdown(file);
+          }}
+        />
+      </div>
       {data.categories.map((cat) => {
         const prompts = data.prompts.filter((p) => p.category_id === cat.id);
         if (prompts.length === 0) return null;
@@ -228,7 +395,9 @@ export function PromptsSection() {
                       onChange={(e) => setDraft((d) => ({ ...d, description: e.target.value }))}
                     />
                     <textarea
+                      className="prompt-text"
                       rows={5}
+                      placeholder="Prompt text — Markdown supported, use {photo_id} / {user_nsid} where needed"
                       value={draft.text ?? ""}
                       onChange={(e) => setDraft((d) => ({ ...d, text: e.target.value }))}
                     />
@@ -290,8 +459,9 @@ export function PromptsSection() {
             onChange={(e) => setNewPrompt((p) => ({ ...p, description: e.target.value }))}
           />
           <textarea
+            className="prompt-text"
             rows={5}
-            placeholder="Prompt text — use {photo_id} / {user_nsid} where needed"
+            placeholder="Prompt text — Markdown supported, use {photo_id} / {user_nsid} where needed"
             value={newPrompt.text}
             onChange={(e) => setNewPrompt((p) => ({ ...p, text: e.target.value }))}
           />

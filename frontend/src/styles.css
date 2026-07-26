@@ -969,6 +969,14 @@ select:focus {
   min-width: 160px;
 }
 
+.prompt-text {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  resize: vertical;
+}
+
 /* --- Command palette --- */
 
 .palette-overlay {
