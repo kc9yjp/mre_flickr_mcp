@@ -167,6 +167,7 @@ data/
 .mcp.json
 .mcp_servers.json
 .env
+docker-compose.yml
 
 # Playwright
 playwright/node_modules/
@@ -174,9 +175,7 @@ playwright/test-results/
 playwright/playwright-report/
 playwright/.auth/
 
-# node modules
-frontend/node_modules/**
+# Workbench frontend
+frontend/node_modules/
 frontend/tsconfig.tsbuildinfo
-
-# tailscale config
 tailscale/serve-config.json

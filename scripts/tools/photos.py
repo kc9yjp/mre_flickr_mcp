@@ -66,16 +66,23 @@ TOOLS = [
     ),
     Tool(
         name="update_photo",
-        description="Update a photo's title, description, and/or tags on Flickr and in the local database.",
+        description=(
+            "Update a photo's title, description, and tags on Flickr and in the local "
+            "database. Every field is required on every call — id, title, description, "
+            "and tags must all be included, even if a field's value is unchanged from "
+            "before. This tool fully supports description — never claim it doesn't, and "
+            "never omit it. If you proposed a title, description, and tags and the user "
+            "approved them, include all three in this same call — do not drop one."
+        ),
         inputSchema={
             "type": "object",
             "properties": {
                 "id":          {"type": "string", "description": "Flickr photo ID"},
-                "title":       {"type": "string", "description": "New title"},
-                "description": {"type": "string", "description": "New description"},
-                "tags":        {"type": "string", "description": "Space-separated tags (replaces existing tags)"},
+                "title":       {"type": "string", "description": "New title (required — pass the unchanged value if not updating it)"},
+                "description": {"type": "string", "description": "New description (required — pass the unchanged value if not updating it)"},
+                "tags":        {"type": "string", "description": "Space-separated tags, replaces existing tags (required — pass the unchanged value if not updating it)"},
             },
-            "required": ["id"],
+            "required": ["id", "title", "description", "tags"],
         },
     ),
     Tool(

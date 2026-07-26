@@ -197,7 +197,9 @@ See [`playwright/README.md`](playwright/README.md) for details.
 
 ## Resources
 
-- [Full tool list and local development](https://github.com/kc9yjp/mre_flickr_mcp)
+- [ARCHITECTURE.md](ARCHITECTURE.md) — technical deep dive: server layout, multi-user model, data layer, sync pipeline, MCP tool dispatch, and the Workbench SPA/chat agent
+- [TOOLS.md](TOOLS.md) — full catalog of all MCP tools
+- [WORKBENCH.md](WORKBENCH.md) / [MODEL_CONFIG.md](MODEL_CONFIG.md) — Workbench build log and LLM settings reference
 - [Docker Hub](https://hub.docker.com/repositories/ejwettstein)
 - [Flickr API docs](https://www.flickr.com/services/api/)
 - [Model Context Protocol](https://modelcontextprotocol.io/)

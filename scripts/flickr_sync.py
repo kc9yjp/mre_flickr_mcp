@@ -29,7 +29,7 @@ API_URL = flickr_api.API_URL
 HTTP_TIMEOUT = flickr_api.HTTP_TIMEOUT
 PER_PAGE = 500
 
-EXTRAS = "description,date_upload,date_taken,last_update,tags,views,count_faves,count_comments,url_o,url_l,path_alias,media,ispublic"
+EXTRAS = "description,date_upload,date_taken,last_update,tags,views,count_faves,count_comments,url_o,url_l,url_m,url_z,path_alias,media,ispublic"
 
 # Aliases re-exported for sync_*.py backward compatibility
 load_env = flickr_api._load_env
@@ -78,6 +78,7 @@ _MIGRATIONS = [
         reason     TEXT,
         added_at   INTEGER
     )""",
+    "ALTER TABLE photos ADD COLUMN url_medium TEXT",
 ]
 
 SCHEMA_VERSION = len(_MIGRATIONS)
@@ -235,14 +236,15 @@ def upsert_photo(conn, p, owner_nsid, synced_at):
     path_alias = p.get("pathalias") or owner_nsid
     url_photopage = f"https://www.flickr.com/photos/{path_alias}/{p['id']}/"
     url_original = p.get("url_o") or p.get("url_l", "")
+    url_medium = p.get("url_z") or p.get("url_m", "")
 
     is_public = int(p.get("ispublic", 1))
 
     conn.execute("""
         INSERT INTO photos
             (id, title, description, date_taken, date_uploaded, last_updated,
-             url_photopage, url_original, tags, views, favorites, comments, synced_at, is_public)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             url_photopage, url_original, url_medium, tags, views, favorites, comments, synced_at, is_public)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
             title=excluded.title,
             description=excluded.description,
@@ -251,6 +253,7 @@ def upsert_photo(conn, p, owner_nsid, synced_at):
             last_updated=excluded.last_updated,
             url_photopage=excluded.url_photopage,
             url_original=excluded.url_original,
+            url_medium=excluded.url_medium,
             tags=excluded.tags,
             views=excluded.views,
             favorites=excluded.favorites,
@@ -266,6 +269,7 @@ def upsert_photo(conn, p, owner_nsid, synced_at):
         int(p.get("lastupdate", 0) or 0),
         url_photopage,
         url_original,
+        url_medium,
         tags,
         int(p.get("views", 0) or 0),
         int(p.get("count_faves", 0) or 0),
