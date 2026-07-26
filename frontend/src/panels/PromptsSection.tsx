@@ -156,6 +156,32 @@ export function PromptsSection() {
     navigator.clipboard?.writeText(`{${code}}`).then(() => flash(`Copied {${code}}`));
   };
 
+  const exportMarkdown = () => {
+    if (!data) return;
+    const lines: string[] = ["# Prompts Export", ""];
+    for (const cat of data.categories) {
+      const prompts = data.prompts.filter((p) => p.category_id === cat.id);
+      if (prompts.length === 0) continue;
+      lines.push(`## ${cat.name}`);
+      if (cat.description) lines.push("", cat.description);
+      lines.push("");
+      for (const p of prompts) {
+        lines.push(`### ${p.name}`);
+        lines.push(`*Code: \`${p.code}\` — Context: ${p.context}*`);
+        if (p.description) lines.push("", p.description);
+        lines.push("", "```", p.text, "```", "");
+      }
+    }
+    const blob = new Blob([lines.join("\n")], { type: "text/markdown" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `prompts-export-${new Date().toISOString().slice(0, 10)}.md`;
+    a.click();
+    URL.revokeObjectURL(url);
+    flash("Exported.");
+  };
+
   if (!data) return <div>{error || "Loading…"}</div>;
 
   return (
@@ -192,6 +218,9 @@ export function PromptsSection() {
       </div>
 
       <h3>Prompts</h3>
+      <div className="settings-row">
+        <button onClick={exportMarkdown}>Export as Markdown</button>
+      </div>
       {data.categories.map((cat) => {
         const prompts = data.prompts.filter((p) => p.category_id === cat.id);
         if (prompts.length === 0) return null;
