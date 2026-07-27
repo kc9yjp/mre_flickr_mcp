@@ -1,3 +1,9 @@
 {
+  "permissions": {
+    "allow": [
+      "Bash(python -m pytest tests/test_agent_routes.py -q)",
+      "Bash(python -m pytest tests/test_agent.py tests/test_settings.py tests/test_agent_routes.py -q)"
+    ]
+  },
   "enableAllProjectMcpServers": true
 }

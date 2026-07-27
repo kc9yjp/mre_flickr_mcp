@@ -314,6 +314,11 @@ button:disabled {
   cursor: default;
 }
 
+button.danger {
+  color: var(--danger, #c0392b);
+  border-color: var(--danger, #c0392b);
+}
+
 input,
 select {
   font: inherit;
@@ -589,14 +594,9 @@ select:focus {
   min-width: 0;
 }
 
-.chat-provider-select {
-  flex: 0 0 auto;
-  max-width: 110px;
-}
-
-.chat-model-select {
+.chat-connection-model-select {
   flex: 1;
-  max-width: 180px;
+  max-width: 260px;
 }
 
 .chat-settings {

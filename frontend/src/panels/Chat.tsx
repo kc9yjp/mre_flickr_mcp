@@ -66,7 +66,7 @@ function wireToRender(messages: WireMessage[]): ChatMsg[] {
 
 const LAST_MODEL_KEY = "chat-last-model-v1";
 
-function loadLastModel(): { provider: string; model: string } | null {
+function loadLastModel(): { connection: string; model: string } | null {
   try {
     const raw = localStorage.getItem(LAST_MODEL_KEY);
     return raw ? JSON.parse(raw) : null;
@@ -75,12 +75,24 @@ function loadLastModel(): { provider: string; model: string } | null {
   }
 }
 
-function saveLastModel(provider: string, model: string) {
+function saveLastModel(connection: string, model: string) {
   try {
-    localStorage.setItem(LAST_MODEL_KEY, JSON.stringify({ provider, model }));
+    localStorage.setItem(LAST_MODEL_KEY, JSON.stringify({ connection, model }));
   } catch {
     // localStorage unavailable (private browsing, quota) — not fatal, just skip persisting
   }
+}
+
+// The chat header uses one flat "ConnectionName: model" selector whose
+// option values are "connectionId::model" composites.
+function parseSelector(value: string): { connectionId: string; model: string } {
+  const idx = value.indexOf("::");
+  if (idx === -1) return { connectionId: "", model: "" };
+  return { connectionId: value.slice(0, idx), model: value.slice(idx + 2) };
+}
+
+function makeSelector(connectionId: string, model: string): string {
+  return `${connectionId}::${model}`;
 }
 
 function prettyArgs(raw: string): string {
@@ -139,15 +151,12 @@ export function Chat() {
   const [autoApprove, setAutoApprove] = useState(false);
   const [showStats, setShowStats] = useState(false);
 
-  // Provider / model selector state
+  // Connection / model selector state — one flat "connectionId::model" value.
   const [llmCfg, setLlmCfg] = useState<LLMSettings | null>(null);
-  const [modelOptions, setModelOptions] = useState<string[]>([]);
-  const [providerId, setProviderId] = useState("");
-  const [modelId, setModelId] = useState("");
-  const providerIdRef = useRef("");
-  const modelIdRef = useRef("");
-  providerIdRef.current = providerId;
-  modelIdRef.current = modelId;
+  const [modelsByConnection, setModelsByConnection] = useState<Record<string, string[]>>({});
+  const [connectionModel, setConnectionModel] = useState("");
+  const connectionModelRef = useRef("");
+  connectionModelRef.current = connectionModel;
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const activeIdRef = useRef<string | null>(null);
@@ -164,23 +173,25 @@ export function Chat() {
 
   useEffect(refreshConversations, [refreshConversations]);
 
-  // Load LLM settings + initial model list. Prefers the last provider/model
-  // used in this browser (localStorage) over the saved default in Models &
-  // Providers, so switching models in the chat header survives a reload.
+  // Load LLM settings + eagerly fetch every connection's model list (small
+  // expected connection counts). Prefers the last connection/model used in
+  // this browser (localStorage) over the saved default in Models & Connections,
+  // so switching models in the chat header survives a reload.
   useEffect(() => {
     getJSON<LLMSettings>("/api/llm-settings")
       .then((s) => {
         setLlmCfg(s);
         const last = loadLastModel();
-        const lastProviderValid = !!(last && s.providers?.[last.provider]);
-        const pid = (lastProviderValid ? last!.provider : "")
-          || s.active_provider || (s.providers && Object.keys(s.providers)[0]) || "";
-        setProviderId(pid);
-        setModelId((lastProviderValid && last!.provider === pid ? last!.model : s.active_model) || "");
-        if (pid) {
-          listModels(pid)
-            .then(setModelOptions)
-            .catch((e) => console.error("Failed to list models for provider:", pid, e));
+        const lastConnectionValid = !!(last && s.connections?.[last.connection]);
+        const cid = (lastConnectionValid ? last!.connection : "")
+          || s.active_connection || (s.connections && Object.keys(s.connections)[0]) || "";
+        const model = (lastConnectionValid && last!.connection === cid ? last!.model : s.active_model) || "";
+        setConnectionModel(cid ? makeSelector(cid, model) : "");
+
+        for (const connectionId of Object.keys(s.connections ?? {})) {
+          listModels(connectionId)
+            .then((list) => setModelsByConnection((prev) => ({ ...prev, [connectionId]: list.models })))
+            .catch((e) => console.error("Failed to list models for connection:", connectionId, e));
         }
       })
       .catch((e) => {
@@ -189,20 +200,18 @@ export function Chat() {
       });
   }, []);
 
-  // Persist whatever provider/model is active so a reload restores it.
+  // Persist whatever connection/model is active so a reload restores it.
   useEffect(() => {
-    if (!llmCfg || !providerId) return;
-    saveLastModel(providerId, modelId);
-  }, [llmCfg, providerId, modelId]);
+    if (!llmCfg || !connectionModel) return;
+    const { connectionId, model } = parseSelector(connectionModel);
+    if (connectionId) saveLastModel(connectionId, model);
+  }, [llmCfg, connectionModel]);
 
-  const switchProvider = useCallback(
-    (newPid: string) => {
-      setProviderId(newPid);
-      setModelId("");
-      listModels(newPid).then(setModelOptions).catch(() => setModelOptions([]));
-    },
-    [],
-  );
+  const refreshConnectionModels = useCallback((connectionId: string) => {
+    listModels(connectionId)
+      .then((list) => setModelsByConnection((prev) => ({ ...prev, [connectionId]: list.models })))
+      .catch(() => setModelsByConnection((prev) => ({ ...prev, [connectionId]: [] })));
+  }, []);
 
   // Track whichever photo is open in the Photo Browser so free-form messages
   // (no workflow button, no explicit id) can default to it — see loop.py's
@@ -228,14 +237,15 @@ export function Chat() {
     const patchLast = (fn: (m: ChatMsg) => ChatMsg) =>
       setMsgs((prev) => prev.map((m, i) => (i === prev.length - 1 ? fn(m) : m)));
 
+    const { connectionId, model } = parseSelector(connectionModelRef.current);
     try {
       await streamChat(
         {
           conversation_id: activeIdRef.current ?? undefined,
           message: text,
           focused_photo_id: focusedPhotoRef.current,
-          provider: providerIdRef.current || undefined,
-          model: modelIdRef.current || undefined,
+          connection: connectionId || undefined,
+          model: model || undefined,
         },
         (event) => {
           switch (event.type) {
@@ -315,11 +325,10 @@ export function Chat() {
         `/api/chat/conversations/${id}`,
       );
       setMsgs(wireToRender(detail.messages));
-      // Restore per-conversation provider/model into the selector
-      if (detail.provider) setProviderId(detail.provider);
-      if (detail.model) setModelId(detail.model);
+      // Restore per-conversation connection/model into the selector
       if (detail.provider) {
-        listModels(detail.provider).then(setModelOptions).catch(() => {});
+        setConnectionModel(makeSelector(detail.provider, detail.model ?? ""));
+        if (!modelsByConnection[detail.provider]) refreshConnectionModels(detail.provider);
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -387,37 +396,35 @@ export function Chat() {
           </button>
         )}
 
-        {/* Provider + model selector */}
+        {/* Connection + model selector — one flat "Connection: model" list */}
         <select
-          value={providerId}
-          onChange={(e) => switchProvider(e.target.value)}
-          title="LLM provider"
-          className="chat-provider-select"
+          value={connectionModel}
+          onChange={(e) => setConnectionModel(e.target.value)}
+          title="Connection and model"
+          className="chat-connection-model-select"
         >
-          {llmCfg && Object.entries(llmCfg.providers).map(([pid, p]) => (
-            <option key={pid} value={pid}>{p.label || pid}</option>
-          ))}
+          {!connectionModel && <option value="">(select connection: model)</option>}
+          {llmCfg && Object.entries(llmCfg.connections).map(([cid, conn]) =>
+            (modelsByConnection[cid] ?? []).map((m) => (
+              <option key={makeSelector(cid, m)} value={makeSelector(cid, m)}>
+                {conn.name || cid}: {m}
+              </option>
+            )),
+          )}
         </select>
-        <select
-          value={modelId}
-          onChange={(e) => setModelId(e.target.value)}
-          title="Model"
-          className="chat-model-select"
-        >
-          {!modelOptions.length && <option value="">(fetch models)</option>}
-          {modelOptions.map((m) => (
-            <option key={m} value={m}>{m}</option>
-          ))}
-        </select>
-        {!modelOptions.length && (
-          <button
-            onClick={() => switchProvider(providerId)}
-            title="Refresh model list"
-            className="icon-btn"
-          >
-            ↻
-          </button>
-        )}
+        {(() => {
+          const { connectionId } = parseSelector(connectionModel);
+          const cid = connectionId || llmCfg?.active_connection || "";
+          return cid ? (
+            <button
+              onClick={() => refreshConnectionModels(cid)}
+              title="Refresh model list"
+              className="icon-btn"
+            >
+              ↻
+            </button>
+          ) : null;
+        })()}
 
         <button
           onClick={() => setAutoApprove((a) => !a)}

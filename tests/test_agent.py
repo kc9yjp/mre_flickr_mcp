@@ -126,6 +126,70 @@ async def test_stream_chat_http_error_raises():
                 pass
 
 
+# --- llm stream parsing (Responses API) ---
+
+def _responses_sse_body(events: list[tuple[str, dict]]) -> bytes:
+    frames = [f"event: {etype}\ndata: {json.dumps(payload)}\n\n" for etype, payload in events]
+    frames.append("data: [DONE]\n\n")
+    return "".join(frames).encode()
+
+
+@pytest.mark.asyncio
+async def test_stream_responses_accumulates_content_and_tool_calls():
+    from agent import llm
+
+    events = [
+        ("response.output_text.delta", {"type": "response.output_text.delta", "delta": "Hel"}),
+        ("response.output_text.delta", {"type": "response.output_text.delta", "delta": "lo"}),
+        ("response.output_item.added", {"type": "response.output_item.added", "item": {
+            "type": "function_call", "id": "item1", "call_id": "call_a", "name": "get_photo",
+        }}),
+        ("response.function_call_arguments.delta", {
+            "type": "response.function_call_arguments.delta", "item_id": "item1", "delta": "{\"id\":",
+        }),
+        ("response.function_call_arguments.delta", {
+            "type": "response.function_call_arguments.delta", "item_id": "item1", "delta": " \"42\"}",
+        }),
+        ("response.function_call_arguments.done", {
+            "type": "response.function_call_arguments.done", "item_id": "item1",
+            "arguments": "{\"id\": \"42\"}",
+        }),
+        ("response.completed", {"type": "response.completed", "response": {
+            "usage": {"input_tokens": 10, "output_tokens": 5, "total_tokens": 15},
+        }}),
+    ]
+    transport = httpx.MockTransport(
+        lambda request: httpx.Response(200, content=_responses_sse_body(events))
+    )
+    async with httpx.AsyncClient(transport=transport) as client:
+        results = [e async for e in llm.stream_responses(CFG, [], client=client)]
+
+    deltas = [e["text"] for e in results if e["type"] == "delta"]
+    assert "".join(deltas) == "Hello"
+    final = results[-1]
+    assert final["type"] == "message"
+    assert final["content"] == "Hello"
+    assert final["finish_reason"] == "tool_calls"
+    (call,) = final["tool_calls"]
+    assert call["id"] == "call_a"
+    assert call["function"]["name"] == "get_photo"
+    assert json.loads(call["function"]["arguments"]) == {"id": "42"}
+    assert final["usage"] == {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}
+
+
+@pytest.mark.asyncio
+async def test_stream_responses_http_error_raises():
+    from agent import llm
+
+    transport = httpx.MockTransport(
+        lambda request: httpx.Response(500, content=b"boom")
+    )
+    async with httpx.AsyncClient(transport=transport) as client:
+        with pytest.raises(llm.LLMError, match="500"):
+            async for _ in llm.stream_responses(CFG, [], client=client):
+                pass
+
+
 # --- store ---
 
 def test_store_roundtrip(user_db):
@@ -388,6 +452,31 @@ async def test_run_turn_unknown_tool_reports_error(user_db):
 
     result = next(e for e in events if e["type"] == "tool_result")
     assert "Unknown tool" in result["text"]
+
+
+@pytest.mark.asyncio
+async def test_run_turn_uses_stream_responses_when_api_mode_responses(user_db):
+    """cfg['api_mode'] == 'responses' must route through llm.stream_responses,
+    never llm.stream_chat — the one-line branch in loop.run_turn."""
+    from agent import loop, store
+
+    conv = store.create_conversation(USERNAME, "t")
+    cfg_responses = {**CFG, "api_mode": "responses"}
+
+    async def fake_stream_responses(cfg, messages, tools=None, client=None):
+        yield {"type": "message", "content": "hi from responses", "tool_calls": [],
+               "finish_reason": "stop", "usage": {}, "latency_ms": 1}
+
+    async def fail_if_called(cfg, messages, tools=None, client=None):
+        raise AssertionError("stream_chat should not be called in responses mode")
+        yield  # pragma: no cover
+
+    with patch("agent.loop.llm.stream_responses", fake_stream_responses), \
+         patch("agent.loop.llm.stream_chat", fail_if_called):
+        events = [e async for e in loop.run_turn(USER, conv, "hello", cfg_responses)]
+
+    assert events[-1]["type"] == "done"
+    assert any(e.get("type") == "error" for e in events) is False
 
 
 @pytest.mark.asyncio

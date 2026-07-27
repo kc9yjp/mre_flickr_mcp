@@ -333,10 +333,12 @@ async def run_turn(
             ),
         })
 
+    stream_fn = llm.stream_responses if cfg.get("api_mode") == "responses" else llm.stream_chat
+
     try:
         for _ in range(MAX_ITERATIONS):
             final = None
-            async for event in llm.stream_chat(cfg, messages, tools=tools):
+            async for event in stream_fn(cfg, messages, tools=tools):
                 if event["type"] == "delta":
                     yield event
                 else:

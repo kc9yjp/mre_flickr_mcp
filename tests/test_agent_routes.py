@@ -1,0 +1,212 @@
+"""Tests for the agent's /api/llm-* connection routes (scripts/agent/routes.py)."""
+
+import sys
+from pathlib import Path
+from unittest.mock import patch
+
+import pytest
+from starlette.applications import Starlette
+from starlette.middleware import Middleware
+from starlette.middleware.sessions import SessionMiddleware
+from starlette.responses import PlainTextResponse
+from starlette.routing import Route
+from starlette.testclient import TestClient
+
+sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
+
+SECRET = "testsecretkey"
+CSRF = "valid-csrf-token"
+USERNAME = "agentroutesuser"
+NSID = "12345@N00"
+
+HEADERS = {"X-CSRF-Token": CSRF}
+
+
+@pytest.fixture(autouse=True)
+def _creds_dir(tmp_path):
+    creds_dir = str(tmp_path / "flickr_mcp_creds")
+    with patch("agent.settings._CREDS_BASE", creds_dir):
+        yield
+
+
+@pytest.fixture()
+def client():
+    import web
+    from agent import routes as agent_routes
+
+    async def seed_session(request):
+        request.session["csrf_token"] = CSRF
+        request.session["user_nsid"] = NSID
+        request.session["username"] = USERNAME
+        request.session["fullname"] = "Agent Routes User"
+        return PlainTextResponse("ok")
+
+    app = Starlette(
+        routes=[Route("/seed", endpoint=seed_session), *agent_routes.api_routes()],
+        middleware=[
+            Middleware(SessionMiddleware, secret_key=SECRET),
+            Middleware(web.CSRFMiddleware),
+        ],
+    )
+    with TestClient(app, raise_server_exceptions=False) as c:
+        yield c
+
+
+def _login(client):
+    client.get("/seed")
+
+
+# --- auth ---
+
+def test_llm_settings_unauthenticated_returns_401(client):
+    assert client.get("/api/llm-settings").status_code == 401
+
+
+def test_llm_connections_create_unauthenticated_returns_403():
+    """No session -> no CSRF token in session, so CSRFMiddleware rejects the
+    POST before the route's own auth check even runs."""
+    import web
+    from agent import routes as agent_routes
+
+    app = Starlette(
+        routes=list(agent_routes.api_routes()),
+        middleware=[
+            Middleware(SessionMiddleware, secret_key=SECRET),
+            Middleware(web.CSRFMiddleware),
+        ],
+    )
+    with TestClient(app, raise_server_exceptions=False) as c:
+        resp = c.post("/api/llm-connections", json={"name": "x", "kind": "ollama", "base_url": "http://x/v1"})
+    assert resp.status_code == 403
+
+
+# --- presets ---
+
+def test_llm_connection_presets(client):
+    _login(client)
+    resp = client.get("/api/llm-connection-presets")
+    assert resp.status_code == 200
+    presets = resp.json()["presets"]
+    assert {"ollama", "zen", "lmstudio", "custom"} <= set(presets)
+    assert presets["lmstudio"]["base_url"] == "http://host.docker.internal:1234/v1"
+
+
+# --- create / update / delete ---
+
+def test_create_connection_then_appears_in_settings(client):
+    _login(client)
+    resp = client.post(
+        "/api/llm-connections", headers=HEADERS,
+        json={"name": "LM Studio", "kind": "openai_compatible",
+              "base_url": "http://host.docker.internal:1234/v1", "api_mode": "chat_completions"},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    cid = body["id"]
+    assert cid == "lm-studio"
+    assert body["connections"][cid]["base_url"] == "http://host.docker.internal:1234/v1"
+
+    listed = client.get("/api/llm-settings").json()
+    assert cid in listed["connections"]
+
+
+def test_create_connection_missing_fields_400(client):
+    _login(client)
+    resp = client.post("/api/llm-connections", headers=HEADERS, json={"name": "", "kind": "", "base_url": ""})
+    assert resp.status_code == 400
+
+
+def test_update_connection_rename_and_disable_models(client):
+    _login(client)
+    created = client.post(
+        "/api/llm-connections", headers=HEADERS,
+        json={"name": "Ollama 2", "kind": "ollama", "base_url": "http://host2:11434/v1"},
+    ).json()
+    cid = created["id"]
+
+    updated = client.post(
+        f"/api/llm-connections/{cid}/update", headers=HEADERS,
+        json={"name": "Ollama Renamed", "disabled_models": ["llama2"]},
+    )
+    assert updated.status_code == 200
+    conn = updated.json()["connections"][cid]
+    assert conn["name"] == "Ollama Renamed"
+    assert conn["disabled_models"] == ["llama2"]
+
+
+def test_update_unknown_connection_404(client):
+    _login(client)
+    resp = client.post("/api/llm-connections/does-not-exist/update", headers=HEADERS, json={"name": "x"})
+    assert resp.status_code == 404
+
+
+def test_delete_connection_clears_active_connection(client):
+    _login(client)
+    created = client.post(
+        "/api/llm-connections", headers=HEADERS,
+        json={"name": "Temp", "kind": "openai_compatible", "base_url": "http://x/v1"},
+    ).json()
+    cid = created["id"]
+
+    saved = client.get("/api/llm-settings").json()
+    saved["active_connection"] = cid
+    client.post("/api/llm-settings", headers=HEADERS, json=saved)
+
+    deleted = client.post(f"/api/llm-connections/{cid}/delete", headers=HEADERS)
+    assert deleted.status_code == 200
+    body = deleted.json()
+    assert cid not in body["connections"]
+    assert body["active_connection"] == ""
+
+
+def test_delete_unknown_connection_404(client):
+    _login(client)
+    resp = client.post("/api/llm-connections/does-not-exist/delete", headers=HEADERS)
+    assert resp.status_code == 404
+
+
+# --- /api/llm-models filtering ---
+
+def test_llm_models_filters_disabled_models(client, monkeypatch):
+    _login(client)
+    created = client.post(
+        "/api/llm-connections", headers=HEADERS,
+        json={"name": "Fake Ollama", "kind": "ollama", "base_url": "http://fake/v1"},
+    ).json()
+    cid = created["id"]
+    client.post(f"/api/llm-connections/{cid}/update", headers=HEADERS, json={"disabled_models": ["b"]})
+
+    async def fake_list_models(base_url, api_key="", client=None):
+        return ["a", "b", "c"]
+
+    monkeypatch.setattr("agent.routes.llm.list_models", fake_list_models)
+
+    resp = client.get(f"/api/llm-models?connection={cid}")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["models"] == ["a", "c"]
+    assert body["all_models"] == ["a", "b", "c"]
+
+
+def test_llm_models_unknown_connection_404(client):
+    _login(client)
+    resp = client.get("/api/llm-models?connection=does-not-exist")
+    assert resp.status_code == 404
+
+
+def test_llm_models_accepts_legacy_provider_param(client, monkeypatch):
+    _login(client)
+    created = client.post(
+        "/api/llm-connections", headers=HEADERS,
+        json={"name": "Fake", "kind": "ollama", "base_url": "http://fake/v1"},
+    ).json()
+    cid = created["id"]
+
+    async def fake_list_models(base_url, api_key="", client=None):
+        return ["a"]
+
+    monkeypatch.setattr("agent.routes.llm.list_models", fake_list_models)
+
+    resp = client.get(f"/api/llm-models?provider={cid}")
+    assert resp.status_code == 200
+    assert resp.json()["models"] == ["a"]

@@ -1,4 +1,5 @@
-"""Starlette endpoints for the chat agent: /api/chat/*, /api/llm-settings, /api/llm-models, /api/commands."""
+"""Starlette endpoints for the chat agent: /api/chat/*, /api/llm-settings, /api/llm-models,
+/api/llm-connections, /api/llm-connection-presets, /api/commands."""
 
 import asyncio
 import json
@@ -60,11 +61,11 @@ async def chat_stream(request: Request):
 
     nsid = user["nsid"]
     username = user["username"]
-    provider_override = (body.get("provider") or "").strip() or None
+    connection_override = (body.get("connection") or body.get("provider") or "").strip() or None
     model_override = (body.get("model") or "").strip() or None
 
-    cfg = settings.resolve_cfg(nsid, provider_override, model_override)
-    if not cfg.get("model"):
+    cfg = settings.resolve_cfg(nsid, connection_override, model_override)
+    if not cfg.get("model") or not cfg.get("base_url"):
         return JSONResponse(
             {"error": "No LLM model configured — open the models panel first."},
             status_code=400,
@@ -78,19 +79,19 @@ async def chat_stream(request: Request):
     if conversation_id:
         if not store.conversation_exists(username, conversation_id):
             return JSONResponse({"error": "conversation not found"}, status_code=404)
-        # Use per-conversation provider/model unless caller explicitly overrides.
-        if not provider_override and not model_override:
+        # Use per-conversation connection/model unless caller explicitly overrides.
+        if not connection_override and not model_override:
             meta = store.get_conversation_meta(username, conversation_id)
             if meta:
-                cprov = meta.get("provider") or None
+                cconn = meta.get("provider") or None
                 cmodel = meta.get("model") or None
-                if cprov or cmodel:
-                    cfg = settings.resolve_cfg(nsid, cprov, cmodel)
+                if cconn or cmodel:
+                    cfg = settings.resolve_cfg(nsid, cconn, cmodel)
     else:
-        conv_provider = provider_override or settings.load_settings(nsid).get("active_provider", "")
+        conv_connection = connection_override or settings.load_settings(nsid).get("active_connection", "")
         conv_model = model_override or cfg.get("model", "")
         conversation_id = store.create_conversation(
-            username, message, conv_provider, conv_model
+            username, message, conv_connection, conv_model
         )
 
     focused_photo_id = (body.get("focused_photo_id") or "").strip() or None
@@ -176,31 +177,90 @@ async def llm_settings(request: Request):
 
 
 async def llm_models(request: Request):
-    """Fetch available models for a provider's base_url/api_key."""
+    """Fetch available models for a connection's base_url/api_key, filtered
+    by that connection's persisted ``disabled_models``."""
     user = _session_user(request)
     if not user:
         return _unauthorized()
-    provider_id = request.query_params.get("provider") or ""
-    if not provider_id:
-        return JSONResponse({"error": "provider query param required"}, status_code=400)
+    connection_id = request.query_params.get("connection") or request.query_params.get("provider") or ""
+    if not connection_id:
+        return JSONResponse({"error": "connection query param required"}, status_code=400)
 
     s = settings.load_settings(user["nsid"])
-    providers = s.get("providers") or {}
-    prof = providers.get(provider_id)
-    if not prof:
-        return JSONResponse({"error": f"unknown provider: {provider_id}"}, status_code=404)
+    connections = s.get("connections") or {}
+    conn = connections.get(connection_id)
+    if not conn:
+        return JSONResponse({"error": f"unknown connection: {connection_id}"}, status_code=404)
 
-    base_url = prof.get("base_url", "")
-    api_key = prof.get("api_key", "")
+    base_url = conn.get("base_url", "")
+    api_key = conn.get("api_key", "")
     if not base_url:
-        return JSONResponse({"error": "provider has no base_url"}, status_code=400)
+        return JSONResponse({"error": "connection has no base_url"}, status_code=400)
 
     try:
-        models = await llm.list_models(base_url, api_key)
+        all_models = await llm.list_models(base_url, api_key)
     except llm.LLMError as e:
         return JSONResponse({"error": str(e)}, status_code=502)
 
-    return JSONResponse({"models": models})
+    disabled = set(conn.get("disabled_models") or [])
+    models = [m for m in all_models if m not in disabled]
+    return JSONResponse({"models": models, "all_models": all_models})
+
+
+async def llm_connection_presets(request: Request):
+    user = _session_user(request)
+    if not user:
+        return _unauthorized()
+    return JSONResponse({"presets": settings.CONNECTION_PRESETS})
+
+
+async def llm_connections_create(request: Request):
+    user = _session_user(request)
+    if not user:
+        return _unauthorized()
+    try:
+        body = await request.json()
+    except ValueError:
+        return JSONResponse({"error": "invalid JSON body"}, status_code=400)
+    name = (body.get("name") or "").strip()
+    kind = (body.get("kind") or "").strip()
+    base_url = (body.get("base_url") or "").strip()
+    if not name or not kind or not base_url:
+        return JSONResponse({"error": "name, kind, and base_url are required"}, status_code=400)
+    try:
+        cid, saved = settings.create_connection(
+            user["nsid"], name, kind, base_url,
+            api_key=body.get("api_key", ""),
+            api_mode=body.get("api_mode", "chat_completions"),
+        )
+    except (OSError, ValueError) as e:
+        logging.warning("llm_connections_create: failed for %s: %s", user["nsid"], e)
+        return JSONResponse({"error": "could not save connection"}, status_code=500)
+    return JSONResponse({"id": cid, **saved})
+
+
+async def llm_connections_update(request: Request):
+    user = _session_user(request)
+    if not user:
+        return _unauthorized()
+    try:
+        body = await request.json()
+    except ValueError:
+        return JSONResponse({"error": "invalid JSON body"}, status_code=400)
+    updated = settings.update_connection(user["nsid"], request.path_params["id"], body)
+    if updated is None:
+        return JSONResponse({"error": "unknown connection"}, status_code=404)
+    return JSONResponse(updated)
+
+
+async def llm_connections_delete(request: Request):
+    user = _session_user(request)
+    if not user:
+        return _unauthorized()
+    deleted = settings.delete_connection(user["nsid"], request.path_params["id"])
+    if deleted is None:
+        return JSONResponse({"error": "unknown connection"}, status_code=404)
+    return JSONResponse(deleted)
 
 
 async def api_commands(request: Request):
@@ -374,6 +434,10 @@ def api_routes() -> list[Route]:
         Route("/api/chat/stats",    endpoint=chat_stats),
         Route("/api/llm-settings", endpoint=llm_settings, methods=["GET", "POST"]),
         Route("/api/llm-models",   endpoint=llm_models),
+        Route("/api/llm-connection-presets", endpoint=llm_connection_presets),
+        Route("/api/llm-connections", endpoint=llm_connections_create, methods=["POST"]),
+        Route("/api/llm-connections/{id}/update", endpoint=llm_connections_update, methods=["POST"]),
+        Route("/api/llm-connections/{id}/delete", endpoint=llm_connections_delete, methods=["POST"]),
         Route("/api/commands",     endpoint=api_commands),
         Route("/api/prompts",            endpoint=prompts_collection, methods=["GET", "POST"]),
         Route("/api/prompts/{id}",       endpoint=prompts_update, methods=["POST"]),

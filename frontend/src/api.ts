@@ -114,15 +114,28 @@ export interface SetupData {
 
 // ── LLM / model config ────────────────────────────────────────────────────
 
-export interface ProviderProfile {
-  label: string;
+export type ConnectionKind = "ollama" | "openai_compatible";
+export type ApiMode = "chat_completions" | "responses";
+
+export interface Connection {
+  name: string;
+  kind: ConnectionKind;
+  api_mode: ApiMode;
   base_url: string;
   api_key: string;
+  disabled_models: string[];
+}
+
+export interface ConnectionPreset {
+  label: string;
+  base_url: string;
+  kind: ConnectionKind;
+  api_mode: ApiMode;
 }
 
 export interface LLMSettings {
-  providers: Record<string, ProviderProfile>;
-  active_provider: string;
+  connections: Record<string, Connection>;
+  active_connection: string;
   active_model: string;
   max_tokens: number;
   vision: boolean;
@@ -187,6 +200,7 @@ export interface Conversation {
   title: string;
   created_at: number;
   updated_at: number;
+  // `provider` holds a connection id (field name kept for chat.db compat).
   provider: string;
   model: string;
 }
@@ -285,9 +299,39 @@ export async function postJSON<T>(url: string, body?: unknown): Promise<T> {
   );
 }
 
-export async function listModels(provider: string): Promise<string[]> {
-  const r = await getJSON<{ models: string[] }>(`/api/llm-models`, { provider });
-  return r.models;
+export interface ModelList {
+  models: string[];
+  all_models: string[];
+}
+
+export async function listModels(connectionId: string): Promise<ModelList> {
+  return getJSON<ModelList>(`/api/llm-models`, { connection: connectionId });
+}
+
+export async function getConnectionPresets(): Promise<Record<string, ConnectionPreset>> {
+  const r = await getJSON<{ presets: Record<string, ConnectionPreset> }>("/api/llm-connection-presets");
+  return r.presets;
+}
+
+export async function createConnection(input: {
+  name: string;
+  kind: ConnectionKind;
+  base_url: string;
+  api_key?: string;
+  api_mode?: ApiMode;
+}): Promise<{ id: string } & LLMSettings> {
+  return postJSON(`/api/llm-connections`, input);
+}
+
+export async function updateConnection(
+  connectionId: string,
+  patch: Partial<Connection>,
+): Promise<LLMSettings> {
+  return postJSON(`/api/llm-connections/${connectionId}/update`, patch);
+}
+
+export async function deleteConnection(connectionId: string): Promise<LLMSettings> {
+  return postJSON(`/api/llm-connections/${connectionId}/delete`, {});
 }
 
 export async function getSessionStats(conversationId: string): Promise<SessionStats> {
@@ -320,7 +364,7 @@ export function modelSupportsVision(modelId: string): boolean {
 
 /** POST to /api/chat/stream and invoke onEvent for every SSE data event. */
 export async function streamChat(
-  body: { conversation_id?: string; message: string; focused_photo_id?: string | null; provider?: string; model?: string },
+  body: { conversation_id?: string; message: string; focused_photo_id?: string | null; connection?: string; model?: string },
   onEvent: (event: StreamEvent) => void,
 ): Promise<void> {
   const response = await fetch("/api/chat/stream", {
