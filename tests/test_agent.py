@@ -565,6 +565,88 @@ async def test_run_turn_vision_disabled_tool_result_has_disclaimer(user_db):
     assert "IMGDATA" not in stored_json
 
 
+def test_wire_messages_splits_tool_image_into_following_user_message():
+    """A "tool" role message's content is text-only per the Chat Completions
+    spec — an image_url part left on it is silently dropped by compliant
+    servers. _wire_messages must move it into a synthetic user message
+    immediately after, leaving everything else untouched."""
+    from agent.loop import _wire_messages
+
+    messages = [
+        {"role": "system", "content": "sys"},
+        {"role": "user", "content": "show me the photo"},
+        {"role": "assistant", "content": "", "tool_calls": [_tool_call("c1", "fetch_photo_image", {"id": "1"})]},
+        {"role": "tool", "tool_call_id": "c1", "content": [
+            {"type": "text", "text": "Photo ID: 1"},
+            {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,IMGDATA"}},
+        ]},
+    ]
+
+    wire = _wire_messages(messages)
+
+    assert len(wire) == 5
+    assert wire[:3] == messages[:3]
+    tool_msg = wire[3]
+    assert tool_msg["role"] == "tool"
+    assert tool_msg["content"] == "Photo ID: 1"
+    image_msg = wire[4]
+    assert image_msg["role"] == "user"
+    assert isinstance(image_msg["content"], list)
+    assert image_msg["content"][-1]["type"] == "image_url"
+    assert image_msg["content"][-1]["image_url"]["url"] == "data:image/jpeg;base64,IMGDATA"
+
+    # Plain string tool content (vision disabled, or a text-only tool) passes
+    # through unchanged — no extra message inserted.
+    plain = [{"role": "tool", "tool_call_id": "c1", "content": "just text"}]
+    assert _wire_messages(plain) == plain
+
+
+@pytest.mark.asyncio
+async def test_run_turn_vision_enabled_image_reaches_llm_as_user_message(user_db):
+    """End-to-end: with vision enabled, the image from a tool call must show
+    up in a "user" message on the *next* LLM call — not left dangling,
+    invisible, inside the "tool" message — while the stored conversation
+    keeps the original (untouched) shape."""
+    from mcp.types import ImageContent
+    from agent import loop, store
+
+    cfg_vision = {**CFG, "vision": True}
+    conv = store.create_conversation(USERNAME, "t")
+
+    async def fake_execute(user, name, args):
+        return [ImageContent(type="image", data="IMGDATA", mimeType="image/jpeg")]
+
+    captured_messages = []
+
+    async def fake_stream_chat(cfg, messages, tools=None, client=None):
+        captured_messages.append(messages)
+        if len(captured_messages) == 1:
+            yield {
+                "type": "message", "content": "",
+                "tool_calls": [_tool_call("c1", "fetch_photo_image", {"photo_id": "photo1"})],
+                "finish_reason": "tool_calls",
+            }
+        else:
+            yield {"type": "message", "content": "I can see the image.", "tool_calls": [], "finish_reason": "stop"}
+
+    with patch("agent.loop.llm.stream_chat", fake_stream_chat), \
+         patch("agent.loop._execute_tool", fake_execute):
+        events = [e async for e in loop.run_turn(USER, conv, "show photo", cfg_vision)]
+
+    assert events[-1]["type"] == "done"
+    assert len(captured_messages) == 2
+    second_call = captured_messages[1]
+    tool_idx = next(i for i, m in enumerate(second_call) if m.get("role") == "tool")
+    assert isinstance(second_call[tool_idx]["content"], str)
+    image_msg = second_call[tool_idx + 1]
+    assert image_msg["role"] == "user"
+    assert any(p.get("type") == "image_url" for p in image_msg["content"])
+
+    # Storage/UI shape is untouched — only the outbound wire payload is split.
+    stored_tool_msg = next(m for m in store.get_messages(USERNAME, conv) if m["role"] == "tool")
+    assert any(p.get("type") == "image_url" for p in stored_tool_msg["content"])
+
+
 # --- commands ---
 
 def test_commands_resolve_user_placeholder():

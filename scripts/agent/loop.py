@@ -130,6 +130,40 @@ _VISION_DISABLED_NOTE = (
 )
 
 
+def _wire_messages(messages: list[dict]) -> list[dict]:
+    """Expand tool-result messages that carry an image into wire-safe form.
+
+    OpenAI-compatible Chat Completions (and the Responses API translation in
+    llm.py) only allow *text* content in a ``"tool"`` role message — images
+    are only valid inside a ``"user"`` message. A vision-enabled tool result
+    (see ``_result_content``) stores its image_url part directly on the tool
+    message for simplicity, but that's spec-invalid on the wire: compliant
+    servers silently drop or ignore it, so the model never actually sees the
+    image even with vision enabled. Split any such tool message into a
+    text-only tool message followed by a synthetic user message carrying the
+    image(s) — this only affects what's sent for this call, not what's
+    stored or shown in the chat UI.
+    """
+    out = []
+    for m in messages:
+        content = m.get("content")
+        if m.get("role") == "tool" and isinstance(content, list):
+            text = "\n".join(p["text"] for p in content if p.get("type") == "text")
+            images = [p for p in content if p.get("type") == "image_url"]
+            out.append({**m, "content": text})
+            if images:
+                out.append({
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "(image from the tool call above, for visual inspection)"},
+                        *images,
+                    ],
+                })
+        else:
+            out.append(m)
+    return out
+
+
 def _result_content(result: list, vision: bool) -> "str | list":
     """Convert MCP tool result to LLM message content.
 
@@ -338,7 +372,7 @@ async def run_turn(
     try:
         for _ in range(MAX_ITERATIONS):
             final = None
-            async for event in stream_fn(cfg, messages, tools=tools):
+            async for event in stream_fn(cfg, _wire_messages(messages), tools=tools):
                 if event["type"] == "delta":
                     yield event
                 else:
