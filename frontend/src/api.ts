@@ -117,6 +117,31 @@ export interface SetupData {
 export type ConnectionKind = "ollama" | "openai_compatible";
 export type ApiMode = "chat_completions" | "responses";
 
+// Per-model settings — vision/max_tokens/sampling/tool_choice apply to one
+// specific model on one connection, not the whole page. A model with no
+// entry in Connection.models simply behaves like ModelSettingsDefaults.
+export interface ModelSettings {
+  max_tokens: number;
+  vision: boolean;
+  temperature: string;
+  top_p: string;
+  frequency_penalty: string;
+  presence_penalty: string;
+  seed: string;
+  tool_choice: string;
+}
+
+export const MODEL_SETTINGS_DEFAULTS: ModelSettings = {
+  max_tokens: 1024,
+  vision: false,
+  temperature: "",
+  top_p: "",
+  frequency_penalty: "",
+  presence_penalty: "",
+  seed: "",
+  tool_choice: "auto",
+};
+
 export interface Connection {
   name: string;
   kind: ConnectionKind;
@@ -124,6 +149,7 @@ export interface Connection {
   base_url: string;
   api_key: string;
   disabled_models: string[];
+  models: Record<string, ModelSettings>;
 }
 
 export interface ConnectionPreset {
@@ -137,14 +163,6 @@ export interface LLMSettings {
   connections: Record<string, Connection>;
   active_connection: string;
   active_model: string;
-  max_tokens: number;
-  vision: boolean;
-  temperature: string;
-  top_p: string;
-  frequency_penalty: string;
-  presence_penalty: string;
-  seed: string;
-  tool_choice: string;
 }
 
 // ── Prompts ────────────────────────────────────────────────────────────────
@@ -332,6 +350,18 @@ export async function updateConnection(
 
 export async function deleteConnection(connectionId: string): Promise<LLMSettings> {
   return postJSON(`/api/llm-connections/${connectionId}/delete`, {});
+}
+
+export async function updateModelSettings(
+  connectionId: string,
+  model: string,
+  patch: Partial<ModelSettings>,
+): Promise<LLMSettings> {
+  return postJSON(`/api/llm-connections/${connectionId}/model-settings`, { model, ...patch });
+}
+
+export async function resetModelSettings(connectionId: string, model: string): Promise<LLMSettings> {
+  return postJSON(`/api/llm-connections/${connectionId}/model-settings/reset`, { model });
 }
 
 export async function getSessionStats(conversationId: string): Promise<SessionStats> {

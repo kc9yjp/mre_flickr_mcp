@@ -165,6 +165,73 @@ def test_delete_unknown_connection_404(client):
     assert resp.status_code == 404
 
 
+# --- /api/llm-connections/{id}/model-settings ---
+
+def test_update_model_settings_then_reads_back(client):
+    _login(client)
+    created = client.post(
+        "/api/llm-connections", headers=HEADERS,
+        json={"name": "LM Studio", "kind": "openai_compatible", "base_url": "http://host.docker.internal:1234/v1"},
+    ).json()
+    cid = created["id"]
+
+    resp = client.post(
+        f"/api/llm-connections/{cid}/model-settings", headers=HEADERS,
+        json={"model": "qwen/qwen3.5-9b", "vision": True, "max_tokens": 2048},
+    )
+    assert resp.status_code == 200
+    entry = resp.json()["connections"][cid]["models"]["qwen/qwen3.5-9b"]
+    assert entry["vision"] is True
+    assert entry["max_tokens"] == 2048
+
+    listed = client.get("/api/llm-settings").json()
+    assert listed["connections"][cid]["models"]["qwen/qwen3.5-9b"]["vision"] is True
+
+
+def test_update_model_settings_missing_model_400(client):
+    _login(client)
+    created = client.post(
+        "/api/llm-connections", headers=HEADERS,
+        json={"name": "LM Studio", "kind": "openai_compatible", "base_url": "http://x/v1"},
+    ).json()
+    resp = client.post(f"/api/llm-connections/{created['id']}/model-settings", headers=HEADERS, json={"vision": True})
+    assert resp.status_code == 400
+
+
+def test_update_model_settings_unknown_connection_404(client):
+    _login(client)
+    resp = client.post(
+        "/api/llm-connections/does-not-exist/model-settings", headers=HEADERS,
+        json={"model": "m", "vision": True},
+    )
+    assert resp.status_code == 404
+
+
+def test_reset_model_settings(client):
+    _login(client)
+    created = client.post(
+        "/api/llm-connections", headers=HEADERS,
+        json={"name": "LM Studio", "kind": "openai_compatible", "base_url": "http://x/v1"},
+    ).json()
+    cid = created["id"]
+    client.post(
+        f"/api/llm-connections/{cid}/model-settings", headers=HEADERS,
+        json={"model": "m", "vision": True},
+    )
+
+    resp = client.post(f"/api/llm-connections/{cid}/model-settings/reset", headers=HEADERS, json={"model": "m"})
+    assert resp.status_code == 200
+    assert "m" not in resp.json()["connections"][cid]["models"]
+
+
+def test_reset_model_settings_unknown_connection_404(client):
+    _login(client)
+    resp = client.post(
+        "/api/llm-connections/does-not-exist/model-settings/reset", headers=HEADERS, json={"model": "m"},
+    )
+    assert resp.status_code == 404
+
+
 # --- /api/llm-models filtering ---
 
 def test_llm_models_filters_disabled_models(client, monkeypatch):

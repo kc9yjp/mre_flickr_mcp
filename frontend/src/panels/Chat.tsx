@@ -173,6 +173,15 @@ export function Chat() {
 
   useEffect(refreshConversations, [refreshConversations]);
 
+  const fetchModelsForConnection = useCallback((connectionId: string) => {
+    listModels(connectionId)
+      .then((list) => setModelsByConnection((prev) => ({ ...prev, [connectionId]: list.models })))
+      .catch((e) => {
+        console.error("Failed to list models for connection:", connectionId, e);
+        setModelsByConnection((prev) => ({ ...prev, [connectionId]: [] }));
+      });
+  }, []);
+
   // Load LLM settings + eagerly fetch every connection's model list (small
   // expected connection counts). Prefers the last connection/model used in
   // this browser (localStorage) over the saved default in Models & Connections,
@@ -189,16 +198,32 @@ export function Chat() {
         setConnectionModel(cid ? makeSelector(cid, model) : "");
 
         for (const connectionId of Object.keys(s.connections ?? {})) {
-          listModels(connectionId)
-            .then((list) => setModelsByConnection((prev) => ({ ...prev, [connectionId]: list.models })))
-            .catch((e) => console.error("Failed to list models for connection:", connectionId, e));
+          fetchModelsForConnection(connectionId);
         }
       })
       .catch((e) => {
         console.error("Failed to load LLM settings:", e);
         setError("Failed to load LLM settings: " + (e instanceof Error ? e.message : String(e)));
       });
-  }, []);
+  }, [fetchModelsForConnection]);
+
+  // The Models panel is a separately-mounted component with its own state —
+  // a connection added/edited/deleted there (or its disabled_models toggled)
+  // doesn't otherwise reach this panel's llmCfg/modelsByConnection. Re-pull
+  // settings and re-fetch every connection's (possibly now-different)
+  // filtered model list whenever that happens, rather than only on mount.
+  useEffect(() => {
+    return bus.on("llmConnectionsChanged", () => {
+      getJSON<LLMSettings>("/api/llm-settings")
+        .then((s) => {
+          setLlmCfg(s);
+          for (const connectionId of Object.keys(s.connections ?? {})) {
+            fetchModelsForConnection(connectionId);
+          }
+        })
+        .catch((e) => console.error("Failed to refresh LLM settings:", e));
+    });
+  }, [fetchModelsForConnection]);
 
   // Persist whatever connection/model is active so a reload restores it.
   useEffect(() => {
@@ -207,11 +232,7 @@ export function Chat() {
     if (connectionId) saveLastModel(connectionId, model);
   }, [llmCfg, connectionModel]);
 
-  const refreshConnectionModels = useCallback((connectionId: string) => {
-    listModels(connectionId)
-      .then((list) => setModelsByConnection((prev) => ({ ...prev, [connectionId]: list.models })))
-      .catch(() => setModelsByConnection((prev) => ({ ...prev, [connectionId]: [] })));
-  }, []);
+  const refreshConnectionModels = fetchModelsForConnection;
 
   // Track whichever photo is open in the Photo Browser so free-form messages
   // (no workflow button, no explicit id) can default to it — see loop.py's

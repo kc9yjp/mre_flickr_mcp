@@ -3,24 +3,25 @@
 ``~/.flickr_mcp/{nsid}/llm.json`` — kept out of the resettable data DB and
 inside the already-volume-mounted credentials directory.
 
-Storage shape (v3 — named connections)::
+Storage shape (v4 — named connections, per-model settings)::
 
     {
-      "schema_version": 3,
+      "schema_version": 4,
       "connections": {
         "ollama": {"name": "Ollama", "kind": "ollama", "api_mode": "chat_completions",
                     "base_url": "http://host.docker.internal:11434/v1", "api_key": "",
-                    "disabled_models": []},
+                    "disabled_models": [],
+                    "models": {
+                      "llama3.1": {"max_tokens": 1024, "vision": false,
+                                    "temperature": "", "top_p": "", "frequency_penalty": "",
+                                    "presence_penalty": "", "seed": "", "tool_choice": "auto"}
+                    }},
         "zen":    {"name": "OpenCode Zen", "kind": "openai_compatible", "api_mode": "chat_completions",
                     "base_url": "https://opencode.ai/zen/v1", "api_key": "...",
-                    "disabled_models": ["gpt-5", "..."]}
+                    "disabled_models": ["gpt-5", "..."], "models": {}}
       },
       "active_connection": "ollama",
-      "active_model": "",
-      "max_tokens": 1024,
-      "vision": false,
-      "temperature": "", "top_p": "", "frequency_penalty": "", "presence_penalty": "",
-      "seed": "", "tool_choice": "auto"
+      "active_model": ""
     }
 
 A connection's ``kind`` (``ollama`` | ``openai_compatible``) only picks a
@@ -28,11 +29,20 @@ default base_url/preset at creation time — it has no effect on request
 behavior. ``api_mode`` (``chat_completions`` | ``responses``) is what
 ``llm.py``/``loop.py`` actually branch on.
 
+``max_tokens``/``vision``/``temperature``/``top_p``/``frequency_penalty``/
+``presence_penalty``/``seed``/``tool_choice`` (the ``DEFAULTS`` keys) live
+per model, inside ``connections[cid]["models"][model_id]``. A model absent
+from that dict simply uses ``DEFAULTS`` — entries are only created when a
+user edits that model's settings and saves.
+
 Older files migrate on load: a flat v1 file (no ``providers``/``connections``
 key) becomes a default ``ollama`` connection; a v2 file (``providers`` dict
 keyed by a fixed provider id) becomes a v3 ``connections`` dict, reusing each
 old provider id verbatim as the new connection id so any conversation rows
-that already reference it keep resolving.
+that already reference it keep resolving; a v3 file (flat top-level
+``DEFAULTS`` keys) becomes v4 by moving those values into the active
+connection's active model entry, so upgrading doesn't silently reset a
+user's current vision/sampling choice.
 """
 
 import copy
@@ -84,6 +94,7 @@ DEFAULT_CONNECTIONS: dict[str, dict] = {
         "base_url": CONNECTION_PRESETS["ollama"]["base_url"],
         "api_key": "",
         "disabled_models": [],
+        "models": {},
     },
 }
 
@@ -144,7 +155,7 @@ def _raw_load(nsid: str) -> dict:
 
 
 def load_settings(nsid: str) -> dict:
-    """Return the full settings dict (v3 shape), migrating older files on the fly."""
+    """Return the full settings dict (v4 shape), migrating older files on the fly."""
     raw = _raw_load(nsid)
     migrated = _maybe_migrate(raw)
     return _merge_defaults(migrated)
@@ -166,13 +177,6 @@ def save_settings(nsid: str, data: dict) -> dict:
     untouched (never deleted) — deletion only happens via delete_connection().
     """
     current = load_settings(nsid)
-
-    # ── merge global fields ──────────────────────────────────────────────
-    for key in DEFAULTS:
-        if key in data:
-            current[key] = data[key]
-    current["max_tokens"] = int(current["max_tokens"] or DEFAULTS["max_tokens"])
-    current["vision"] = bool(current.get("vision", False))
 
     # ── merge active connection / model ──────────────────────────────────
     if "active_connection" in data:
@@ -238,6 +242,7 @@ def create_connection(
         "base_url": base_url,
         "api_key": api_key,
         "disabled_models": sorted(suggested_disabled_models(kind, base_url)),
+        "models": {},
     }
     current["connections"] = connections
     _write_settings(nsid, current)
@@ -261,6 +266,49 @@ def update_connection(nsid: str, connection_id: str, patch: dict) -> dict | None
         if patch["api_key"] != _mask_key(conn.get("api_key", "")):
             conn["api_key"] = patch["api_key"]
 
+    connections[connection_id] = conn
+    current["connections"] = connections
+    _write_settings(nsid, current)
+    return masked(current)
+
+
+def update_model_settings(nsid: str, connection_id: str, model: str, patch: dict) -> dict | None:
+    """Patch a model's per-model settings (the ``DEFAULTS`` keys) within a
+    connection. Creates the entry (seeded from ``DEFAULTS``) if this is the
+    first time this model has been customized. Returns masked full settings,
+    or None if the connection is unknown."""
+    current = load_settings(nsid)
+    connections = current.get("connections") or {}
+    conn = connections.get(connection_id)
+    if conn is None:
+        return None
+
+    models = conn.setdefault("models", {})
+    entry = {**DEFAULTS, **models.get(model, {})}
+    for key in DEFAULTS:
+        if key in patch:
+            entry[key] = patch[key]
+    entry["max_tokens"] = int(entry["max_tokens"] or DEFAULTS["max_tokens"])
+    entry["vision"] = bool(entry.get("vision", False))
+    models[model] = entry
+
+    connections[connection_id] = conn
+    current["connections"] = connections
+    _write_settings(nsid, current)
+    return masked(current)
+
+
+def reset_model_settings(nsid: str, connection_id: str, model: str) -> dict | None:
+    """Remove a model's per-model settings override (falls back to
+    ``DEFAULTS`` again). Returns masked full settings, or None if the
+    connection is unknown."""
+    current = load_settings(nsid)
+    connections = current.get("connections") or {}
+    conn = connections.get(connection_id)
+    if conn is None:
+        return None
+
+    conn.setdefault("models", {}).pop(model, None)
     connections[connection_id] = conn
     current["connections"] = connections
     _write_settings(nsid, current)
@@ -310,13 +358,16 @@ def resolve_cfg(
         cid = next(iter(connections))
         conn = connections[cid]
 
+    model_id = model or s.get("active_model") or ""
+    model_settings = (conn.get("models") or {}).get(model_id) or {}
+
     return {
         **DEFAULTS,
-        **{k: s[k] for k in DEFAULTS if k in s},
+        **{k: model_settings[k] for k in DEFAULTS if k in model_settings},
         "base_url": conn.get("base_url", ""),
         "api_key": conn.get("api_key", ""),
         "api_mode": conn.get("api_mode", "chat_completions"),
-        "model": model or s.get("active_model") or "",
+        "model": model_id,
     }
 
 
@@ -344,12 +395,14 @@ def masked(cfg: dict) -> dict:
 
 
 def _maybe_migrate(raw: dict) -> dict:
-    """Migrate an older file shape up to v3 in place."""
+    """Migrate an older file shape up to v4 in place."""
     if "providers" not in raw and "connections" not in raw:
         raw = _migrate_v1_to_v2(raw)
     if "connections" not in raw:
         raw = _migrate_v2_to_v3(raw)
-    raw["schema_version"] = 3
+    if raw.get("schema_version", 0) < 4:
+        raw = _migrate_v3_to_v4(raw)
+    raw["schema_version"] = 4
     return raw
 
 
@@ -390,19 +443,48 @@ def _migrate_v2_to_v3(raw: dict) -> dict:
     return raw
 
 
+def _migrate_v3_to_v4(raw: dict) -> dict:
+    """v3 flat top-level ``DEFAULTS`` keys (max_tokens/vision/temperature/...)
+    -> v4 per-model settings. The old values applied globally regardless of
+    connection/model, so they're moved onto whichever connection/model was
+    active at upgrade time (if any) — preserving the user's current
+    vision/sampling choice instead of silently resetting it. Every
+    connection also gets a ``models`` dict (empty if not seeded above)."""
+    connections = raw.get("connections") or {}
+
+    old_values = {k: raw.pop(k) for k in DEFAULTS if k in raw}
+    active_connection = raw.get("active_connection", "")
+    active_model = raw.get("active_model", "")
+
+    for cid, conn in connections.items():
+        conn.setdefault("models", {})
+
+    if old_values and active_connection in connections and active_model:
+        connections[active_connection]["models"][active_model] = {
+            **DEFAULTS, **old_values,
+        }
+
+    raw["connections"] = connections
+    return raw
+
+
 def _merge_defaults(raw: dict) -> dict:
-    """Ensure every expected key is present after migration."""
-    merged = dict(DEFAULTS)
-    for k in DEFAULTS:
-        if k in raw:
-            merged[k] = raw[k]
+    """Ensure every expected key is present after migration.
+
+    Unlike v3, the ``DEFAULTS`` keys are no longer top-level fields — they
+    only ever live inside a connection's ``models`` dict, so nothing to
+    seed here beyond ``connections``/``active_connection``/``active_model``.
+    """
     if "connections" not in raw:
         raw["connections"] = copy.deepcopy(DEFAULT_CONNECTIONS)
-    merged["connections"] = raw["connections"]
-    merged["active_connection"] = raw.get("active_connection", "")
-    merged["active_model"] = raw.get("active_model", "")
-    merged["schema_version"] = 3
-    return merged
+    for conn in raw["connections"].values():
+        conn.setdefault("models", {})
+    return {
+        "connections": raw["connections"],
+        "active_connection": raw.get("active_connection", ""),
+        "active_model": raw.get("active_model", ""),
+        "schema_version": 4,
+    }
 
 
 # Legacy aliases so ``from agent.settings import mask_key`` still works

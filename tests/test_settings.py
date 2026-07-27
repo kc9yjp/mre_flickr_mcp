@@ -35,9 +35,10 @@ def test_fresh_install_seeds_default_connections():
     from agent import settings
 
     s = settings.load_settings(NSID)
-    assert s["schema_version"] == 3
+    assert s["schema_version"] == 4
     assert set(s["connections"]) == {"ollama"}
     assert s["connections"]["ollama"]["kind"] == "ollama"
+    assert s["connections"]["ollama"]["models"] == {}
     assert s["active_connection"] == "ollama"
 
 
@@ -50,13 +51,14 @@ def test_v1_flat_file_migrates_to_v3(_creds_dir):
     from agent import settings
 
     s = settings.load_settings(NSID)
-    assert s["schema_version"] == 3
+    assert s["schema_version"] == 4
     assert set(s["connections"]) == {"ollama"}
     conn = s["connections"]["ollama"]
     assert conn["base_url"] == "http://custom:11434/v1"
     assert conn["api_key"] == "abc"
     assert conn["kind"] == "ollama"
     assert conn["disabled_models"] == []
+    assert conn["models"] == {}
     assert s["active_connection"] == "ollama"
     assert s["active_model"] == "llama3.1"
 
@@ -77,7 +79,7 @@ def test_v2_providers_migrate_to_v3_connections_preserving_ids(_creds_dir):
     })
 
     s = settings.load_settings(NSID)
-    assert s["schema_version"] == 3
+    assert s["schema_version"] == 4
     assert set(s["connections"]) == {"ollama", "zen"}
 
     # Old provider ids must be reused verbatim as connection ids so any
@@ -87,6 +89,7 @@ def test_v2_providers_migrate_to_v3_connections_preserving_ids(_creds_dir):
     assert ollama["kind"] == "ollama"
     assert ollama["api_mode"] == "chat_completions"
     assert ollama["disabled_models"] == []
+    assert ollama["models"] == {}
 
     zen = s["connections"]["zen"]
     assert zen["name"] == "OpenCode Zen"
@@ -98,7 +101,11 @@ def test_v2_providers_migrate_to_v3_connections_preserving_ids(_creds_dir):
 
     assert s["active_connection"] == "zen"
     assert s["active_model"] == "big-pickle"
-    assert s["max_tokens"] == 2048
+    # The old flat max_tokens applied globally at v3 — the v3->v4 migration
+    # preserves it by landing it on whatever connection/model was active,
+    # rather than silently resetting it, and it's gone from the top level.
+    assert zen["models"]["big-pickle"]["max_tokens"] == 2048
+    assert "max_tokens" not in s
     assert "providers" not in s
     assert "active_provider" not in s
 
@@ -115,6 +122,55 @@ def test_v2_migration_is_idempotent_on_reload(_creds_dir):
     assert first == second
 
 
+# --- v3 -> v4 migration ---
+
+def test_v3_flat_defaults_migrate_onto_active_connection_and_model(_creds_dir):
+    from agent import settings
+
+    _write_raw(_creds_dir, NSID, {
+        "schema_version": 3,
+        "connections": {
+            "ollama": {"name": "Ollama", "kind": "ollama", "api_mode": "chat_completions",
+                       "base_url": "http://x/v1", "api_key": "", "disabled_models": []},
+        },
+        "active_connection": "ollama",
+        "active_model": "llama3.2",
+        "max_tokens": 2048,
+        "vision": True,
+        "temperature": "0.7",
+        "top_p": "", "frequency_penalty": "", "presence_penalty": "", "seed": "", "tool_choice": "auto",
+    })
+
+    s = settings.load_settings(NSID)
+    assert s["schema_version"] == 4
+    assert "max_tokens" not in s
+    assert "vision" not in s
+    entry = s["connections"]["ollama"]["models"]["llama3.2"]
+    assert entry["max_tokens"] == 2048
+    assert entry["vision"] is True
+    assert entry["temperature"] == "0.7"
+
+
+def test_v3_migration_with_no_active_model_just_adds_empty_models_dict(_creds_dir):
+    from agent import settings
+
+    _write_raw(_creds_dir, NSID, {
+        "schema_version": 3,
+        "connections": {
+            "ollama": {"name": "Ollama", "kind": "ollama", "api_mode": "chat_completions",
+                       "base_url": "http://x/v1", "api_key": "", "disabled_models": []},
+        },
+        "active_connection": "ollama",
+        "active_model": "",
+        "max_tokens": 2048,
+    })
+
+    s = settings.load_settings(NSID)
+    assert s["schema_version"] == 4
+    assert s["connections"]["ollama"]["models"] == {}
+    assert "max_tokens" not in s
+
+
 # --- resolve_cfg ---
 
 def test_resolve_cfg_explicit_connection_and_model(_creds_dir):
@@ -126,6 +182,25 @@ def test_resolve_cfg_explicit_connection_and_model(_creds_dir):
     assert cfg["base_url"] == "https://opencode.ai/zen/v1"
     assert cfg["model"] == "grok-4.5"
     assert cfg["api_mode"] == "chat_completions"
+    # No per-model override saved yet -> falls back to DEFAULTS.
+    assert cfg["vision"] is False
+    assert cfg["max_tokens"] == settings.DEFAULTS["max_tokens"]
+
+
+def test_resolve_cfg_uses_per_model_settings(_creds_dir):
+    from agent import settings
+
+    cid, _ = settings.create_connection(NSID, "LM Studio", "openai_compatible", "http://host.docker.internal:1234/v1")
+    settings.update_model_settings(NSID, cid, "qwen/qwen3.5-9b", {"vision": True, "max_tokens": 2048})
+
+    cfg = settings.resolve_cfg(NSID, cid, "qwen/qwen3.5-9b")
+    assert cfg["vision"] is True
+    assert cfg["max_tokens"] == 2048
+
+    # A different, never-customized model on the same connection still gets
+    # plain DEFAULTS — settings are per-model, not per-connection.
+    other_cfg = settings.resolve_cfg(NSID, cid, "other-model")
+    assert other_cfg["vision"] is False
 
 
 def test_resolve_cfg_falls_back_to_active_then_first_key(_creds_dir):
@@ -208,6 +283,47 @@ def test_create_connection_seeds_zen_responses_only_models(_creds_dir):
 
     cid, out = settings.create_connection(NSID, "My Zen", "openai_compatible", "https://opencode.ai/zen/v1")
     assert out["connections"][cid]["disabled_models"] == sorted(settings._ZEN_RESPONSES_ONLY_MODELS)
+
+
+# --- per-model settings CRUD ---
+
+def test_update_model_settings_creates_and_patches_entry(_creds_dir):
+    from agent import settings
+
+    cid, _ = settings.create_connection(NSID, "LM Studio", "openai_compatible", "http://host.docker.internal:1234/v1")
+
+    out = settings.update_model_settings(NSID, cid, "qwen/qwen3.5-9b", {"vision": True, "max_tokens": 2048})
+    entry = out["connections"][cid]["models"]["qwen/qwen3.5-9b"]
+    assert entry["vision"] is True
+    assert entry["max_tokens"] == 2048
+    # Untouched DEFAULTS keys are still present.
+    assert entry["tool_choice"] == "auto"
+
+    # A second patch only touches the given keys, keeping the rest.
+    out2 = settings.update_model_settings(NSID, cid, "qwen/qwen3.5-9b", {"temperature": "0.5"})
+    entry2 = out2["connections"][cid]["models"]["qwen/qwen3.5-9b"]
+    assert entry2["vision"] is True
+    assert entry2["temperature"] == "0.5"
+
+    assert settings.update_model_settings(NSID, "no-such-id", "m", {"vision": True}) is None
+
+
+def test_reset_model_settings_removes_override(_creds_dir):
+    from agent import settings
+
+    cid, _ = settings.create_connection(NSID, "LM Studio", "openai_compatible", "http://host.docker.internal:1234/v1")
+    settings.update_model_settings(NSID, cid, "qwen/qwen3.5-9b", {"vision": True})
+
+    out = settings.reset_model_settings(NSID, cid, "qwen/qwen3.5-9b")
+    assert "qwen/qwen3.5-9b" not in out["connections"][cid]["models"]
+
+    # Resolving now falls back to plain DEFAULTS.
+    cfg = settings.resolve_cfg(NSID, cid, "qwen/qwen3.5-9b")
+    assert cfg["vision"] is False
+
+    # Resetting a model with no override, or an unknown connection, is safe.
+    settings.reset_model_settings(NSID, cid, "never-customized")
+    assert settings.reset_model_settings(NSID, "no-such-id", "m") is None
 
 
 # --- masked() ---

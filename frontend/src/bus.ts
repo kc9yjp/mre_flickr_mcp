@@ -12,6 +12,7 @@ interface Events {
   runCommand: RunCommandPayload; // a chat prompt to send immediately
   editPrompt: string;   // request the Prompts panel open a prompt (by id) for editing
   promptsChanged: void; // a prompt/category/variable was created, edited, deleted, or reset — refetch /api/commands
+  llmConnectionsChanged: void; // a connection was added/edited/deleted, or its disabled_models changed — refetch /api/llm-settings + model lists
   photoOpened: string | null; // Photo Browser's current detail view, for chat context
   showPhotoList: string[]; // a tool found these photo ids — show them in the Photo Browser grid
   switchPanel: string;  // mobile: switch to named panel

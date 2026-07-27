@@ -263,6 +263,45 @@ async def llm_connections_delete(request: Request):
     return JSONResponse(deleted)
 
 
+async def llm_model_settings_update(request: Request):
+    """Patch a model's per-model settings (vision/max_tokens/sampling/tool_choice).
+
+    The model id is carried in the body rather than the URL path — model ids
+    such as ``qwen/qwen3.5-9b`` (LM Studio) contain slashes.
+    """
+    user = _session_user(request)
+    if not user:
+        return _unauthorized()
+    try:
+        body = await request.json()
+    except ValueError:
+        return JSONResponse({"error": "invalid JSON body"}, status_code=400)
+    model = (body.get("model") or "").strip()
+    if not model:
+        return JSONResponse({"error": "model is required"}, status_code=400)
+    updated = settings.update_model_settings(user["nsid"], request.path_params["id"], model, body)
+    if updated is None:
+        return JSONResponse({"error": "unknown connection"}, status_code=404)
+    return JSONResponse(updated)
+
+
+async def llm_model_settings_reset(request: Request):
+    user = _session_user(request)
+    if not user:
+        return _unauthorized()
+    try:
+        body = await request.json()
+    except ValueError:
+        return JSONResponse({"error": "invalid JSON body"}, status_code=400)
+    model = (body.get("model") or "").strip()
+    if not model:
+        return JSONResponse({"error": "model is required"}, status_code=400)
+    updated = settings.reset_model_settings(user["nsid"], request.path_params["id"], model)
+    if updated is None:
+        return JSONResponse({"error": "unknown connection"}, status_code=404)
+    return JSONResponse(updated)
+
+
 async def api_commands(request: Request):
     user = _session_user(request)
     if not user:
@@ -438,6 +477,8 @@ def api_routes() -> list[Route]:
         Route("/api/llm-connections", endpoint=llm_connections_create, methods=["POST"]),
         Route("/api/llm-connections/{id}/update", endpoint=llm_connections_update, methods=["POST"]),
         Route("/api/llm-connections/{id}/delete", endpoint=llm_connections_delete, methods=["POST"]),
+        Route("/api/llm-connections/{id}/model-settings", endpoint=llm_model_settings_update, methods=["POST"]),
+        Route("/api/llm-connections/{id}/model-settings/reset", endpoint=llm_model_settings_reset, methods=["POST"]),
         Route("/api/commands",     endpoint=api_commands),
         Route("/api/prompts",            endpoint=prompts_collection, methods=["GET", "POST"]),
         Route("/api/prompts/{id}",       endpoint=prompts_update, methods=["POST"]),
