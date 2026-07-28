@@ -231,6 +231,22 @@ class TestAlbums:
         assert "No albums match" in _text(result)
 
     @pytest.mark.asyncio
+    async def test_get_all_albums(self, db):
+        import mcp_tools
+        result = await mcp_tools._get_all_albums({})
+        albums = _json(result)
+        assert len(albums) == 1
+        assert albums[0]["id"] == "album1"
+
+    @pytest.mark.asyncio
+    async def test_get_all_albums_empty_table(self, db):
+        import mcp_tools
+        db.execute("DELETE FROM albums")
+        db.commit()
+        result = await mcp_tools._get_all_albums({})
+        assert "Run 'sync albums' first" in _text(result)
+
+    @pytest.mark.asyncio
     async def test_get_album_photos(self, db, creds, api_get):
         import mcp_tools
         api_get.return_value = {

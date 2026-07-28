@@ -112,6 +112,7 @@ sync_log          — type, mode, photos_fetched, synced_at
 | `fave_photo` | Add a photo to the user's favorites |
 | `get_photo_faves` | List users who faved a photo, with `you_follow` flag cross-referenced from local contacts DB |
 | `find_albums` | Search albums by keyword |
+| `get_all_albums` | List all albums, optionally sorted by title/photo count/views |
 | `get_album_photos` | List photos in an album |
 | `add_to_album` | Add photo to an album |
 | `remove_from_album` | Remove photo from an album |

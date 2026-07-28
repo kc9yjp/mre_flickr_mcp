@@ -72,8 +72,8 @@ from tools.photos import (  # noqa: E402, F401
     _get_photo_faves, _get_faves, _get_recent_activity,
 )
 from tools.albums import (  # noqa: E402, F401
-    _find_albums, _get_album_photos, _add_to_album, _remove_from_album,
-    _create_album, _edit_album, _delete_album,
+    _find_albums, _get_all_albums, _get_album_photos, _add_to_album,
+    _remove_from_album, _create_album, _edit_album, _delete_album,
 )
 from tools.groups import (  # noqa: E402, F401
     _find_groups, _set_group_keywords, _add_to_group, _remove_from_group,

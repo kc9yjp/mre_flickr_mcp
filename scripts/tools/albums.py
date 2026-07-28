@@ -21,6 +21,17 @@ TOOLS = [
         },
     ),
     Tool(
+        name="get_all_albums",
+        description="List all of the user's Flickr albums from the local database.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "sort":  {"type": "string", "description": "Sort order: 'title', 'count_photos', or 'count_views' (default 'title')"},
+                "limit": {"type": "integer", "description": "Max results (default all)"},
+            },
+        },
+    ),
+    Tool(
         name="get_album_photos",
         description="List photos in a Flickr album.",
         inputSchema={
@@ -111,6 +122,31 @@ async def _find_albums(args):
             if table_empty(conn, "albums"):
                 return [TextContent(type="text", text="No albums found. Run 'sync albums' first via the web UI or the sync tool.")]
             return [TextContent(type="text", text=f"No albums match '{query}'.")]
+    return [TextContent(type="text", text=json.dumps([dict(r) for r in rows], indent=2))]
+
+
+async def _get_all_albums(args):
+    sort = args.get("sort", "title")
+    order_by = {
+        "title": "title ASC",
+        "count_photos": "count_photos DESC",
+        "count_views": "count_views DESC",
+    }.get(sort, "title ASC")
+    limit = args.get("limit")
+    sql = (
+        "SELECT id, title, description, count_photos, count_views FROM albums "
+        f"ORDER BY {order_by}"
+    )
+    params = ()
+    if limit is not None:
+        sql += " LIMIT ?"
+        params = (int(limit),)
+    with get_db() as conn:
+        rows = conn.execute(sql, params).fetchall()
+        if not rows:
+            if table_empty(conn, "albums"):
+                return [TextContent(type="text", text="No albums found. Run 'sync albums' first via the web UI or the sync tool.")]
+            return [TextContent(type="text", text="No albums found.")]
     return [TextContent(type="text", text=json.dumps([dict(r) for r in rows], indent=2))]
 
 
@@ -210,6 +246,7 @@ async def _delete_album(args):
 
 HANDLERS = {
     "find_albums":      _find_albums,
+    "get_all_albums":   _get_all_albums,
     "get_album_photos": _get_album_photos,
     "add_to_album":     _add_to_album,
     "remove_from_album": _remove_from_album,
