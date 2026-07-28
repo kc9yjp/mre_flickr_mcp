@@ -555,7 +555,15 @@ export function Chat() {
             )}
           </div>
         )}
-        {streaming && !confirm && <p className="hint streaming-indicator">…</p>}
+        {streaming && !confirm && (
+          <div className="streaming-indicator" aria-label="Working" role="status">
+            <span className="dot" />
+            <span className="dot" />
+            <span className="dot" />
+            <span className="dot" />
+            <span className="dot" />
+          </div>
+        )}
         {error && <p className="error">{error}</p>}
       </div>
       <form
