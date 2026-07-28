@@ -68,7 +68,7 @@ function DetailView({ detail, onBack }: { detail: PhotoDetail; onBack: () => voi
     <div className="photo-detail">
       <div className="detail-toolbar">
         <button onClick={onBack}>← Back to grid</button>
-        <a href={detail.url_photopage} target="_blank" rel="noreferrer">
+        <a href={detail.url_photopage} target="flickr_photo" rel="noreferrer">
           Open on Flickr ↗
         </a>
       </div>
