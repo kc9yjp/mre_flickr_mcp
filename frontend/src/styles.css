@@ -145,11 +145,12 @@
 }
 
 @keyframes dotHue {
-  0% {
-    filter: hue-rotate(0deg);
-  }
+  0%,
   100% {
-    filter: hue-rotate(360deg);
+    filter: hue-rotate(-40deg);
+  }
+  50% {
+    filter: hue-rotate(40deg);
   }
 }
 
