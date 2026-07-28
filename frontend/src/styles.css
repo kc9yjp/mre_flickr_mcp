@@ -915,8 +915,8 @@ select:focus {
 .streaming-indicator {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 4px;
+  justify-content: center;
+  gap: 8px;
   width: 50%;
   margin: 6px auto;
   padding: 0 4px;
@@ -925,9 +925,9 @@ select:focus {
 }
 
 .streaming-indicator .dot {
-  flex: 1;
-  max-width: 12px;
-  aspect-ratio: 1;
+  flex: none;
+  width: 10px;
+  height: 10px;
   border-radius: 50%;
   background: var(--accent);
   transform-origin: center bottom;
