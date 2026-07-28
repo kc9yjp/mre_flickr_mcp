@@ -491,16 +491,28 @@ async def _list_recent_syncs(args):
 async def _update_photo(args):
     photo_id = args["id"]
     updated = []
+
+    if "title" in args or "description" in args:
+        # setMeta replaces BOTH title and description, so any field not supplied
+        # must be carried over from the photo's current values. Read those live
+        # from the Flickr API — never from the local cache, which may be stale.
+        if "title" not in args or "description" not in args:
+            info = flickr_api._api_get("flickr.photos.getInfo", {"photo_id": photo_id})
+            photo = info.get("photo", {})
+            current_title = photo.get("title", {}).get("_content", "")
+            current_description = photo.get("description", {}).get("_content", "")
+        else:
+            current_title = current_description = ""
+        title = args.get("title", current_title)
+        description = args.get("description", current_description)
+        flickr_api._api_post("flickr.photos.setMeta", {"photo_id": photo_id, "title": title, "description": description})
+        updated.append("title/description")
+    if "tags" in args:
+        flickr_api._api_post("flickr.photos.setTags", {"photo_id": photo_id, "tags": args["tags"]})
+        updated.append("tags")
+
+    # Keep the local cache in step with what was just written to Flickr.
     with get_db() as conn:
-        if "title" in args or "description" in args:
-            row = conn.execute("SELECT title, description FROM photos WHERE id = ?", (photo_id,)).fetchone()
-            title = args.get("title", row["title"] if row else "")
-            description = args.get("description", row["description"] if row else "")
-            flickr_api._api_post("flickr.photos.setMeta", {"photo_id": photo_id, "title": title, "description": description})
-            updated.append("title/description")
-        if "tags" in args:
-            flickr_api._api_post("flickr.photos.setTags", {"photo_id": photo_id, "tags": args["tags"]})
-            updated.append("tags")
         if "title" in args:
             conn.execute("UPDATE photos SET title=? WHERE id=?", (args["title"], photo_id))
         if "description" in args:
