@@ -950,9 +950,12 @@ select:focus {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .streaming-indicator,
+  .streaming-indicator {
+    animation: none;
+  }
   .streaming-indicator .dot {
-    animation-duration: 2.4s;
+    animation: pulse 1.6s ease-in-out infinite;
+    transform: none;
   }
 }
 
