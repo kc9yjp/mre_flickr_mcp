@@ -58,11 +58,12 @@ confirmation UI provides.
 | `get_keeper_list` | | | List the keeper list. |
 | `remove_from_keeper_list` | ✍️ | `photo_id`* | Remove a photo from the keeper list. |
 
-## Albums (`tools/albums.py`) — 7 tools
+## Albums (`tools/albums.py`) — 8 tools
 
 | Tool | Write | Parameters | Description |
 |---|:---:|---|---|
 | `find_albums` | | *(optional keyword)* | Search your albums from the local database. |
+| `get_all_albums` | | `sort` (`title` default / `count_photos` / `count_views`), `limit` | List all your albums from the local database. |
 | `get_album_photos` | | `album_id`*, `limit` (default 50), `page` (default 1) | List photos in an album. |
 | `add_to_album` | ✍️ | `photo_id`*, `album_id`* | Add a photo to an album. |
 | `remove_from_album` | ✍️ | `photo_id`*, `album_id`* | Remove a photo from an album. |

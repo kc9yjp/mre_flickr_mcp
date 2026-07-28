@@ -62,7 +62,7 @@ The SSE endpoint is `http://localhost:8000/sse`. Add to `.mcp.json`:
 | `list_recent_syncs` | Sync history |
 | `sync` | Trigger an incremental or full sync |
 | `find_weak_photos` | Photos ranked by weakness (low views, no faves/comments) |
-| `find_albums` / `get_album_photos` | Search albums, list contents |
+| `find_albums` / `get_all_albums` / `get_album_photos` | Search albums, list all albums, list contents |
 | `add_to_album` / `remove_from_album` | Manage album membership |
 | `find_groups` / `add_to_group` | Search groups, submit photos |
 | `get_contacts_summary` / `find_unfollow_candidates` | Engagement stats |
