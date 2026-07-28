@@ -18,6 +18,7 @@ import logging
 import os
 import re
 import secrets
+import threading
 import time
 import urllib.parse
 
@@ -198,6 +199,60 @@ def _oauth_params(api_key, extra=None):
 
 
 # ---------------------------------------------------------------------------
+# GET response cache
+#
+# Flickr GET calls (getInfo, getSizes, comments.getList, ...) are cached for
+# up to CACHE_TTL seconds, keyed per-user so accounts never share entries.
+# Any write (_api_post) purges cache entries whose params share an identifier
+# (photo_id, photoset_id, group_id, comment_id, ...) with the write, so a read
+# immediately following an update never returns stale data.
+# ---------------------------------------------------------------------------
+
+CACHE_TTL = int(os.environ.get("FLICKR_CACHE_TTL", 300))
+
+_cache: dict[tuple, tuple[float, dict]] = {}
+_cache_lock = threading.Lock()
+
+
+def _cache_key(nsid: str, method: str, params: dict | None) -> tuple:
+    return (nsid, method, tuple(sorted((params or {}).items())))
+
+
+def _cache_get(key: tuple) -> dict | None:
+    with _cache_lock:
+        entry = _cache.get(key)
+        if entry is None:
+            return None
+        expires_at, data = entry
+        if time.time() >= expires_at:
+            del _cache[key]
+            return None
+        return data
+
+
+def _cache_store(key: tuple, data: dict) -> None:
+    with _cache_lock:
+        _cache[key] = (time.time() + CACHE_TTL, data)
+
+
+def _cache_purge_for_write(nsid: str, params: dict | None) -> None:
+    """Evict cached GET entries that reference an identifier touched by a write."""
+    values = {v for k, v in (params or {}).items() if k not in ("format", "nojsoncallback")}
+    if not values:
+        return
+    with _cache_lock:
+        stale = [key for key in _cache if key[0] == nsid and any(v in values for _, v in key[2])]
+        for key in stale:
+            del _cache[key]
+
+
+def clear_cache() -> None:
+    """Drop every cached GET response. Used by tests; not needed in normal operation."""
+    with _cache_lock:
+        _cache.clear()
+
+
+# ---------------------------------------------------------------------------
 # API wrappers
 # ---------------------------------------------------------------------------
 
@@ -268,9 +323,18 @@ def _api_get(method, extra=None):
     user from the ``db._current_user`` ContextVar automatically.
     Retries up to ``_API_MAX_RETRIES`` times on transient errors.
     Raises ``RuntimeError`` on permanent failure.
+
+    Results are cached per-user for ``CACHE_TTL`` seconds (default 5 minutes);
+    a matching ``_api_post()`` write purges the relevant cache entries.
     """
     api_key, api_secret = _load_env()
     creds = _load_credentials()
+    nsid = creds.get("user_nsid", "")
+
+    key = _cache_key(nsid, method, extra)
+    cached = _cache_get(key)
+    if cached is not None:
+        return cached
 
     def _make_params():
         p = _oauth_params(api_key, {
@@ -284,7 +348,9 @@ def _api_get(method, extra=None):
         p["oauth_signature"] = _sign("GET", API_URL, p, api_secret, creds["oauth_token_secret"])
         return p
 
-    return _api_call("GET", method, _make_params)
+    data = _api_call("GET", method, _make_params)
+    _cache_store(key, data)
+    return data
 
 
 def _api_post(method, extra=None):
@@ -294,9 +360,14 @@ def _api_post(method, extra=None):
     user from the ``db._current_user`` ContextVar automatically.
     Retries up to ``_API_MAX_RETRIES`` times on transient errors.
     Raises ``RuntimeError`` on permanent failure.
+
+    On success, purges any cached GET responses that share an identifier
+    (photo_id, photoset_id, group_id, ...) with this write, so the item's
+    data is never read back stale from the cache.
     """
     api_key, api_secret = _load_env()
     creds = _load_credentials()
+    nsid = creds.get("user_nsid", "")
 
     def _make_params():
         p = _oauth_params(api_key, {
@@ -310,7 +381,9 @@ def _api_post(method, extra=None):
         p["oauth_signature"] = _sign("POST", API_URL, p, api_secret, creds["oauth_token_secret"])
         return p
 
-    return _api_call("POST", method, _make_params)
+    data = _api_call("POST", method, _make_params)
+    _cache_purge_for_write(nsid, extra)
+    return data
 
 
 _NSID_RE = re.compile(r"^\d+@N\d+$")
