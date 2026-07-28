@@ -144,78 +144,51 @@ async def api_photos(request: Request):
     })
 
 
-def _photo_albums(photo_id: str) -> list[dict]:
-    """Best-effort album (photoset) membership for a photo, fetched from the
-    Flickr API — photo-album membership isn't tracked in the local DB.
-    Caller must have already set the ``_current_user`` context."""
+def _photo_contexts(photo_id: str) -> tuple[list[dict], list[dict]]:
+    """Album (photoset) and group (pool) membership for a photo, fetched live
+    from the Flickr API via getAllContexts — never read from the local cache.
+    Returns ``(albums, groups)``. Caller must have already set the
+    ``_current_user`` context."""
     try:
         data = flickr_api._api_get("flickr.photos.getAllContexts", {"photo_id": photo_id})
-        return [{"id": s["id"], "title": s.get("title", "")} for s in data.get("set", [])]
     except Exception as e:
-        logging.warning("failed to fetch albums for photo %s: %s", photo_id, e)
-        return []
+        logging.warning("failed to fetch contexts for photo %s: %s", photo_id, e)
+        return [], []
+    albums = [{"id": s["id"], "title": s.get("title", "")} for s in data.get("set", [])]
+    groups = [{"id": p["id"], "name": p.get("title", "")} for p in data.get("pool", [])]
+    return albums, groups
+
+
+def _in_keeper_list(username: str, photo_id: str) -> bool:
+    """Keeper-list membership is a local-only annotation with no Flickr
+    equivalent, so it is read from the per-user database."""
+    if not os.path.exists(db_file(username)):
+        return False
+    with get_db_for_user(username) as conn:
+        return conn.execute(
+            "SELECT 1 FROM keeper_list WHERE photo_id = ?", (photo_id,)
+        ).fetchone() is not None
 
 
 async def api_photo_detail(request: Request):
+    """GET /api/photos/{id} — photo detail fetched live from the Flickr API.
+
+    Core metadata, sizes, favorites, and album/group membership all come
+    straight from Flickr so the detail view never shows stale cached values.
+    Only the keeper-list flag — a local-only annotation with no Flickr
+    equivalent — is read from the per-user database.
+    """
     user = _session_user(request)
     if not user:
         return _unauthorized()
 
     photo_id = request.path_params["id"]
 
-    if not os.path.exists(db_file(user["username"])):
-        return await _external_photo_detail(user, photo_id)
-
-    with get_db_for_user(user["username"]) as conn:
-        row = conn.execute(
-            f"SELECT {_PHOTO_COLUMNS} FROM photos WHERE id = ?", (photo_id,)
-        ).fetchone()
-        if not row:
-            return await _external_photo_detail(user, photo_id)
-        groups = conn.execute(
-            "SELECT g.id, g.name FROM photo_groups pg "
-            "JOIN groups g ON pg.group_id = g.id WHERE pg.photo_id = ? "
-            "ORDER BY g.name",
-            (photo_id,),
-        ).fetchall()
-        keeper = conn.execute(
-            "SELECT 1 FROM keeper_list WHERE photo_id = ?", (photo_id,)
-        ).fetchone()
-
     from db import _current_user as _ctx
 
     token = _ctx.set(user)
     try:
-        albums = _photo_albums(photo_id)
-    finally:
-        _ctx.reset(token)
-
-    return JSONResponse({
-        **dict(row),
-        "groups": [dict(g) for g in groups],
-        "albums": albums,
-        "in_keeper_list": bool(keeper),
-        "is_own": True,
-    })
-
-
-async def _external_photo_detail(user: dict, photo_id: str) -> JSONResponse:
-    """Fetch detail for a photo that isn't (yet) in the local DB — e.g. someone
-    else's photo opened via the bookmarklet — straight from the Flickr API."""
-    from db import _current_user as _ctx
-
-    token = _ctx.set(user)
-    try:
-        info = flickr_api._api_get("flickr.photos.getInfo", {"photo_id": photo_id})
-        sizes_data = flickr_api._api_get("flickr.photos.getSizes", {"photo_id": photo_id})
-        try:
-            faves_data = flickr_api._api_get(
-                "flickr.photos.getFavorites", {"photo_id": photo_id, "per_page": "1"}
-            )
-            favorites = int(faves_data.get("photo", {}).get("total", 0) or 0)
-        except Exception:
-            favorites = 0
-        albums = _photo_albums(photo_id)
+        payload = _build_photo_detail(photo_id, user)
     except flickr_api.FlickrAPIError as e:
         status = 404 if e.code == 1 else 502
         return JSONResponse({"error": e.flickr_message}, status_code=status)
@@ -223,6 +196,27 @@ async def _external_photo_detail(user: dict, photo_id: str) -> JSONResponse:
         return JSONResponse({"error": str(e)}, status_code=502)
     finally:
         _ctx.reset(token)
+
+    payload["in_keeper_list"] = _in_keeper_list(user["username"], photo_id)
+    return JSONResponse(payload)
+
+
+def _build_photo_detail(photo_id: str, user: dict) -> dict:
+    """Assemble a photo's detail payload entirely from the Flickr API.
+
+    Caller must have already set the ``_current_user`` context. Raises
+    ``FlickrAPIError`` (or another exception) on API failure so the handler
+    can translate it into the right HTTP status."""
+    info = flickr_api._api_get("flickr.photos.getInfo", {"photo_id": photo_id})
+    sizes_data = flickr_api._api_get("flickr.photos.getSizes", {"photo_id": photo_id})
+    try:
+        faves_data = flickr_api._api_get(
+            "flickr.photos.getFavorites", {"photo_id": photo_id, "per_page": "1"}
+        )
+        favorites = int(faves_data.get("photo", {}).get("total", 0) or 0)
+    except Exception:
+        favorites = 0
+    albums, groups = _photo_contexts(photo_id)
 
     photo = info["photo"]
     owner = photo.get("owner", {})
@@ -249,14 +243,16 @@ async def _external_photo_detail(user: dict, photo_id: str) -> JSONResponse:
     else:
         avatar_url = "https://www.flickr.com/images/buddyicon.gif"
 
-    return JSONResponse({
+    is_own = bool(owner_nsid) and owner_nsid == user.get("nsid")
+
+    return {
         "id":             photo_id,
         "title":          photo.get("title", {}).get("_content", ""),
         "description":    photo.get("description", {}).get("_content", ""),
         "date_taken":     photo.get("dates", {}).get("taken", ""),
         "date_uploaded":  int(photo.get("dates", {}).get("posted", 0) or 0),
         "last_updated":   int(photo.get("dates", {}).get("lastupdate", 0) or 0),
-        "url_photopage":  f"https://www.flickr.com/photos/{owner.get('nsid', '')}/{photo_id}/",
+        "url_photopage":  f"https://www.flickr.com/photos/{owner_nsid}/{photo_id}/",
         "url_original":   url_original,
         "url_medium":     url_medium,
         "tags":           tags,
@@ -265,10 +261,9 @@ async def _external_photo_detail(user: dict, photo_id: str) -> JSONResponse:
         "comments":       int(photo.get("comments", {}).get("_content", 0) or 0),
         "is_public":      1 if photo.get("visibility", {}).get("ispublic", 1) else 0,
         "synced_at":      0,
-        "groups":         [],
+        "groups":         groups,
         "albums":         albums,
-        "in_keeper_list": False,
-        "is_own":         False,
+        "is_own":         is_own,
         "owner": {
             "nsid":       owner_nsid,
             "username":   owner.get("username", ""),
@@ -276,7 +271,7 @@ async def _external_photo_detail(user: dict, photo_id: str) -> JSONResponse:
             "profile_url": f"https://www.flickr.com/people/{owner_nsid}/",
             "avatar_url": avatar_url,
         },
-    })
+    }
 
 
 async def api_photo_fave(request: Request):

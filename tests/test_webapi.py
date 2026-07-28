@@ -147,11 +147,44 @@ def test_api_photos_by_ids_ignores_other_filters(client):
     assert data["total"] == 1
 
 
-def test_api_photo_detail_includes_groups_and_keeper_flag(client):
+def _fake_own_api_get(method, extra=None):
+    if method == "flickr.photos.getInfo":
+        return {
+            "photo": {
+                "id": "photo1",
+                "owner": {"nsid": NSID, "username": USERNAME, "realname": "API Test User"},
+                "title": {"_content": "Test Photo"},
+                "description": {"_content": "A description"},
+                "dates": {"taken": "2024-01-15 12:00:00", "posted": "1600000000", "lastupdate": "1600000001"},
+                "views": "100",
+                "comments": {"_content": "2"},
+                "visibility": {"ispublic": 1},
+                "tags": {"tag": [{"raw": "sunset"}, {"raw": "landscape"}]},
+            }
+        }
+    if method == "flickr.photos.getSizes":
+        return {"sizes": {"size": [
+            {"label": "Medium", "source": "https://example.com/medium.jpg"},
+            {"label": "Large", "source": "https://example.com/large.jpg"},
+        ]}}
+    if method == "flickr.photos.getFavorites":
+        return {"photo": {"total": "5"}}
+    if method == "flickr.photos.getAllContexts":
+        return {
+            "set":  [{"id": "album1", "title": "My Album"}],
+            "pool": [{"id": "group1@N00", "title": "Landscape Lovers"}],
+        }
+    raise AssertionError(f"unexpected method {method}")
+
+
+def test_api_photo_detail_fetches_live_from_flickr(client):
     _login(client)
-    data = client.get("/api/photos/photo1").json()
+    with patch("webapi.flickr_api._api_get", side_effect=_fake_own_api_get):
+        data = client.get("/api/photos/photo1").json()
     assert data["id"] == "photo1"
+    assert data["is_own"] is True
     assert data["groups"] == [{"id": "group1@N00", "name": "Landscape Lovers"}]
+    assert data["albums"] == [{"id": "album1", "title": "My Album"}]
     assert data["in_keeper_list"] is False
 
 

@@ -177,12 +177,23 @@ class TestGetSummary:
 
 class TestUpdatePhoto:
     @pytest.mark.asyncio
-    async def test_update_title_and_tags(self, db, api_post):
+    async def test_update_title_and_tags(self, db, api_get, api_post):
         import mcp_tools
+        # description is omitted, so the handler carries the current value over
+        # from the Flickr API (getInfo) rather than the local cache.
+        api_get.return_value = {"photo": {
+            "title": {"_content": "Old Title"},
+            "description": {"_content": "Old description"},
+        }}
         api_post.return_value = {"stat": "ok"}
         result = await mcp_tools._update_photo({"id": "photo1", "title": "New Title", "tags": "rain"})
         assert "title/description" in _text(result)
         assert "tags" in _text(result)
+        api_get.assert_called_once_with("flickr.photos.getInfo", {"photo_id": "photo1"})
+        # setMeta must preserve the API's current description, not drop it.
+        setmeta_call = next(c for c in api_post.call_args_list if c.args[0] == "flickr.photos.setMeta")
+        assert setmeta_call.args[1]["description"] == "Old description"
+        assert setmeta_call.args[1]["title"] == "New Title"
         row = db.execute("SELECT title, tags FROM photos WHERE id='photo1'").fetchone()
         assert row["title"] == "New Title"
         assert row["tags"] == "rain"

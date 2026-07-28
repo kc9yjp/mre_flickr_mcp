@@ -256,10 +256,12 @@ frontend. Auth is the browser session cookie; POSTs carry the session's
 CSRF token via an `X-CSRF-Token` header (see Security below). Endpoints
 cover photos (list/detail/fave/comment), albums, stats, sync
 status/trigger, the group-add queue, setup snippets, settings, API key
-regeneration, database reset, and the downloadable browser extension. A
-photo not yet in the local database (e.g. someone else's, opened via the
-bookmarklet) falls back to live Flickr API calls
-(`_external_photo_detail`).
+regeneration, database reset, and the downloadable browser extension. Photo
+detail (`GET /api/photos/{id}`) is always assembled live from the Flickr API
+(`_build_photo_detail`) — core metadata, sizes, favorites, and album/group
+membership all come straight from Flickr so the detail view never shows stale
+cached values; only the keeper-list flag, a local-only annotation, is read
+from the per-user database.
 
 ## Web/auth layer (`web.py`)
 
