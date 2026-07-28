@@ -133,6 +133,25 @@ def append_message(username: str, conversation_id: str, message: dict) -> None:
         )
 
 
+def replace_messages(username: str, conversation_id: str, messages: list[dict]) -> None:
+    """Discard a conversation's stored messages and replace them wholesale.
+
+    Used by compaction: the full history is deleted and replaced with just
+    the summary message(s), same conversation id and title.
+    """
+    now = int(time.time())
+    with _chat_db(username) as conn:
+        conn.execute("DELETE FROM messages WHERE conversation_id = ?", (conversation_id,))
+        for seq, message in enumerate(messages, start=1):
+            conn.execute(
+                "INSERT INTO messages (conversation_id, seq, role, content_json) VALUES (?,?,?,?)",
+                (conversation_id, seq, message.get("role", ""), json.dumps(message)),
+            )
+        conn.execute(
+            "UPDATE conversations SET updated_at = ? WHERE id = ?", (now, conversation_id)
+        )
+
+
 def delete_conversation(username: str, conversation_id: str) -> None:
     with _chat_db(username) as conn:
         conn.execute("DELETE FROM messages WHERE conversation_id = ?", (conversation_id,))

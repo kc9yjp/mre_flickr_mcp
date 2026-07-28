@@ -206,6 +206,133 @@ def test_store_roundtrip(user_db):
     assert not store.conversation_exists(USERNAME, conv)
 
 
+def test_store_replace_messages(user_db):
+    from agent import store
+
+    conv = store.create_conversation(USERNAME, "t")
+    store.append_message(USERNAME, conv, {"role": "user", "content": "hello"})
+    store.append_message(USERNAME, conv, {"role": "assistant", "content": "hi"})
+
+    store.replace_messages(USERNAME, conv, [{"role": "assistant", "content": "summary"}])
+
+    msgs = store.get_messages(USERNAME, conv)
+    assert msgs == [{"role": "assistant", "content": "summary"}]
+
+
+# --- compaction ---
+
+@pytest.mark.asyncio
+async def test_compact_replaces_history_with_summary(user_db):
+    from agent import compact, store
+
+    conv = store.create_conversation(USERNAME, "t")
+    store.append_message(USERNAME, conv, {"role": "user", "content": "hello"})
+    store.append_message(USERNAME, conv, {"role": "assistant", "content": "hi"})
+
+    async def fake_stream_chat(cfg, messages, tools=None, client=None):
+        yield {"type": "message", "content": "Summary of the chat.", "tool_calls": [], "finish_reason": "stop"}
+
+    with patch("agent.compact.llm.stream_chat", fake_stream_chat):
+        summary = await compact.compact(USERNAME, conv, CFG)
+
+    assert summary == "Summary of the chat."
+    msgs = store.get_messages(USERNAME, conv)
+    assert len(msgs) == 1
+    assert msgs[0]["role"] == "assistant"
+    assert "Summary of the chat." in msgs[0]["content"]
+
+
+@pytest.mark.asyncio
+async def test_compact_empty_conversation_is_a_no_op(user_db):
+    from agent import compact, store
+
+    conv = store.create_conversation(USERNAME, "t")
+    summary = await compact.compact(USERNAME, conv, CFG)
+    assert summary == ""
+    assert store.get_messages(USERNAME, conv) == []
+
+
+@pytest.mark.asyncio
+async def test_compact_llm_error_is_a_no_op(user_db):
+    from agent import compact, llm, store
+
+    conv = store.create_conversation(USERNAME, "t")
+    store.append_message(USERNAME, conv, {"role": "user", "content": "hello"})
+
+    async def broken(cfg, messages, tools=None, client=None):
+        raise llm.LLMError("connection refused")
+        yield  # pragma: no cover
+
+    with patch("agent.compact.llm.stream_chat", broken):
+        summary = await compact.compact(USERNAME, conv, CFG)
+
+    assert summary == ""
+    # History is left untouched — a failed summarization must not still wipe it.
+    assert len(store.get_messages(USERNAME, conv)) == 1
+
+
+@pytest.mark.asyncio
+async def test_run_turn_auto_compacts_when_over_threshold(user_db):
+    """auto_compact=True + a history estimated over threshold must compact
+    the *prior* history before this turn's own question/answer are appended,
+    so the new question survives (it must not get folded into the summary
+    and lost — see loop.run_turn's ordering comment).
+
+    ``agent.compact`` and ``agent.loop`` both do ``from agent import llm``,
+    i.e. they share the exact same module object — patching
+    ``agent.compact.llm.stream_chat`` and ``agent.loop.llm.stream_chat``
+    separately would silently clobber each other (last patch wins for both
+    call sites), so this dispatches on the request content instead of
+    patching two "different" targets that are actually one.
+    """
+    from agent import compact, loop, store
+
+    conv = store.create_conversation(USERNAME, "t")
+    store.append_message(USERNAME, conv, {"role": "user", "content": "x" * 400})
+    store.append_message(USERNAME, conv, {"role": "assistant", "content": "y" * 400})
+
+    async def fake_stream_chat(cfg, messages, tools=None, client=None):
+        if messages and messages[-1].get("content") == compact.COMPACT_INSTRUCTION:
+            yield {"type": "message", "content": "Old chat summarized.", "tool_calls": [], "finish_reason": "stop"}
+        else:
+            yield {"type": "message", "content": "Answered after compaction.", "tool_calls": [], "finish_reason": "stop"}
+
+    small_cfg = {**CFG, "context_window": 100}
+
+    with patch("agent.settings.load_settings", return_value={"auto_compact": True}), \
+         patch("agent.llm.stream_chat", fake_stream_chat):
+        events = [e async for e in loop.run_turn(USER, conv, "new question", small_cfg)]
+
+    assert any(
+        e["type"] == "compacted" and e["summary"] == "Old chat summarized." for e in events
+    )
+    stored = store.get_messages(USERNAME, conv)
+    assert stored[0]["role"] == "assistant"
+    assert "Old chat summarized." in stored[0]["content"]
+    assert stored[1] == {"role": "user", "content": "new question"}
+
+
+@pytest.mark.asyncio
+async def test_run_turn_no_auto_compact_when_disabled(user_db):
+    """Even a tiny context_window must not trigger compaction while
+    auto_compact is off (the default) — see settings._merge_defaults."""
+    from agent import loop, store
+
+    conv = store.create_conversation(USERNAME, "t")
+    store.append_message(USERNAME, conv, {"role": "user", "content": "x" * 400})
+    store.append_message(USERNAME, conv, {"role": "assistant", "content": "y" * 400})
+
+    scripted = _scripted_llm([{"content": "ok"}])
+    small_cfg = {**CFG, "context_window": 100}
+
+    with patch("agent.loop.compact.compact") as mock_compact, \
+         patch("agent.loop.llm.stream_chat", scripted):
+        events = [e async for e in loop.run_turn(USER, conv, "hi", small_cfg)]
+
+    mock_compact.assert_not_called()
+    assert not any(e["type"] == "compacted" for e in events)
+
+
 # --- agent loop ---
 
 def _scripted_llm(turns: list[dict]):

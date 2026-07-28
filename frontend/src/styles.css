@@ -1336,6 +1336,13 @@ select:focus {
   font-size: 0.8125rem;
 }
 
+.session-stats-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+
 /* --- Theme menu --- */
 
 .theme-menu {

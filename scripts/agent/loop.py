@@ -9,6 +9,7 @@
     {"type": "tool_result", "id", "name", "text"}
     {"type": "focus", "photo_id"}                        drive the photo viewer
     {"type": "photo_list", "photo_ids"}                  populate the grid
+    {"type": "compacted", "summary"}                     auto-compact ran before this turn
     {"type": "error", "message"}
     {"type": "done"}
 """
@@ -25,11 +26,16 @@ from mcp.types import TextContent, ImageContent
 import mcp_tools
 from db import _current_user, get_db
 
-from agent import llm, prompts_store, schema, store
+from agent import compact, llm, prompts_store, schema, settings, store
+from agent.wire import approx_tokens
+from agent.wire import coerce_null_content as _coerce_null_content
+from agent.wire import wire_messages as _wire_messages
 
 MAX_ITERATIONS = 15
 CONFIRM_TIMEOUT = 300  # seconds to wait for the user's approve/deny
 RESULT_CHAR_CAP = 20_000
+DEFAULT_CONTEXT_WINDOW = 128_000
+AUTO_COMPACT_THRESHOLD = 0.8  # fraction of context_window that triggers auto-compact
 
 _REMEMBER_TOOL: dict = {
     "type": "function",
@@ -63,8 +69,30 @@ _pending_confirms: dict[str, asyncio.Future] = {}
 _session_stats: dict[str, dict] = {}
 
 
+def _empty_stats() -> dict:
+    return {
+        "turns": 0,
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "total_tokens": 0,
+        "total_latency_ms": 0,
+        "last_prompt_tokens": 0,
+    }
+
+
 def get_turn_lock(username: str) -> asyncio.Lock:
     return _turn_locks.setdefault(username, asyncio.Lock())
+
+
+def reset_context_stats(conversation_id: str) -> None:
+    """Zero out just the "current context size" stat after a compaction.
+
+    The cumulative turn/token counters are left alone (they're historical
+    spend, still accurate) — only ``last_prompt_tokens`` is stale the moment
+    the stored history shrinks, since it won't be recomputed until the next
+    turn actually calls the LLM.
+    """
+    _session_stats.setdefault(conversation_id, _empty_stats())["last_prompt_tokens"] = 0
 
 
 def resolve_confirm(confirm_id: str, approve: bool, reason: str | None = None) -> bool:
@@ -81,14 +109,14 @@ def resolve_confirm(confirm_id: str, approve: bool, reason: str | None = None) -
 
 
 def get_session_stats(conversation_id: str) -> dict:
-    """Get accumulated stats for a conversation session."""
-    return _session_stats.get(conversation_id, {
-        "turns": 0,
-        "prompt_tokens": 0,
-        "completion_tokens": 0,
-        "total_tokens": 0,
-        "total_latency_ms": 0,
-    })
+    """Get accumulated stats for a conversation session.
+
+    ``last_prompt_tokens`` is the prompt size of the most recent turn (the
+    actual current context size), unlike ``prompt_tokens`` which sums across
+    every turn this session — that distinction is what lets the frontend
+    show a meaningful "context used" percentage.
+    """
+    return _session_stats.get(conversation_id, _empty_stats())
 
 
 def _register_confirm(confirm_id: str) -> asyncio.Future:
@@ -128,40 +156,6 @@ _VISION_DISABLED_NOTE = (
     "(image fetched — vision is disabled; work from title/description/tags/EXIF "
     "only. Do not guess or claim to describe the image.)"
 )
-
-
-def _wire_messages(messages: list[dict]) -> list[dict]:
-    """Expand tool-result messages that carry an image into wire-safe form.
-
-    OpenAI-compatible Chat Completions (and the Responses API translation in
-    llm.py) only allow *text* content in a ``"tool"`` role message — images
-    are only valid inside a ``"user"`` message. A vision-enabled tool result
-    (see ``_result_content``) stores its image_url part directly on the tool
-    message for simplicity, but that's spec-invalid on the wire: compliant
-    servers silently drop or ignore it, so the model never actually sees the
-    image even with vision enabled. Split any such tool message into a
-    text-only tool message followed by a synthetic user message carrying the
-    image(s) — this only affects what's sent for this call, not what's
-    stored or shown in the chat UI.
-    """
-    out = []
-    for m in messages:
-        content = m.get("content")
-        if m.get("role") == "tool" and isinstance(content, list):
-            text = "\n".join(p["text"] for p in content if p.get("type") == "text")
-            images = [p for p in content if p.get("type") == "image_url"]
-            out.append({**m, "content": text})
-            if images:
-                out.append({
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": "(image from the tool call above, for visual inspection)"},
-                        *images,
-                    ],
-                })
-        else:
-            out.append(m)
-    return out
 
 
 def _result_content(result: list, vision: bool) -> "str | list":
@@ -251,20 +245,6 @@ def _focus_photo_id(name: str, args: dict) -> str | None:
 _LIST_TOOLS = {"find_weak_photos", "search_photos"}
 
 
-def _coerce_null_content(messages: list[dict]) -> None:
-    """Normalize a null assistant "content" field to "" in place.
-
-    Null content on a tool-call-only assistant turn is valid OpenAI wire
-    format, but some OpenAI-compatible proxies (e.g. OpenCode Zen, when
-    translating to Anthropic's Messages API) choke on it and return
-    "invalid message content type: <nil>". Conversations stored before this
-    was caught may still have a null persisted, so this also heals replayed
-    history, not just newly generated turns."""
-    for m in messages:
-        if m.get("role") == "assistant" and m.get("content") is None:
-            m["content"] = ""
-
-
 def _list_photo_ids(name: str, text: str) -> list[str] | None:
     """Best-effort extraction of photo ids from a list-tool's JSON result.
 
@@ -340,6 +320,18 @@ async def run_turn(
     vision = bool(cfg.get("vision", False))
     tools = schema.to_openai_tools() + [_REMEMBER_TOOL]
 
+    # Auto-compact runs on the *prior* history, before this turn's message is
+    # appended — compacting after would fold the user's brand-new question
+    # into the summary and leave nothing for the model to actually respond to.
+    if settings.load_settings(nsid).get("auto_compact"):
+        prior_messages = store.get_messages(username, conversation_id)
+        context_window = cfg.get("context_window") or DEFAULT_CONTEXT_WINDOW
+        if approx_tokens(prior_messages) >= context_window * AUTO_COMPACT_THRESHOLD:
+            summary = await compact.compact(username, conversation_id, cfg)
+            if summary:
+                reset_context_stats(conversation_id)
+                yield {"type": "compacted", "summary": summary}
+
     user_msg = {"role": "user", "content": user_message}
     store.append_message(username, conversation_id, user_msg)
     system_prompt = prompts_store.get_prompt_by_code(nsid, "system-core")
@@ -380,19 +372,15 @@ async def run_turn(
 
             # Track session stats
             if final:
-                stats = _session_stats.setdefault(conversation_id, {
-                    "turns": 0,
-                    "prompt_tokens": 0,
-                    "completion_tokens": 0,
-                    "total_tokens": 0,
-                    "total_latency_ms": 0,
-                })
+                stats = _session_stats.setdefault(conversation_id, _empty_stats())
                 stats["turns"] += 1
                 if final.get("usage"):
                     usage = final["usage"]
                     stats["prompt_tokens"] += usage.get("prompt_tokens", 0)
                     stats["completion_tokens"] += usage.get("completion_tokens", 0)
                     stats["total_tokens"] += usage.get("total_tokens", 0)
+                    if usage.get("prompt_tokens"):
+                        stats["last_prompt_tokens"] = usage["prompt_tokens"]
                 stats["total_latency_ms"] += final.get("latency_ms", 0)
 
             assistant_msg: dict = {"role": "assistant", "content": final["content"]}

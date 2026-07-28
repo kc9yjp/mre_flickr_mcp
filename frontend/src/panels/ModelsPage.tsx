@@ -242,6 +242,7 @@ export function ModelsPage() {
       setCfg(await postJSON<LLMSettings>("/api/llm-settings", {
         active_connection: cfg.active_connection,
         active_model: cfg.active_model,
+        auto_compact: cfg.auto_compact,
       }));
       flash("Saved.");
       bus.emit("llmConnectionsChanged", undefined);
@@ -377,6 +378,18 @@ export function ModelsPage() {
                                   value={draft.max_tokens}
                                   onChange={(e) => setModelDraft(cid, m, { max_tokens: Number(e.target.value) })}
                                 />
+                              </label>
+                              <label>
+                                Context window
+                                <input
+                                  type="number"
+                                  step="1000"
+                                  value={draft.context_window}
+                                  onChange={(e) => setModelDraft(cid, m, { context_window: Number(e.target.value) })}
+                                />
+                                <span className="hint">
+                                  {" "}— total tokens this model can hold; drives auto-compact's threshold
+                                </span>
                               </label>
                               <label>
                                 Temperature
@@ -568,6 +581,28 @@ export function ModelsPage() {
               {loadingModels === cfg.active_connection ? "Fetching…" : "Fetch models"}
             </button>
           )}
+          <button type="submit">Save</button>
+        </div>
+      </form>
+
+      <h3>Auto-compact</h3>
+      <p className="hint">
+        When a conversation's history nears the active model's context window (set per model
+        under Details above), automatically summarize it via the LLM and replace the history with
+        that summary before the next turn. Off by default — compaction is a lossy, irreversible
+        rewrite of that conversation's stored history. You can also compact a conversation manually
+        any time from the 📊 stats panel in Chat.
+      </p>
+      <form onSubmit={saveActiveSelection} className="settings-item">
+        <div className="settings-row">
+          <label className="chat-settings-checkbox">
+            <input
+              type="checkbox"
+              checked={cfg.auto_compact}
+              onChange={(e) => setCfg((c) => (c ? { ...c, auto_compact: e.target.checked } : c))}
+            />
+            Auto-compact conversations when context fills up
+          </label>
           <button type="submit">Save</button>
         </div>
       </form>

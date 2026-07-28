@@ -129,6 +129,10 @@ export interface ModelSettings {
   presence_penalty: string;
   seed: string;
   tool_choice: string;
+  // Total context size this model can hold. Never sent to the connection —
+  // only used client/server-side for the auto-compact threshold and the
+  // "context used" stat, since it can't be queried from /v1/models.
+  context_window: number;
 }
 
 export const MODEL_SETTINGS_DEFAULTS: ModelSettings = {
@@ -140,6 +144,7 @@ export const MODEL_SETTINGS_DEFAULTS: ModelSettings = {
   presence_penalty: "",
   seed: "",
   tool_choice: "auto",
+  context_window: 128_000,
 };
 
 export interface Connection {
@@ -163,6 +168,10 @@ export interface LLMSettings {
   connections: Record<string, Connection>;
   active_connection: string;
   active_model: string;
+  // When on, loop.run_turn compacts a conversation's history into an
+  // LLM-written summary once it nears the active model's context_window,
+  // before sending the next turn. Off by default — compaction is lossy.
+  auto_compact: boolean;
 }
 
 // ── Prompts ────────────────────────────────────────────────────────────────
@@ -211,6 +220,10 @@ export interface SessionStats {
   completion_tokens: number;
   total_tokens: number;
   total_latency_ms: number;
+  // Prompt size of the most recent turn (the actual current context size) —
+  // unlike prompt_tokens, which sums across every turn this session.
+  last_prompt_tokens: number;
+  context_window: number;
 }
 
 export interface Conversation {
@@ -255,6 +268,7 @@ export type StreamEvent =
   | { type: "tool_result"; id: string; name: string; text: string }
   | { type: "focus"; photo_id: string }
   | { type: "photo_list"; photo_ids: string[] }
+  | { type: "compacted"; summary: string }
   | { type: "error"; message: string }
   | { type: "done" };
 
@@ -366,6 +380,10 @@ export async function resetModelSettings(connectionId: string, model: string): P
 
 export async function getSessionStats(conversationId: string): Promise<SessionStats> {
   return getJSON<SessionStats>("/api/chat/stats", { conversation_id: conversationId });
+}
+
+export async function compactConversation(conversationId: string): Promise<{ ok: true; summary: string }> {
+  return postJSON(`/api/chat/conversations/${conversationId}/compact`, {});
 }
 
 // Models known to not support vision

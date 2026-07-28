@@ -14,14 +14,16 @@ Storage shape (v4 — named connections, per-model settings)::
                     "models": {
                       "llama3.1": {"max_tokens": 1024, "vision": false,
                                     "temperature": "", "top_p": "", "frequency_penalty": "",
-                                    "presence_penalty": "", "seed": "", "tool_choice": "auto"}
+                                    "presence_penalty": "", "seed": "", "tool_choice": "auto",
+                                    "context_window": 128000}
                     }},
         "zen":    {"name": "OpenCode Zen", "kind": "openai_compatible", "api_mode": "chat_completions",
                     "base_url": "https://opencode.ai/zen/v1", "api_key": "...",
                     "disabled_models": ["gpt-5", "..."], "models": {}}
       },
       "active_connection": "ollama",
-      "active_model": ""
+      "active_model": "",
+      "auto_compact": false
     }
 
 A connection's ``kind`` (``ollama`` | ``openai_compatible``) only picks a
@@ -30,10 +32,18 @@ behavior. ``api_mode`` (``chat_completions`` | ``responses``) is what
 ``llm.py``/``loop.py`` actually branch on.
 
 ``max_tokens``/``vision``/``temperature``/``top_p``/``frequency_penalty``/
-``presence_penalty``/``seed``/``tool_choice`` (the ``DEFAULTS`` keys) live
-per model, inside ``connections[cid]["models"][model_id]``. A model absent
-from that dict simply uses ``DEFAULTS`` — entries are only created when a
-user edits that model's settings and saves.
+``presence_penalty``/``seed``/``tool_choice``/``context_window`` (the
+``DEFAULTS`` keys) live per model, inside
+``connections[cid]["models"][model_id]``. A model absent from that dict
+simply uses ``DEFAULTS`` — entries are only created when a user edits that
+model's settings and saves. ``context_window`` is never sent to the
+connection; it only feeds loop.py's auto-compact threshold and the chat
+stats "context used" readout.
+
+``auto_compact`` is a top-level, per-user flag (default ``false``): when on,
+``loop.run_turn`` compacts a conversation's history into an LLM-written
+summary once it's estimated to cross ~80% of the active model's
+``context_window``, before sending the next turn.
 
 Older files migrate on load: a flat v1 file (no ``providers``/``connections``
 key) becomes a default ``ollama`` connection; a v2 file (``providers`` dict
@@ -109,6 +119,12 @@ DEFAULTS = {
     "presence_penalty": "",
     "seed": "",
     "tool_choice": "auto",  # auto | required | none
+    # Total context size this model can hold — used only client-side (by
+    # loop.py's auto-compact check and the chat stats "context used" readout),
+    # never sent to the connection. Not something we can query from an
+    # OpenAI-compatible /v1/models endpoint, so it defaults to a
+    # conservative guess the user can override per model.
+    "context_window": 128_000,
 }
 
 # Models known to require the (unsupported-by-default) Responses API instead
@@ -183,6 +199,8 @@ def save_settings(nsid: str, data: dict) -> dict:
         current["active_connection"] = data["active_connection"]
     if "active_model" in data:
         current["active_model"] = data["active_model"]
+    if "auto_compact" in data:
+        current["auto_compact"] = bool(data["auto_compact"])
 
     # ── merge connections ────────────────────────────────────────────────
     incoming = data.get("connections") or {}
@@ -289,6 +307,7 @@ def update_model_settings(nsid: str, connection_id: str, model: str, patch: dict
         if key in patch:
             entry[key] = patch[key]
     entry["max_tokens"] = int(entry["max_tokens"] or DEFAULTS["max_tokens"])
+    entry["context_window"] = int(entry.get("context_window") or DEFAULTS["context_window"])
     entry["vision"] = bool(entry.get("vision", False))
     models[model] = entry
 
@@ -483,6 +502,9 @@ def _merge_defaults(raw: dict) -> dict:
         "connections": raw["connections"],
         "active_connection": raw.get("active_connection", ""),
         "active_model": raw.get("active_model", ""),
+        # Off by default — compaction discards raw history irreversibly, and
+        # a user should opt into that rather than have it happen silently.
+        "auto_compact": bool(raw.get("auto_compact", False)),
         "schema_version": 4,
     }
 

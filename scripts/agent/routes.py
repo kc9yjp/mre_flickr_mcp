@@ -11,7 +11,7 @@ from starlette.routing import Route
 
 from webapi import _session_user, _unauthorized
 
-from agent import commands, llm, loop, prompts_store, settings, store
+from agent import commands, compact, llm, loop, prompts_store, settings, store
 
 _PING_INTERVAL = 15  # seconds between SSE keepalive comments
 
@@ -156,6 +156,39 @@ async def chat_conversation_delete(request: Request):
         return _unauthorized()
     store.delete_conversation(user["username"], request.path_params["id"])
     return JSONResponse({"ok": True})
+
+
+async def chat_conversation_compact(request: Request):
+    """Manually compact one conversation: summarize its stored history via
+    the LLM and replace it in place. Shares the same code path as
+    loop.run_turn's auto-compact — see agent/compact.py."""
+    user = _session_user(request)
+    if not user:
+        return _unauthorized()
+    nsid = user["nsid"]
+    username = user["username"]
+    conversation_id = request.path_params["id"]
+    if not store.conversation_exists(username, conversation_id):
+        return JSONResponse({"error": "conversation not found"}, status_code=404)
+
+    lock = loop.get_turn_lock(username)
+    if lock.locked():
+        return JSONResponse({"error": "A chat turn is already running."}, status_code=409)
+
+    meta = store.get_conversation_meta(username, conversation_id) or {}
+    cfg = settings.resolve_cfg(nsid, meta.get("provider") or None, meta.get("model") or None)
+    if not cfg.get("model") or not cfg.get("base_url"):
+        return JSONResponse(
+            {"error": "No LLM model configured — open the models panel first."},
+            status_code=400,
+        )
+
+    async with lock:
+        summary = await compact.compact(username, conversation_id, cfg)
+    if not summary:
+        return JSONResponse({"error": "Nothing to compact, or the LLM call failed."}, status_code=400)
+    loop.reset_context_stats(conversation_id)
+    return JSONResponse({"ok": True, "summary": summary})
 
 
 async def llm_settings(request: Request):
@@ -451,15 +484,20 @@ async def prompt_variables_delete(request: Request):
 
 
 async def chat_stats(request: Request):
-    """Get accumulated stats for a conversation session."""
+    """Get accumulated stats for a conversation session, plus the active
+    model's context_window so the frontend can compute a "context used" %
+    from ``last_prompt_tokens`` without a second round trip."""
     user = _session_user(request)
     if not user:
         return _unauthorized()
     conversation_id = request.query_params.get("conversation_id") or ""
     if not conversation_id:
         return JSONResponse({"error": "conversation_id query param required"}, status_code=400)
-    
-    stats = loop.get_session_stats(conversation_id)
+
+    stats = dict(loop.get_session_stats(conversation_id))
+    meta = store.get_conversation_meta(user["username"], conversation_id) or {}
+    cfg = settings.resolve_cfg(user["nsid"], meta.get("provider") or None, meta.get("model") or None)
+    stats["context_window"] = cfg.get("context_window") or loop.DEFAULT_CONTEXT_WINDOW
     return JSONResponse(stats)
 
 
@@ -470,6 +508,7 @@ def api_routes() -> list[Route]:
         Route("/api/chat/conversations", endpoint=chat_conversations),
         Route("/api/chat/conversations/{id}", endpoint=chat_conversation_detail),
         Route("/api/chat/conversations/{id}/delete", endpoint=chat_conversation_delete, methods=["POST"]),
+        Route("/api/chat/conversations/{id}/compact", endpoint=chat_conversation_compact, methods=["POST"]),
         Route("/api/chat/stats",    endpoint=chat_stats),
         Route("/api/llm-settings", endpoint=llm_settings, methods=["GET", "POST"]),
         Route("/api/llm-models",   endpoint=llm_models),

@@ -300,6 +300,18 @@ export function Chat() {
             case "focus":
               bus.emit("focusPhoto", event.photo_id);
               break;
+            case "compacted":
+              // Auto-compact replaced the whole stored history (down to just
+              // a summary message) before this turn even started, so every
+              // earlier bubble in this view is now stale — drop them and
+              // keep only the user/assistant pair `send()` just appended for
+              // this turn (the assistant one still fills in as deltas
+              // arrive), with the summary as its own bubble ahead of them.
+              setMsgs((prev) => [
+                { role: "assistant", text: `**Conversation compacted.**\n\n${event.summary}`, tools: [] },
+                ...prev.slice(-2),
+              ]);
+              break;
             case "photo_list":
               bus.emit("openPanel", "photos");
               bus.emit("showPhotoList", event.photo_ids);
@@ -476,7 +488,9 @@ export function Chat() {
           📝
         </button>
       </div>
-      {showStats && activeId && <SessionStatsPanel conversationId={activeId} />}
+      {showStats && activeId && (
+        <SessionStatsPanel conversationId={activeId} onCompacted={() => activeId && openConversation(activeId)} />
+      )}
       <div className="chat-messages" ref={scrollRef}>
         {error && (
           <p className="error" style={{ marginBottom: 12 }}>{error}</p>
