@@ -145,6 +145,7 @@ sync_log          — type, mode, photos_fetched, synced_at
 - Web UI routes live inside `main_sse()` alongside the MCP SSE endpoint
 - OAuth login uses a full browser redirect flow: `/login/start` → Flickr → `/oauth/callback`
 - Schema changes must be added to the migrations list in `init_db()` — never use `ALTER TABLE` directly
+- Groups sync sets `groups.needs_summary=1` whenever a group is new, renamed, has a changed description, or gets a `set_group_note` edit — the next `sync --type=groups` regenerates its AI summary (see ARCHITECTURE.md's "Group AI summary")
 
 ## Skills (Claude Code slash commands)
 

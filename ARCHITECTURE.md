@@ -212,6 +212,22 @@ called from the background loop, from `get_group_queue`, and from the
 Workbench Queue panel's "retry" actions, and posts anything whose retry
 window has passed.
 
+**Group AI summary** (`groups.needs_summary`): `sync_groups.py` runs in two
+phases. Phase one (`sync_groups()` + `sync_group_descriptions()`) diffs
+Flickr's current group list and each group's description against the local
+DB and sets `needs_summary=1` whenever a group is **new**, **renamed**, or
+its **description changed** — Flickr exposes no last-modified marker for
+group info, so every joined group's description is re-fetched and compared
+each sync to catch this. Editing a group's `user_note` via the
+`set_group_note` tool also sets `needs_summary=1` directly. Phase two
+(`sync_group_summaries()`) then calls the flagged groups' summaries through
+the user's configured LLM (`resolve_sync_cfg()` — see
+[MODEL_CONFIG.md](MODEL_CONFIG.md#sync-jobs-model-selection)), paced by
+`sync_throttle_seconds` (default 60s, gentle on a local LLM), regenerating
+`summary_md`, `is_milestone`, `fave_min`, `view_min`, `open_subject`, and
+`ai_keywords` from the group's name/description/user_note and the editable
+`group-summary` prompt (`agent/prompts_store.py`).
+
 ## MCP tool layer
 
 `scripts/mcp_tools.py` aggregates six domain modules under `scripts/tools/`
