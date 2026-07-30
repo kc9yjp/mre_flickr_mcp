@@ -1,6 +1,6 @@
 # MCP Tools
 
-Full catalog of the 64 MCP tools exposed by this server, grouped by the
+Full catalog of the 65 MCP tools exposed by this server, grouped by the
 module that defines them under `scripts/tools/`. See
 [ARCHITECTURE.md](ARCHITECTURE.md#mcp-tool-layer) for how these are
 aggregated, dispatched, and threaded.
@@ -75,8 +75,8 @@ confirmation UI provides.
 
 | Tool | Write | Parameters | Description |
 |---|:---:|---|---|
-| `find_groups` | | *(optional keyword)* | Search your joined groups by name, description, or keywords. |
-| `set_group_keywords` | ✍️ | `group_id`*, `keywords`* | Custom search synonyms for a group, to improve future `find_groups` matches. |
+| `find_groups` | | *(optional keyword)* | Search your joined groups by name, description, or AI-generated summary/keywords (see `sync` with `type='groups'`). Returns a markdown listing, one section per group headed by its id. |
+| `set_group_note` | ✍️ | `group_id`*, `note`* | Personal note about a group, incorporated into its AI summary the next time groups are synced. |
 | `add_to_group` | ✍️ | `photo_id`*, `group_id`*, `retry_at`, `queue`, `days_offset` | Add a photo to a group pool. If the daily posting limit is hit, the add is queued for automatic retry; `queue=true` schedules a future add deliberately (drip-posting); `retry_at` accepts named times (`morning`, `lunchtime`, `afternoon`, `evening`, `night`, `midnight`) or `HH:MM`, resolved in Chicago time; `days_offset` shifts the schedule by N days. |
 | `remove_from_group` | ✍️ | `photo_id`*, `group_id`* | Remove a photo from a group pool. |
 | `join_group` | ✍️ | `group_id`* | Join a public group. |

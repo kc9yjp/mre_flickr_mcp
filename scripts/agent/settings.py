@@ -127,6 +127,10 @@ DEFAULTS = {
     "context_window": 128_000,
 }
 
+# Default pause between successive group-summary LLM calls within one sync
+# run — see "sync_throttle_seconds" in _merge_defaults()/resolve_sync_cfg().
+DEFAULT_SYNC_THROTTLE_SECONDS = 60
+
 # Models known to require the (unsupported-by-default) Responses API instead
 # of Chat Completions. Only used to seed a new Zen-preset connection's
 # disabled_models so it behaves the same as the pre-v3 hardcoded exclusion —
@@ -201,6 +205,15 @@ def save_settings(nsid: str, data: dict) -> dict:
         current["active_model"] = data["active_model"]
     if "auto_compact" in data:
         current["auto_compact"] = bool(data["auto_compact"])
+    if "sync_connection" in data:
+        current["sync_connection"] = data["sync_connection"]
+    if "sync_model" in data:
+        current["sync_model"] = data["sync_model"]
+    if "sync_throttle_seconds" in data:
+        try:
+            current["sync_throttle_seconds"] = max(0, int(data["sync_throttle_seconds"]))
+        except (TypeError, ValueError):
+            pass
 
     # ── merge connections ────────────────────────────────────────────────
     incoming = data.get("connections") or {}
@@ -339,7 +352,10 @@ def delete_connection(nsid: str, connection_id: str) -> dict | None:
 
     Clears ``active_connection`` if it pointed at the deleted id, rather than
     leaving a dangling reference — resolve_cfg's first-key fallback then
-    takes over.
+    takes over. Clears ``sync_connection``/``sync_model`` the same way —
+    otherwise resolve_sync_cfg would keep resolving a connection id that no
+    longer exists (falling back to some other connection while still
+    applying the stale sync_model to it).
     """
     current = load_settings(nsid)
     connections = current.get("connections") or {}
@@ -349,6 +365,9 @@ def delete_connection(nsid: str, connection_id: str) -> dict | None:
     current["connections"] = connections
     if current.get("active_connection") == connection_id:
         current["active_connection"] = ""
+    if current.get("sync_connection") == connection_id:
+        current["sync_connection"] = ""
+        current["sync_model"] = ""
     _write_settings(nsid, current)
     return masked(current)
 
@@ -388,6 +407,45 @@ def resolve_cfg(
         "api_mode": conn.get("api_mode", "chat_completions"),
         "model": model_id,
     }
+
+
+def resolve_sync_cfg(nsid: str) -> dict:
+    """Build the flat cfg dict for background sync jobs (e.g. the AI group
+    summary phase), using the user's dedicated ``sync_connection``/
+    ``sync_model`` pick, or falling back to their active chat connection/
+    model if unset.
+
+    Unlike ``resolve_cfg``'s general contract — where an explicit connection
+    and model are always supplied together from the same source (the chat
+    header selector, or a conversation's stored provider+model pair) —
+    ``sync_connection`` and ``sync_model`` can be set independently: a user
+    may pick a distinct sync connection while leaving the model on its
+    default. If that were passed straight through, ``resolve_cfg`` would
+    silently default the model to ``active_model``, which belongs to
+    whichever connection is active in *chat* — a different connection that
+    may not even serve a model with that id. So when a distinct sync
+    connection is chosen with no explicit sync_model, the model is left
+    blank here instead (surfacing as "no model configured" rather than
+    silently sending the wrong one).
+
+    Also includes ``sync_throttle_seconds`` — not an LLM request param, but
+    piggybacked onto this same cfg dict since callers (e.g.
+    flickr_sync.sync_group_summaries) need both together.
+    """
+    s = load_settings(nsid)
+    sync_connection = s.get("sync_connection") or ""
+    sync_model = s.get("sync_model") or ""
+    throttle = s.get("sync_throttle_seconds", DEFAULT_SYNC_THROTTLE_SECONDS)
+
+    if not sync_connection:
+        cfg = resolve_cfg(nsid)
+    else:
+        cfg = resolve_cfg(nsid, sync_connection, sync_model or None)
+        if not sync_model and sync_connection != s.get("active_connection"):
+            cfg["model"] = ""
+
+    cfg["sync_throttle_seconds"] = throttle
+    return cfg
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -505,6 +563,18 @@ def _merge_defaults(raw: dict) -> dict:
         # Off by default — compaction discards raw history irreversibly, and
         # a user should opt into that rather than have it happen silently.
         "auto_compact": bool(raw.get("auto_compact", False)),
+        # Connection/model used by background sync jobs (e.g. the AI group
+        # summary phase) — deliberately separate from active_connection/
+        # active_model so switching chat models doesn't silently change what
+        # sync jobs use. Empty means "fall back to the active chat pick" —
+        # see resolve_sync_cfg().
+        "sync_connection": raw.get("sync_connection", ""),
+        "sync_model": raw.get("sync_model", ""),
+        # Seconds to wait between successive group-summary LLM calls within a
+        # single sync run. Defaults to one request per minute — gentle on a
+        # local LLM (the common case for this setting) that would otherwise
+        # be hit with one request per flagged group back-to-back.
+        "sync_throttle_seconds": int(raw.get("sync_throttle_seconds", DEFAULT_SYNC_THROTTLE_SECONDS)),
         "schema_version": 4,
     }
 

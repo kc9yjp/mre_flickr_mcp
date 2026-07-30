@@ -15,8 +15,12 @@ import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from flickr_sync import sync_groups, sync_group_descriptions, sync_photo_groups, init_db, DB_FILE
+from flickr_sync import (
+    sync_groups, sync_group_descriptions, sync_group_summaries, sync_photo_groups,
+    init_db, DB_FILE,
+)
 from db import db_file as _db_file
+import flickr_api
 
 
 def main():
@@ -37,6 +41,8 @@ def main():
         from db import _current_user
         _current_user.set({"nsid": args.nsid, "username": args.username or ""})
 
+    nsid = args.nsid or flickr_api._load_credentials().get("user_nsid", "")
+
     with sqlite3.connect(target_db) as conn:
         init_db(conn)
 
@@ -49,6 +55,9 @@ def main():
 
         print("Syncing photo-group memberships...")
         sync_photo_groups(conn)
+
+        print("Generating AI group summaries...")
+        sync_group_summaries(conn, nsid)
 
         conn.execute(
             "INSERT INTO sync_log (synced_at, mode, photos_fetched, type) VALUES (?, 'full', ?, 'groups')",

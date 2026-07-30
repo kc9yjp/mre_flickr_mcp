@@ -14,25 +14,28 @@ from db import get_db, like_pattern, table_empty
 TOOLS = [
     Tool(
         name="find_groups",
-        description="Search the user's Flickr groups by keyword from the local database. Searches group name, description, and keywords.",
+        description="Search the user's Flickr groups by keyword from the local database. Searches group name, description, and AI-generated summary/keywords (see 'sync' with type='groups').",
         inputSchema={
             "type": "object",
             "properties": {
-                "query": {"type": "string", "description": "Keyword(s) to search group names, descriptions, and keywords. Comma-separate multiple unrelated keywords to OR them together (e.g. 'wildlife, sunset, macro')."},
+                "query": {"type": "string", "description": "Keyword(s) to search group names, descriptions, and AI-generated keywords. Comma-separate multiple unrelated keywords to OR them together (e.g. 'wildlife, sunset, macro')."},
                 "limit": {"type": "integer", "description": "Max results (default 25)"},
             },
         },
     ),
     Tool(
-        name="set_group_keywords",
-        description="Set custom search keywords/synonyms for a group to improve future findability.",
+        name="set_group_note",
+        description=(
+            "Set a personal note about a group (e.g. posting limits you've noticed, or a reminder). "
+            "Incorporated into the group's AI-generated summary the next time groups are synced."
+        ),
         inputSchema={
             "type": "object",
             "properties": {
                 "group_id": {"type": "string", "description": "Flickr group NSID"},
-                "keywords": {"type": "string", "description": "Space or comma-separated keywords/synonyms"},
+                "note": {"type": "string", "description": "Freeform note text"},
             },
-            "required": ["group_id", "keywords"],
+            "required": ["group_id", "note"],
         },
     ),
     Tool(
@@ -207,7 +210,7 @@ async def _find_groups(args):
     if not terms:
         terms = [query]
 
-    columns = ("name", "description", "keywords", "auto_keywords")
+    columns = ("name", "description", "ai_keywords", "summary_md")
     clauses = []
     params = []
     for term in terms:
@@ -225,7 +228,8 @@ async def _find_groups(args):
     where_sql = " OR ".join(clauses)
     with get_db() as conn:
         rows = conn.execute(
-            f"SELECT id, name, members, pool_count, description FROM groups "
+            f"SELECT id, name, members, pool_count, description, summary_md, "
+            f"is_milestone, fave_min, view_min, open_subject, user_note FROM groups "
             f"WHERE {where_sql} "
             "ORDER BY members DESC LIMIT ?",
             (*params, limit),
@@ -234,17 +238,58 @@ async def _find_groups(args):
             if table_empty(conn, "groups"):
                 return [TextContent(type="text", text="No groups found. Run 'sync groups' first via the web UI or the sync tool.")]
             return [TextContent(type="text", text=f"No groups match '{query}'.")]
-    return [TextContent(type="text", text=json.dumps([dict(r) for r in rows], indent=2))]
+    return [TextContent(type="text", text=_format_groups_markdown(rows))]
 
 
-async def _set_group_keywords(args):
+def _format_groups_markdown(rows) -> str:
+    """Render group rows as a markdown listing, one section per group,
+    each headed by the group id so it can be passed straight to
+    add_to_group/remove_from_group without a further lookup."""
+    sections = []
+    for r in rows:
+        lines = [f"## {r['name']} (`{r['id']}`)"]
+        lines.append(f"- Members: {r['members']} · Pool: {r['pool_count']}")
+
+        flags = []
+        if r["is_milestone"]:
+            flags.append("milestone group")
+        if r["fave_min"] is not None:
+            flags.append(f"min faves: {r['fave_min']}")
+        if r["view_min"] is not None:
+            flags.append(f"min views: {r['view_min']}")
+        if r["open_subject"] is not None:
+            flags.append("open subject" if r["open_subject"] else "themed subject")
+        if flags:
+            lines.append(f"- {' · '.join(flags)}")
+
+        if r["user_note"]:
+            lines.append(f"- Your note: {r['user_note']}")
+
+        if r["summary_md"]:
+            lines.append("")
+            lines.append(r["summary_md"])
+        elif r["description"]:
+            lines.append("")
+            lines.append(r["description"])
+
+        sections.append("\n".join(lines))
+    return "\n\n".join(sections)
+
+
+async def _set_group_note(args):
     group_id = args["group_id"]
-    keywords = args["keywords"]
+    note = args["note"]
     with get_db() as conn:
-        updated = conn.execute("UPDATE groups SET keywords=? WHERE id=?", (keywords, group_id)).rowcount
+        updated = conn.execute(
+            "UPDATE groups SET user_note=?, needs_summary=1 WHERE id=?",
+            (note, group_id),
+        ).rowcount
     if not updated:
         return [TextContent(type="text", text=f"Group {group_id} not found in local database.")]
-    return [TextContent(type="text", text=f"Keywords updated for group {group_id}.")]
+    return [TextContent(type="text", text=(
+        f"Note saved for group {group_id}. It will be incorporated into the group's AI summary "
+        "the next time groups are synced."
+    ))]
 
 
 # TODO: read _RETRY_TZ from DB settings key "group_queue_retry_tz" (see db.SETTINGS_DEFAULTS)
@@ -642,7 +687,7 @@ async def _remove_from_queue(args):
 
 HANDLERS = {
     "find_groups":       _find_groups,
-    "set_group_keywords": _set_group_keywords,
+    "set_group_note":    _set_group_note,
     "add_to_group":      _add_to_group,
     "remove_from_group": _remove_from_group,
     "join_group":        _join_group,

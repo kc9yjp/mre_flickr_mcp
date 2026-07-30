@@ -222,6 +222,104 @@ def test_resolve_cfg_falls_back_to_active_then_first_key(_creds_dir):
     }
 
 
+# --- resolve_sync_cfg ---
+
+def test_resolve_sync_cfg_defaults_to_active_chat_pick(_creds_dir):
+    from agent import settings
+
+    settings.create_connection(NSID, "OpenCode Zen", "openai_compatible", "https://opencode.ai/zen/v1")
+    s = settings.load_settings(NSID)
+    s["active_connection"] = "opencode-zen"
+    s["active_model"] = "grok-4.5"
+    settings.save_settings(NSID, s)
+
+    cfg = settings.resolve_sync_cfg(NSID)
+    assert cfg["base_url"] == "https://opencode.ai/zen/v1"
+    assert cfg["model"] == "grok-4.5"
+
+
+def test_resolve_sync_cfg_same_connection_as_active_uses_active_model(_creds_dir):
+    """sync_connection explicitly set to the same connection as active_connection:
+    active_model IS valid for it, so the fallback is safe."""
+    from agent import settings
+
+    settings.create_connection(NSID, "OpenCode Zen", "openai_compatible", "https://opencode.ai/zen/v1")
+    s = settings.load_settings(NSID)
+    s["active_connection"] = "opencode-zen"
+    s["active_model"] = "grok-4.5"
+    s["sync_connection"] = "opencode-zen"
+    s["sync_model"] = ""
+    settings.save_settings(NSID, s)
+
+    cfg = settings.resolve_sync_cfg(NSID)
+    assert cfg["model"] == "grok-4.5"
+
+
+def test_resolve_sync_cfg_distinct_connection_without_model_does_not_borrow_active_model(_creds_dir):
+    """Regression: picking a distinct sync connection with no explicit sync_model
+    must never fall back to active_model, which belongs to a different connection."""
+    from agent import settings
+
+    settings.create_connection(NSID, "Ollama chat", "ollama", "http://host.docker.internal:11434/v1")
+    settings.create_connection(NSID, "OpenCode Zen", "openai_compatible", "https://opencode.ai/zen/v1")
+    s = settings.load_settings(NSID)
+    s["active_connection"] = "ollama-chat"
+    s["active_model"] = "llama3.1"  # a model id that only exists on the Ollama connection
+    s["sync_connection"] = "opencode-zen"
+    s["sync_model"] = ""
+    settings.save_settings(NSID, s)
+
+    cfg = settings.resolve_sync_cfg(NSID)
+    assert cfg["base_url"] == "https://opencode.ai/zen/v1"
+    assert cfg["model"] == ""  # never "llama3.1" — that belongs to Ollama, not Zen
+
+
+def test_resolve_sync_cfg_distinct_connection_with_explicit_model(_creds_dir):
+    from agent import settings
+
+    settings.create_connection(NSID, "Ollama chat", "ollama", "http://host.docker.internal:11434/v1")
+    settings.create_connection(NSID, "OpenCode Zen", "openai_compatible", "https://opencode.ai/zen/v1")
+    s = settings.load_settings(NSID)
+    s["active_connection"] = "ollama-chat"
+    s["active_model"] = "llama3.1"
+    s["sync_connection"] = "opencode-zen"
+    s["sync_model"] = "grok-4.5"
+    settings.save_settings(NSID, s)
+
+    cfg = settings.resolve_sync_cfg(NSID)
+    assert cfg["base_url"] == "https://opencode.ai/zen/v1"
+    assert cfg["model"] == "grok-4.5"
+
+
+def test_resolve_sync_cfg_default_throttle_is_one_per_minute(_creds_dir):
+    from agent import settings
+
+    cfg = settings.resolve_sync_cfg(NSID)
+    assert cfg["sync_throttle_seconds"] == 60
+    assert settings.DEFAULT_SYNC_THROTTLE_SECONDS == 60
+
+
+def test_sync_throttle_seconds_persists(_creds_dir):
+    from agent import settings
+
+    saved = settings.save_settings(NSID, {"sync_throttle_seconds": 5})
+    assert saved["sync_throttle_seconds"] == 5
+    assert settings.load_settings(NSID)["sync_throttle_seconds"] == 5
+    assert settings.resolve_sync_cfg(NSID)["sync_throttle_seconds"] == 5
+
+
+def test_sync_throttle_seconds_rejects_negative_and_invalid(_creds_dir):
+    from agent import settings
+
+    settings.save_settings(NSID, {"sync_throttle_seconds": -5})
+    assert settings.load_settings(NSID)["sync_throttle_seconds"] == 0
+
+    # Non-numeric value is ignored rather than raising or corrupting storage.
+    before = settings.load_settings(NSID)["sync_throttle_seconds"]
+    settings.save_settings(NSID, {"sync_throttle_seconds": "not-a-number"})
+    assert settings.load_settings(NSID)["sync_throttle_seconds"] == before
+
+
 # --- mask-guard round trip ---
 
 def test_save_settings_api_key_mask_guard_round_trip(_creds_dir):
@@ -267,6 +365,20 @@ def test_create_update_delete_connection(_creds_dir):
     assert deleted["active_connection"] == ""
 
     assert settings.delete_connection(NSID, "no-such-id") is None
+
+
+def test_delete_connection_clears_dangling_sync_connection(_creds_dir):
+    from agent import settings
+
+    cid, _ = settings.create_connection(NSID, "OpenCode Zen", "openai_compatible", "https://opencode.ai/zen/v1")
+    s = settings.load_settings(NSID)
+    s["sync_connection"] = cid
+    s["sync_model"] = "grok-4.5"
+    settings.save_settings(NSID, s)
+
+    deleted = settings.delete_connection(NSID, cid)
+    assert deleted["sync_connection"] == ""
+    assert deleted["sync_model"] == ""
 
 
 def test_create_connection_slug_collision_gets_suffix(_creds_dir):

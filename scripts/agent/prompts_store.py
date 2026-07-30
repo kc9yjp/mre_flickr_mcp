@@ -108,6 +108,28 @@ SYSTEM_PROMPT_DEFAULT = (
     "plainly instead of inventing an explanation for why it couldn't be done."
 )
 
+GROUP_SUMMARY_PROMPT_DEFAULT = (
+    "You are cataloging a Flickr group for photo-sharing automation.\n\n"
+    "Group name: {group_name}\n\n"
+    "Group description (rules/restrictions, as written by the group admin):\n"
+    "{group_description}\n\n"
+    "The user's own note about this group (may be empty):\n"
+    "{group_user_note}\n\n"
+    "Reply with ONLY a JSON object (no markdown code fences, no commentary) with these keys:\n"
+    "- \"summary\": a short markdown summary (2-5 sentences) of what the group is about, "
+    "and any posting rules or restrictions (limits on photos per day/week, required themes, "
+    "content restrictions, etc). Incorporate the user's note above where relevant.\n"
+    "- \"is_milestone\": true if this is a \"milestone\"/threshold group that only accepts "
+    "photos once they reach a minimum view or favorite count, else false.\n"
+    "- \"fave_min\": integer minimum favorite count required to post, or null if none/not applicable.\n"
+    "- \"view_min\": integer minimum view count required to post, or null if none/not applicable.\n"
+    "- \"open_subject\": true if the group accepts photos of any subject (no theme restriction), "
+    "false if it's restricted to a specific theme or subject (e.g. \"black and white only\", "
+    "\"nature only\").\n"
+    "- \"keywords\": a list of 5-15 lowercase keywords and synonyms describing the group's theme, "
+    "useful for search.\n"
+)
+
 COMPACT_PROMPT_DEFAULT = (
     "Summarize this entire conversation so it can continue seamlessly without "
     "the full history above. Capture what the user asked for and why, "
@@ -156,6 +178,14 @@ _SEED_VARIABLES = [
      "from the selected photo before the prompt is sent.", "client"),
     ("user_nsid", "Your Flickr NSID", "Your own Flickr user ID. Substituted "
      "server-side when the workflow list is fetched.", "server"),
+    ("group_name", "Group name", "The joined group's name. Substituted by "
+     "the background groups sync before calling the LLM.", "server"),
+    ("group_description", "Group description", "The joined group's Flickr "
+     "description (rules/restrictions). Substituted by the background "
+     "groups sync before calling the LLM.", "server"),
+    ("group_user_note", "Your note about the group", "Your own freeform "
+     "note about the group (set via the set_group_note tool). Substituted "
+     "by the background groups sync before calling the LLM.", "server"),
 ]
 
 _SEED_PROMPTS = [
@@ -172,6 +202,12 @@ _SEED_PROMPTS = [
          description="Instruction sent to the LLM to summarize a conversation "
          "when compacting it, replacing its stored history in place — used "
          "by both the manual \"Compact now\" action and auto-compact."),
+    dict(code="group-summary", name="Group summary", category_id="system",
+         context="global", text=GROUP_SUMMARY_PROMPT_DEFAULT,
+         description="Used by the background groups sync to (re)generate a "
+         "joined group's AI summary, milestone thresholds, and search "
+         "keywords whenever its name, description, or your note changes. "
+         "Sent alone in a fresh, tool-free call — not launchable from chat."),
     dict(code="improve-photo", name="Improve metadata", category_id="own_photo",
          context="photo", description="Suggest title/description/tags for "
          "the current photo.",

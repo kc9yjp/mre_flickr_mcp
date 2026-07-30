@@ -15,7 +15,9 @@ defaults (``~/.flickr_mcp/credentials.json`` and ``data/flickr.db``).
 """
 
 import argparse
+import asyncio
 import html
+import json
 import os
 import re
 import sqlite3
@@ -79,6 +81,21 @@ _MIGRATIONS = [
         added_at   INTEGER
     )""",
     "ALTER TABLE photos ADD COLUMN url_medium TEXT",
+    # Groups rework: drop the old manual/auto keyword fields — search now uses
+    # the AI-generated summary + keywords produced by sync_group_summaries().
+    "ALTER TABLE groups DROP COLUMN keywords",
+    "ALTER TABLE groups DROP COLUMN auto_keywords",
+    "ALTER TABLE groups ADD COLUMN needs_summary INTEGER DEFAULT 1",
+    "ALTER TABLE groups ADD COLUMN summary_md TEXT",
+    "ALTER TABLE groups ADD COLUMN is_milestone INTEGER DEFAULT 0",
+    "ALTER TABLE groups ADD COLUMN fave_min INTEGER",
+    "ALTER TABLE groups ADD COLUMN view_min INTEGER",
+    "ALTER TABLE groups ADD COLUMN ai_keywords TEXT",
+    "ALTER TABLE groups ADD COLUMN summary_generated_at INTEGER",
+    # User-editable per-group note (replaces the old manual `keywords` field)
+    # — incorporated into the prompt the next time the AI summary regenerates.
+    "ALTER TABLE groups ADD COLUMN user_note TEXT",
+    "ALTER TABLE groups ADD COLUMN open_subject INTEGER",
 ]
 
 SCHEMA_VERSION = len(_MIGRATIONS)
@@ -384,124 +401,203 @@ def fetch_backfill(user_nsid, conn):
 
 
 # --- Groups ---
-
-_KW_STOP = {
-    "a", "an", "the", "and", "or", "of", "in", "for", "to", "is", "are",
-    "be", "as", "at", "by", "it", "its", "on", "no", "not", "all", "any",
-    "our", "my", "your", "we", "you", "me", "us", "am", "was", "do", "go",
-    "only", "more", "from", "with", "that", "this", "can", "will", "has",
-    "have", "had", "just", "been", "also", "if", "but", "so", "up", "out",
-    "into", "than", "then", "when", "where", "who", "what", "how", "here",
-    "there", "some", "such", "even", "very", "too", "most", "well", "new",
-    "like", "one", "two", "per", "now", "use", "yes", "may",
-    # flickr-specific noise
-    "flickr", "photo", "photos", "picture", "pictures", "image", "images",
-    "pic", "pics", "group", "pool", "please", "welcome", "add", "post",
-    "feel", "free", "share", "join", "member", "members", "rule", "rules",
-    # residual HTML markup noise (in case tags survive stripping, e.g. from
-    # malformed markup or bare attribute text)
-    "href", "src", "img", "www", "com", "net", "org", "http", "https",
-    "jpg", "jpeg", "png", "gif", "target", "blank", "rel", "nofollow",
-    "noreferrer", "width", "height", "strong", "span", "div", "style",
-    "class", "alt",
-}
-
-
-def generate_group_keywords(name: str, description: str = "") -> str:
-    """Derive searchable keywords from a group name and description."""
-    name_text = html.unescape(name or "")
-    desc_text = html.unescape(description or "")
-    # Strip HTML tags and URLs so markup (href, img, src, jpg, width, alt...)
-    # doesn't leak into the keyword vocabulary.
-    desc_text = re.sub(r"<[^>]+>", " ", desc_text)
-    desc_text = re.sub(r"https?://\S+", " ", desc_text)
-    desc_text = desc_text[:600]
-
-    # Split on hyphens/underscores so "wabi-sabi" → ["wabi", "sabi"]
-    combined = re.sub(r"[-_]", " ", name_text + " " + desc_text)
-    # Extract lowercase alpha words of 3+ chars
-    words = re.findall(r"[a-z]{3,}", combined.lower())
-
-    seen: set[str] = set()
-    result: list[str] = []
-    for w in words:
-        if w not in _KW_STOP and w not in seen:
-            seen.add(w)
-            result.append(w)
-
-    return " ".join(result[:60])
-
-
-def populate_group_keywords(conn) -> int:
-    """Regenerate auto_keywords for all groups from name + description."""
-    # Unpack positionally so this works whether or not the connection has
-    # row_factory set. The sync-script path (cmd_sync) uses a bare connection,
-    # where row["name"] would raise "tuple indices must be integers".
-    rows = conn.execute("SELECT id, name, description FROM groups").fetchall()
-    updated = 0
-    for gid, name, description in rows:
-        kw = generate_group_keywords(name or "", description or "")
-        conn.execute("UPDATE groups SET auto_keywords=? WHERE id=?", (kw, gid))
-        updated += 1
-    conn.commit()
-    return updated
+#
+# Sync happens in two phases:
+#   1. sync_groups() + sync_group_descriptions() — incremental DB update from
+#      Flickr. Detects new groups, groups the user has left (deleted), and
+#      name/description changes. Any change flags needs_summary=1.
+#   2. sync_group_summaries() — for groups flagged needs_summary, calls the
+#      user's configured LLM to (re)generate an AI markdown summary, milestone
+#      thresholds (min faves/views), and search keywords/synonyms.
 
 
 def sync_groups(conn):
+    """Sync the joined-groups list from Flickr, detecting new/renamed/left groups.
+
+    Compares the fetched group list against the local DB: new groups are
+    inserted (flagged needs_summary=1), existing groups have members/
+    pool_count refreshed, and groups the user has left are deleted (cascading
+    their photo_groups rows). A renamed group is flagged needs_summary=1 so
+    phase two regenerates its AI summary.
+    """
     creds = flickr_api._load_credentials()
-    page, pages = 1, 1
     synced_at = int(time.time())
-    total = 0
+
+    fetched: dict[str, dict] = {}
+    page, pages = 1, 1
     while page <= pages:
         data = api_get("flickr.people.getGroups", {
             "user_id": creds["user_nsid"],
         })
-        groups = data["groups"]["group"]
-        for g in groups:
-            conn.execute("""
-                INSERT INTO groups (id, name, members, pool_count, synced_at)
-                VALUES (?, ?, ?, ?, ?)
-                ON CONFLICT(id) DO UPDATE SET
-                    name=excluded.name, members=excluded.members,
-                    pool_count=excluded.pool_count, synced_at=excluded.synced_at
-            """, (
-                g["nsid"], g["name"],
-                int(g.get("members", 0) or 0),
-                int(g.get("pool_count", 0) or 0),
-                synced_at,
-            ))
-            total += 1
+        for g in data["groups"]["group"]:
+            fetched[g["nsid"]] = g
         pages = int(data["groups"].get("pages", 1))
         page += 1
+
+    existing = {row[0]: row[1] for row in conn.execute("SELECT id, name FROM groups")}
+
+    new_count = renamed_count = 0
+    for gid, g in fetched.items():
+        name = g["name"]
+        members = int(g.get("members", 0) or 0)
+        pool_count = int(g.get("pool_count", 0) or 0)
+        if gid not in existing:
+            conn.execute("""
+                INSERT INTO groups (id, name, members, pool_count, synced_at, needs_summary)
+                VALUES (?, ?, ?, ?, ?, 1)
+            """, (gid, name, members, pool_count, synced_at))
+            new_count += 1
+        else:
+            renamed = existing[gid] != name
+            conn.execute("""
+                UPDATE groups SET name=?, members=?, pool_count=?, synced_at=?,
+                    needs_summary = CASE WHEN ? THEN 1 ELSE needs_summary END
+                WHERE id=?
+            """, (name, members, pool_count, synced_at, renamed, gid))
+            if renamed:
+                renamed_count += 1
+
+    left_ids = [gid for gid in existing if gid not in fetched]
+    for gid in left_ids:
+        conn.execute("DELETE FROM photo_groups WHERE group_id=?", (gid,))
+        conn.execute("DELETE FROM groups WHERE id=?", (gid,))
+
     conn.commit()
-    populate_group_keywords(conn)
-    print(f"  {total} groups synced.")
-    return total
+    print(f"  {len(fetched)} groups synced ({new_count} new, {renamed_count} renamed, {len(left_ids)} left).")
+    return len(fetched)
 
 
 def sync_group_descriptions(conn):
-    """Fetch descriptions from flickr.groups.getInfo for groups missing them."""
-    rows = conn.execute("SELECT id FROM groups WHERE description IS NULL").fetchall()
+    """Fetch each group's description from flickr.groups.getInfo and diff it.
+
+    Every joined group is re-fetched (Flickr exposes no last-modified marker
+    for group info), so a changed description is detected and flags
+    needs_summary=1 for phase two to regenerate the AI summary.
+    """
+    rows = conn.execute("SELECT id, description FROM groups").fetchall()
     if not rows:
         return 0
-    updated = 0
-    for (group_id,) in rows:
+    changed = 0
+    for group_id, prev_description in rows:
         try:
             data = flickr_api._api_get("flickr.groups.getInfo", {"group_id": group_id})
         except RuntimeError:
             continue
         group = data.get("group", {})
-        description = (group.get("description") or {}).get("_content", "") or ""
-        conn.execute(
-            "UPDATE groups SET description=? WHERE id=?",
-            (description[:2000], group_id),
-        )
-        updated += 1
+        description = ((group.get("description") or {}).get("_content", "") or "")[:2000]
+        if description != (prev_description or ""):
+            conn.execute(
+                "UPDATE groups SET description=?, needs_summary=1 WHERE id=?",
+                (description, group_id),
+            )
+            changed += 1
         time.sleep(0.15)
     conn.commit()
-    if updated:
-        populate_group_keywords(conn)
-    print(f"  {updated} group descriptions fetched.")
+    print(f"  {changed} group descriptions changed.")
+    return changed
+
+
+def _parse_group_summary_json(text: str) -> dict:
+    """Best-effort parse of the LLM's JSON reply, tolerating markdown code fences."""
+    text = text.strip()
+    if text.startswith("```"):
+        text = re.sub(r"^```[a-zA-Z]*\n?", "", text)
+        text = re.sub(r"```\s*$", "", text).strip()
+    return json.loads(text)
+
+
+def _build_group_summary_prompt(nsid: str, name: str, description: str, user_note: str) -> str:
+    """Fill the user-editable group-summary prompt template (see
+    agent.prompts_store) with this group's own name/description/note.
+
+    Uses ``.replace()`` on literal ``{token}`` placeholders rather than
+    ``str.format()`` — a group description is freeform text that may itself
+    contain stray ``{``/``}`` characters, which would break ``.format()``.
+    """
+    from agent.prompts_store import GROUP_SUMMARY_PROMPT_DEFAULT, get_prompt_by_code
+
+    prompt = get_prompt_by_code(nsid, "group-summary")
+    template = prompt["text"] if prompt else GROUP_SUMMARY_PROMPT_DEFAULT
+
+    desc_text = html.unescape(re.sub(r"<[^>]+>", " ", description or ""))[:3000].strip()
+    return (
+        template
+        .replace("{group_name}", name or "")
+        .replace("{group_description}", desc_text or "(no description provided)")
+        .replace("{group_user_note}", (user_note or "").strip() or "(none)")
+    )
+
+
+async def _sync_group_summaries_async(conn, cfg: dict, nsid: str, rows) -> int:
+    import httpx
+    from agent import llm
+    from agent.settings import DEFAULT_SYNC_THROTTLE_SECONDS
+
+    throttle_seconds = cfg.get("sync_throttle_seconds", DEFAULT_SYNC_THROTTLE_SECONDS)
+    stream = llm.stream_responses if cfg.get("api_mode") == "responses" else llm.stream_chat
+    updated = 0
+    async with httpx.AsyncClient(timeout=httpx.Timeout(300.0, connect=15.0)) as client:
+        for i, (group_id, name, description, user_note) in enumerate(rows):
+            if i > 0 and throttle_seconds > 0:
+                # Paced to be gentle on a local LLM (the common case here) —
+                # one request every throttle_seconds rather than back-to-back
+                # calls for every flagged group. Configurable on the Sync page.
+                await asyncio.sleep(throttle_seconds)
+
+            # One-time call, no tools, no history: each group gets a fresh
+            # session containing only the (editable) prompt + this group's
+            # own table data — nothing else.
+            prompt = _build_group_summary_prompt(nsid, name, description, user_note)
+            messages = [{"role": "user", "content": prompt}]
+            try:
+                content = ""
+                async for event in stream(cfg, messages, client=client):
+                    if event["type"] == "message":
+                        content = event["content"]
+                result = _parse_group_summary_json(content)
+            except Exception as e:
+                print(f"  Warning: summary generation failed for group {group_id} ({name}): {e}")
+                continue
+
+            keywords = result.get("keywords") or []
+            conn.execute("""
+                UPDATE groups SET summary_md=?, is_milestone=?, fave_min=?, view_min=?,
+                    open_subject=?, ai_keywords=?, needs_summary=0, summary_generated_at=?
+                WHERE id=?
+            """, (
+                result.get("summary", ""),
+                int(bool(result.get("is_milestone"))),
+                result.get("fave_min"),
+                result.get("view_min"),
+                None if result.get("open_subject") is None else int(bool(result.get("open_subject"))),
+                " ".join(str(k) for k in keywords),
+                int(time.time()),
+                group_id,
+            ))
+            conn.commit()
+            updated += 1
+    return updated
+
+
+def sync_group_summaries(conn, nsid: str) -> int:
+    """Generate AI summaries (rules, milestone thresholds, open-subject
+    flag, keywords) for groups flagged needs_summary=1 by the earlier
+    DB-update phase, or by a user_note edit via set_group_note."""
+    rows = conn.execute(
+        "SELECT id, name, description, user_note FROM groups WHERE needs_summary=1"
+    ).fetchall()
+    if not rows:
+        print("  No groups need a summary refresh.")
+        return 0
+
+    from agent.settings import resolve_sync_cfg
+    cfg = resolve_sync_cfg(nsid)
+    if not cfg.get("base_url") or not cfg.get("model"):
+        print("  Skipping AI summaries: no LLM connection/model configured (set one on the Sync page).")
+        return 0
+
+    updated = asyncio.run(_sync_group_summaries_async(conn, cfg, nsid, rows))
+    print(f"  {updated}/{len(rows)} group summaries generated.")
     return updated
 
 

@@ -34,7 +34,7 @@ def _migrate_all_user_dbs() -> None:
     # installs this is the live DB that get_db() falls back to when no user
     # context is set, but it is not covered by _all_known_users(), so its
     # migrations would otherwise never run — leaving read-path tools (e.g.
-    # find_groups querying auto_keywords) broken until the next sync.
+    # find_groups querying ai_keywords) broken until the next sync.
     if os.path.exists(DB_FILE):
         try:
             conn = sqlite3.connect(DB_FILE)
