@@ -71,12 +71,11 @@ confirmation UI provides.
 | `edit_album` | ✍️ | `album_id`*, `title`, `description`, `primary_photo_id` | Rename, redescribe, or re-cover an album. |
 | `delete_album` | ✍️ | `album_id`* | Delete an album (photos themselves are not deleted). |
 
-## Groups (`tools/groups.py`) — 13 tools
+## Groups (`tools/groups.py`) — 12 tools
 
 | Tool | Write | Parameters | Description |
 |---|:---:|---|---|
-| `find_groups` | | *(optional keyword)* | Search your joined groups by name, description, or keywords. |
-| `set_group_keywords` | ✍️ | `group_id`*, `keywords`* | Custom search synonyms for a group, to improve future `find_groups` matches. |
+| `find_groups` | | *(optional keyword)* | Search your joined groups by name, description, or AI-generated summary/keywords (see `sync` with `type='groups'`). |
 | `add_to_group` | ✍️ | `photo_id`*, `group_id`*, `retry_at`, `queue`, `days_offset` | Add a photo to a group pool. If the daily posting limit is hit, the add is queued for automatic retry; `queue=true` schedules a future add deliberately (drip-posting); `retry_at` accepts named times (`morning`, `lunchtime`, `afternoon`, `evening`, `night`, `midnight`) or `HH:MM`, resolved in Chicago time; `days_offset` shifts the schedule by N days. |
 | `remove_from_group` | ✍️ | `photo_id`*, `group_id`* | Remove a photo from a group pool. |
 | `join_group` | ✍️ | `group_id`* | Join a public group. |

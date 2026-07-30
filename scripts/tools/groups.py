@@ -14,25 +14,13 @@ from db import get_db, like_pattern, table_empty
 TOOLS = [
     Tool(
         name="find_groups",
-        description="Search the user's Flickr groups by keyword from the local database. Searches group name, description, and keywords.",
+        description="Search the user's Flickr groups by keyword from the local database. Searches group name, description, and AI-generated summary/keywords (see 'sync' with type='groups').",
         inputSchema={
             "type": "object",
             "properties": {
-                "query": {"type": "string", "description": "Keyword(s) to search group names, descriptions, and keywords. Comma-separate multiple unrelated keywords to OR them together (e.g. 'wildlife, sunset, macro')."},
+                "query": {"type": "string", "description": "Keyword(s) to search group names, descriptions, and AI-generated keywords. Comma-separate multiple unrelated keywords to OR them together (e.g. 'wildlife, sunset, macro')."},
                 "limit": {"type": "integer", "description": "Max results (default 25)"},
             },
-        },
-    ),
-    Tool(
-        name="set_group_keywords",
-        description="Set custom search keywords/synonyms for a group to improve future findability.",
-        inputSchema={
-            "type": "object",
-            "properties": {
-                "group_id": {"type": "string", "description": "Flickr group NSID"},
-                "keywords": {"type": "string", "description": "Space or comma-separated keywords/synonyms"},
-            },
-            "required": ["group_id", "keywords"],
         },
     ),
     Tool(
@@ -207,7 +195,7 @@ async def _find_groups(args):
     if not terms:
         terms = [query]
 
-    columns = ("name", "description", "keywords", "auto_keywords")
+    columns = ("name", "description", "ai_keywords", "summary_md")
     clauses = []
     params = []
     for term in terms:
@@ -225,7 +213,8 @@ async def _find_groups(args):
     where_sql = " OR ".join(clauses)
     with get_db() as conn:
         rows = conn.execute(
-            f"SELECT id, name, members, pool_count, description FROM groups "
+            f"SELECT id, name, members, pool_count, description, summary_md, "
+            f"is_milestone, min_faves, min_views FROM groups "
             f"WHERE {where_sql} "
             "ORDER BY members DESC LIMIT ?",
             (*params, limit),
@@ -235,16 +224,6 @@ async def _find_groups(args):
                 return [TextContent(type="text", text="No groups found. Run 'sync groups' first via the web UI or the sync tool.")]
             return [TextContent(type="text", text=f"No groups match '{query}'.")]
     return [TextContent(type="text", text=json.dumps([dict(r) for r in rows], indent=2))]
-
-
-async def _set_group_keywords(args):
-    group_id = args["group_id"]
-    keywords = args["keywords"]
-    with get_db() as conn:
-        updated = conn.execute("UPDATE groups SET keywords=? WHERE id=?", (keywords, group_id)).rowcount
-    if not updated:
-        return [TextContent(type="text", text=f"Group {group_id} not found in local database.")]
-    return [TextContent(type="text", text=f"Keywords updated for group {group_id}.")]
 
 
 # TODO: read _RETRY_TZ from DB settings key "group_queue_retry_tz" (see db.SETTINGS_DEFAULTS)
@@ -642,7 +621,6 @@ async def _remove_from_queue(args):
 
 HANDLERS = {
     "find_groups":       _find_groups,
-    "set_group_keywords": _set_group_keywords,
     "add_to_group":      _add_to_group,
     "remove_from_group": _remove_from_group,
     "join_group":        _join_group,

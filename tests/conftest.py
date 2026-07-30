@@ -25,7 +25,10 @@ CREATE TABLE IF NOT EXISTS photos (
 CREATE TABLE IF NOT EXISTS groups (
     id TEXT PRIMARY KEY, name TEXT, members INTEGER,
     pool_count INTEGER, synced_at INTEGER,
-    description TEXT, keywords TEXT, auto_keywords TEXT
+    description TEXT, needs_summary INTEGER DEFAULT 1,
+    summary_md TEXT, is_milestone INTEGER DEFAULT 0,
+    min_faves INTEGER, min_views INTEGER, ai_keywords TEXT,
+    summary_generated_at INTEGER
 );
 CREATE TABLE IF NOT EXISTS albums (
     id TEXT PRIMARY KEY, title TEXT, description TEXT,
@@ -110,8 +113,10 @@ def mem_db(tmp_path) -> str:
         ("album1", "My Album", "An album", "photo1", 1, 50, now),
     )
     conn.execute(
-        "INSERT INTO groups VALUES (?,?,?,?,?,?,?,?)",
-        ("group1@N00", "Landscape Lovers", 500, 1000, now, "Landscape photography", "nature", "landscape nature scenery"),
+        "INSERT INTO groups VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        ("group1@N00", "Landscape Lovers", 500, 1000, now, "Landscape photography",
+         0, "A group for landscape photography.", 0, None, None,
+         "landscape nature scenery", now),
     )
     conn.execute(
         "INSERT INTO contacts VALUES (?,?,?,?,?,?)",

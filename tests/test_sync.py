@@ -1,50 +1,203 @@
-"""Tests for flickr_sync helpers — no Flickr API or file-system required."""
+"""Tests for flickr_sync groups sync — no real Flickr API or LLM required."""
 
+import json
 import sqlite3
 import sys
+import time
 from pathlib import Path
+from unittest.mock import patch
+
+import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
 
 import flickr_sync
 
+FAKE_CREDS = {"user_nsid": "99999999@N00"}
 
-def _groups_db(row_factory=None) -> sqlite3.Connection:
+
+def _groups_db() -> sqlite3.Connection:
     conn = sqlite3.connect(":memory:")
-    if row_factory is not None:
-        conn.row_factory = row_factory
-    conn.execute(
-        "CREATE TABLE groups (id TEXT PRIMARY KEY, name TEXT, "
-        "description TEXT, auto_keywords TEXT)"
-    )
-    conn.execute(
-        "INSERT INTO groups (id, name, description) VALUES "
-        "('1@N', 'TREE PICS', 'Photos of trees and forests')"
-    )
+    conn.row_factory = sqlite3.Row
+    conn.execute("""
+        CREATE TABLE groups (
+            id TEXT PRIMARY KEY, name TEXT, members INTEGER, pool_count INTEGER,
+            synced_at INTEGER, description TEXT, needs_summary INTEGER DEFAULT 1,
+            summary_md TEXT, is_milestone INTEGER DEFAULT 0,
+            min_faves INTEGER, min_views INTEGER, ai_keywords TEXT,
+            summary_generated_at INTEGER
+        )
+    """)
+    conn.execute("CREATE TABLE photo_groups (photo_id TEXT, group_id TEXT, PRIMARY KEY (photo_id, group_id))")
     return conn
 
 
-class TestPopulateGroupKeywords:
-    def test_works_on_bare_connection(self):
-        """Regression: the sync-script path uses a connection without
-        row_factory; populate_group_keywords must not index rows by name."""
-        conn = _groups_db(row_factory=None)
-        updated = flickr_sync.populate_group_keywords(conn)
+def _insert_group(conn, gid, name, needs_summary=0, description=""):
+    conn.execute(
+        "INSERT INTO groups (id, name, members, pool_count, synced_at, description, needs_summary) "
+        "VALUES (?, ?, 10, 5, 0, ?, ?)",
+        (gid, name, description, needs_summary),
+    )
+    conn.commit()
+
+
+def _group_row(conn, gid):
+    return conn.execute("SELECT * FROM groups WHERE id=?", (gid,)).fetchone()
+
+
+class TestSyncGroups:
+    def test_new_group_inserted_needs_summary(self):
+        conn = _groups_db()
+        fetched = {"groups": {"group": [{"nsid": "1@N", "name": "Tree Pics", "members": "10", "pool_count": "5"}], "pages": 1}}
+        with (
+            patch("flickr_sync.flickr_api._load_credentials", return_value=FAKE_CREDS),
+            patch("flickr_sync.api_get", return_value=fetched),
+        ):
+            total = flickr_sync.sync_groups(conn)
+        assert total == 1
+        row = _group_row(conn, "1@N")
+        assert row["name"] == "Tree Pics"
+        assert row["needs_summary"] == 1
+
+    def test_renamed_group_flags_needs_summary(self):
+        conn = _groups_db()
+        _insert_group(conn, "1@N", "Old Name", needs_summary=0)
+        fetched = {"groups": {"group": [{"nsid": "1@N", "name": "New Name", "members": "10", "pool_count": "5"}], "pages": 1}}
+        with (
+            patch("flickr_sync.flickr_api._load_credentials", return_value=FAKE_CREDS),
+            patch("flickr_sync.api_get", return_value=fetched),
+        ):
+            flickr_sync.sync_groups(conn)
+        row = _group_row(conn, "1@N")
+        assert row["name"] == "New Name"
+        assert row["needs_summary"] == 1
+
+    def test_unchanged_group_keeps_needs_summary_false(self):
+        conn = _groups_db()
+        _insert_group(conn, "1@N", "Same Name", needs_summary=0)
+        fetched = {"groups": {"group": [{"nsid": "1@N", "name": "Same Name", "members": "10", "pool_count": "5"}], "pages": 1}}
+        with (
+            patch("flickr_sync.flickr_api._load_credentials", return_value=FAKE_CREDS),
+            patch("flickr_sync.api_get", return_value=fetched),
+        ):
+            flickr_sync.sync_groups(conn)
+        row = _group_row(conn, "1@N")
+        assert row["needs_summary"] == 0
+
+    def test_left_group_deleted_with_memberships(self):
+        conn = _groups_db()
+        _insert_group(conn, "1@N", "Still Joined")
+        _insert_group(conn, "2@N", "Left This One")
+        conn.execute("INSERT INTO photo_groups VALUES ('photoA', '2@N')")
+        conn.commit()
+        fetched = {"groups": {"group": [{"nsid": "1@N", "name": "Still Joined", "members": "10", "pool_count": "5"}], "pages": 1}}
+        with (
+            patch("flickr_sync.flickr_api._load_credentials", return_value=FAKE_CREDS),
+            patch("flickr_sync.api_get", return_value=fetched),
+        ):
+            flickr_sync.sync_groups(conn)
+        assert _group_row(conn, "2@N") is None
+        assert conn.execute("SELECT 1 FROM photo_groups WHERE group_id='2@N'").fetchone() is None
+        assert _group_row(conn, "1@N") is not None
+
+
+class TestSyncGroupDescriptions:
+    def test_changed_description_flags_needs_summary(self):
+        conn = _groups_db()
+        _insert_group(conn, "1@N", "Tree Pics", needs_summary=0, description="old text")
+        info = {"group": {"description": {"_content": "new text"}}}
+        with patch("flickr_sync.flickr_api._api_get", return_value=info):
+            changed = flickr_sync.sync_group_descriptions(conn)
+        assert changed == 1
+        row = _group_row(conn, "1@N")
+        assert row["description"] == "new text"
+        assert row["needs_summary"] == 1
+
+    def test_unchanged_description_leaves_needs_summary(self):
+        conn = _groups_db()
+        _insert_group(conn, "1@N", "Tree Pics", needs_summary=0, description="same text")
+        info = {"group": {"description": {"_content": "same text"}}}
+        with patch("flickr_sync.flickr_api._api_get", return_value=info):
+            changed = flickr_sync.sync_group_descriptions(conn)
+        assert changed == 0
+        assert _group_row(conn, "1@N")["needs_summary"] == 0
+
+    def test_api_error_skips_group(self):
+        conn = _groups_db()
+        _insert_group(conn, "1@N", "Tree Pics", needs_summary=0, description="text")
+        with patch("flickr_sync.flickr_api._api_get", side_effect=RuntimeError("boom")):
+            changed = flickr_sync.sync_group_descriptions(conn)
+        assert changed == 0
+
+
+class TestParseGroupSummaryJson:
+    def test_plain_json(self):
+        result = flickr_sync._parse_group_summary_json('{"summary": "x"}')
+        assert result["summary"] == "x"
+
+    def test_strips_code_fence(self):
+        text = "```json\n{\"summary\": \"x\"}\n```"
+        result = flickr_sync._parse_group_summary_json(text)
+        assert result["summary"] == "x"
+
+
+class TestSyncGroupSummaries:
+    def _fake_cfg(self):
+        return {"base_url": "http://fake/v1", "model": "test-model", "api_mode": "chat_completions"}
+
+    async def _fake_stream_chat(self, cfg, messages, client=None):
+        yield {"type": "message", "content": json.dumps({
+            "summary": "A milestone group for well-viewed photos.",
+            "is_milestone": True,
+            "min_faves": 50,
+            "min_views": 500,
+            "keywords": ["milestone", "views"],
+        })}
+
+    def test_generates_summary_for_flagged_group(self):
+        conn = _groups_db()
+        _insert_group(conn, "1@N", "500 Views Club", needs_summary=1, description="Post once you hit 500 views.")
+        from agent import llm, settings
+        with (
+            patch.object(settings, "resolve_cfg", return_value=self._fake_cfg()),
+            patch.object(llm, "stream_chat", self._fake_stream_chat),
+        ):
+            updated = flickr_sync.sync_group_summaries(conn, "user@N00")
         assert updated == 1
-        kw = conn.execute("SELECT auto_keywords FROM groups WHERE id='1@N'").fetchone()[0]
-        assert "tree" in kw
-        assert "forests" in kw
+        row = _group_row(conn, "1@N")
+        assert row["needs_summary"] == 0
+        assert row["is_milestone"] == 1
+        assert row["min_faves"] == 50
+        assert row["min_views"] == 500
+        assert "milestone" in row["ai_keywords"]
+        assert row["summary_generated_at"]
 
-    def test_works_with_row_factory(self):
-        conn = _groups_db(row_factory=sqlite3.Row)
-        updated = flickr_sync.populate_group_keywords(conn)
-        assert updated == 1
+    def test_no_groups_need_summary(self):
+        conn = _groups_db()
+        _insert_group(conn, "1@N", "Fine As Is", needs_summary=0)
+        updated = flickr_sync.sync_group_summaries(conn, "user@N00")
+        assert updated == 0
 
+    def test_skips_when_no_llm_connection_configured(self):
+        conn = _groups_db()
+        _insert_group(conn, "1@N", "Needs Summary", needs_summary=1)
+        from agent import settings
+        with patch.object(settings, "resolve_cfg", return_value={"base_url": "", "model": ""}):
+            updated = flickr_sync.sync_group_summaries(conn, "user@N00")
+        assert updated == 0
+        assert _group_row(conn, "1@N")["needs_summary"] == 1
 
-class TestGenerateGroupKeywords:
-    def test_splits_hyphens_and_drops_stopwords(self):
-        kw = flickr_sync.generate_group_keywords("Wabi-Sabi", "The art of trees")
-        words = kw.split()
-        assert "wabi" in words and "sabi" in words
-        assert "the art of" not in kw  # stopwords stripped
-        assert "art" in words and "trees" in words
+    async def _fake_stream_chat_bad_json(self, cfg, messages, client=None):
+        yield {"type": "message", "content": "not json"}
+
+    def test_malformed_llm_response_leaves_group_flagged(self):
+        conn = _groups_db()
+        _insert_group(conn, "1@N", "Needs Summary", needs_summary=1)
+        from agent import llm, settings
+        with (
+            patch.object(settings, "resolve_cfg", return_value=self._fake_cfg()),
+            patch.object(llm, "stream_chat", self._fake_stream_chat_bad_json),
+        ):
+            updated = flickr_sync.sync_group_summaries(conn, "user@N00")
+        assert updated == 0
+        assert _group_row(conn, "1@N")["needs_summary"] == 1

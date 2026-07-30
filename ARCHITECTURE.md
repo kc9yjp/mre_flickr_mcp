@@ -156,7 +156,7 @@ Each user's `flickr.db` (schema created by `flickr_sync.py:init_db`):
 | `contact_engagement` | Per-contact faves + comments on your photos |
 | `do_not_unfollow` | Unfollow-candidate whitelist |
 | `never_follow` | Follow-candidate exclusion list |
-| `groups` | Joined groups: name, members, pool_count, description, keywords, auto_keywords |
+| `groups` | Joined groups: name, members, pool_count, description, needs_summary, summary_md, is_milestone, min_faves, min_views, ai_keywords, summary_generated_at |
 | `albums` | Photosets: title, description, primary photo, counts |
 | `photo_groups` | Junction table: which of your photos are in which groups |
 | `sync_log` | History of sync runs: type, mode, photos fetched, duration |

@@ -275,7 +275,7 @@ class TestAlbums:
 
 
 # ---------------------------------------------------------------------------
-# find_groups / set_group_keywords
+# find_groups
 # ---------------------------------------------------------------------------
 
 class TestGroups:
@@ -312,20 +312,6 @@ class TestGroups:
         import mcp_tools
         result = await mcp_tools._find_groups({"query": "Land_cape"})
         assert "No groups match" in _text(result)
-
-    @pytest.mark.asyncio
-    async def test_set_group_keywords(self, db):
-        import mcp_tools
-        result = await mcp_tools._set_group_keywords({"group_id": "group1@N00", "keywords": "mountains snow"})
-        assert "updated" in _text(result)
-        row = db.execute("SELECT keywords FROM groups WHERE id='group1@N00'").fetchone()
-        assert row["keywords"] == "mountains snow"
-
-    @pytest.mark.asyncio
-    async def test_set_group_keywords_not_found(self, db):
-        import mcp_tools
-        result = await mcp_tools._set_group_keywords({"group_id": "bad@N00", "keywords": "x"})
-        assert "not found" in _text(result)
 
 
 # ---------------------------------------------------------------------------

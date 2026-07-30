@@ -88,7 +88,9 @@ contacts          — id, username, realname, is_friend, is_family, synced_at
 contact_engagement — contact_id, faves, comments, last_updated
 do_not_unfollow   — contact_id, reason, added_at
 never_follow      — contact_id, reason, added_at (excluded from follow suggestions)
-groups            — id, name, members, pool_count, synced_at
+groups            — id, name, members, pool_count, synced_at, description,
+                    needs_summary, summary_md, is_milestone, min_faves,
+                    min_views, ai_keywords, summary_generated_at
 albums            — id, title, description, primary_photo_id, count_photos, count_views, synced_at
 photo_groups      — photo_id, group_id (which of your photos are in each group)
 sync_log          — type, mode, photos_fetched, synced_at
