@@ -113,6 +113,17 @@ chat header selector. Sending a message in an existing conversation uses
 that conversation's connection/model unless the user explicitly changes it
 in the selector.
 
+## Sync jobs model selection
+
+Background sync jobs that call an LLM (currently the AI group-summary phase
+of `sync --type=groups`) use a separate `sync_connection`/`sync_model` pick,
+configurable from a dropdown on the **Sync** page — deliberately independent
+of `active_connection`/`active_model` so switching your chat model doesn't
+silently change what sync jobs use. Leaving it on "Use chat model" (the
+default — both fields empty) falls back to the active chat connection/model
+at call time. This is a single global preference shared by every such sync
+job, not a per-run picker. See `resolve_sync_cfg()` in `scripts/agent/settings.py`.
+
 ## Connection fields
 
 | Field | Valid values | Effect |
@@ -165,10 +176,11 @@ change on upgrade.
 
 ## Where this is implemented
 
-- Storage + defaults + connection profiles: `scripts/agent/settings.py` (`CONNECTION_PRESETS`, `DEFAULT_CONNECTIONS`, `DEFAULTS`, `load_settings`, `save_settings`, `resolve_cfg`, `create_connection`, `update_connection`, `delete_connection`)
+- Storage + defaults + connection profiles: `scripts/agent/settings.py` (`CONNECTION_PRESETS`, `DEFAULT_CONNECTIONS`, `DEFAULTS`, `load_settings`, `save_settings`, `resolve_cfg`, `resolve_sync_cfg`, `create_connection`, `update_connection`, `delete_connection`)
 - Chat Completions + Responses clients: `scripts/agent/llm.py` (`stream_chat`, `stream_responses`, `list_models`)
 - Per-conversation model: `scripts/agent/store.py` (`conversations.provider`, `conversations.model` columns)
 - HTTP API: `scripts/agent/routes.py` (`GET/POST /api/llm-settings`, `GET /api/llm-models`, `GET /api/llm-connection-presets`, `POST /api/llm-connections`, `POST /api/llm-connections/{id}/update`, `POST /api/llm-connections/{id}/delete`)
 - Connection + model selector in chat header: `frontend/src/panels/Chat.tsx`
 - Connection editor: `frontend/src/panels/ModelsPage.tsx` (registered as dockview panel `models`)
+- Sync jobs' connection + model selector: `frontend/src/panels/SyncPage.tsx`, saved via the same `POST /api/llm-settings`
 - Frontend types: `frontend/src/api.ts` (`LLMSettings`, `Connection`, `ConnectionPreset`, `listModels`, `createConnection`, `updateConnection`, `deleteConnection`)

@@ -1,6 +1,6 @@
 # MCP Tools
 
-Full catalog of the 64 MCP tools exposed by this server, grouped by the
+Full catalog of the 65 MCP tools exposed by this server, grouped by the
 module that defines them under `scripts/tools/`. See
 [ARCHITECTURE.md](ARCHITECTURE.md#mcp-tool-layer) for how these are
 aggregated, dispatched, and threaded.
