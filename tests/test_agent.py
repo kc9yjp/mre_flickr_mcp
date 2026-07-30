@@ -219,6 +219,82 @@ def test_store_replace_messages(user_db):
     assert msgs == [{"role": "assistant", "content": "summary"}]
 
 
+def test_prune_conversations_keeps_all_within_days_even_over_min(user_db):
+    """More than keep_min conversations, but all within keep_days, all survive."""
+    from agent import store
+
+    conv_ids = [store.create_conversation(USERNAME, f"c{i}") for i in range(15)]
+
+    store.prune_conversations(USERNAME, keep_min=12, keep_days=2)
+
+    remaining = {c["id"] for c in store.list_conversations(USERNAME)}
+    assert remaining == set(conv_ids)
+
+
+def test_prune_conversations_keeps_min_count_when_all_stale(user_db):
+    """When everything is past keep_days, keep_min caps it at the most recent dozen."""
+    import time
+
+    from agent import store
+
+    conv_ids = [store.create_conversation(USERNAME, f"c{i}") for i in range(15)]
+
+    with store._chat_db(USERNAME) as conn:
+        stale_time = int(time.time()) - 3 * 24 * 3600
+        conn.execute("UPDATE conversations SET updated_at = ?", (stale_time,))
+
+    store.prune_conversations(USERNAME, keep_min=12, keep_days=2)
+
+    remaining = {c["id"] for c in store.list_conversations(USERNAME)}
+    assert remaining == set(conv_ids[-12:])
+
+
+def test_prune_conversations_keeps_recent_beyond_min(user_db):
+    """A conversation newer than keep_days survives even past the keep_min cutoff."""
+    import time
+
+    from agent import store
+
+    old_ids = [store.create_conversation(USERNAME, f"old{i}") for i in range(12)]
+    recent_id = store.create_conversation(USERNAME, "recent")
+
+    with store._chat_db(USERNAME) as conn:
+        stale_time = int(time.time()) - 3 * 24 * 3600
+        conn.execute(
+            "UPDATE conversations SET updated_at = ? WHERE id != ?",
+            (stale_time, recent_id),
+        )
+
+    store.prune_conversations(USERNAME, keep_min=12, keep_days=2)
+
+    remaining = {c["id"] for c in store.list_conversations(USERNAME)}
+    assert recent_id in remaining
+    assert old_ids[0] not in remaining
+    assert remaining == set(old_ids[-11:]) | {recent_id}
+
+
+def test_prune_conversations_drops_stale_beyond_min(user_db):
+    """Old conversations outside both the keep_min window and keep_days are dropped."""
+    import time
+
+    from agent import store
+
+    conv_ids = [store.create_conversation(USERNAME, f"c{i}") for i in range(14)]
+
+    with store._chat_db(USERNAME) as conn:
+        stale_time = int(time.time()) - 3 * 24 * 3600
+        conn.execute(
+            "UPDATE conversations SET updated_at = ? WHERE id = ?",
+            (stale_time, conv_ids[0]),
+        )
+
+    store.prune_conversations(USERNAME, keep_min=12, keep_days=2)
+
+    remaining = {c["id"] for c in store.list_conversations(USERNAME)}
+    assert conv_ids[0] not in remaining
+    assert not store.conversation_exists(USERNAME, conv_ids[0])
+
+
 # --- compaction ---
 
 @pytest.mark.asyncio

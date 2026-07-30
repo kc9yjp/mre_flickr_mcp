@@ -156,3 +156,26 @@ def delete_conversation(username: str, conversation_id: str) -> None:
     with _chat_db(username) as conn:
         conn.execute("DELETE FROM messages WHERE conversation_id = ?", (conversation_id,))
         conn.execute("DELETE FROM conversations WHERE id = ?", (conversation_id,))
+
+
+def prune_conversations(username: str, keep_min: int = 12, keep_days: int = 2) -> None:
+    """Drop old conversations, keeping whichever is more: the ``keep_min``
+    most recently updated, or everything touched in the last ``keep_days``.
+    """
+    cutoff = int(time.time()) - keep_days * 24 * 3600
+    with _chat_db(username) as conn:
+        rows = conn.execute(
+            "SELECT id, updated_at FROM conversations ORDER BY updated_at DESC, rowid DESC"
+        ).fetchall()
+        keep_ids = {r["id"] for r in rows[:keep_min]}
+        keep_ids |= {r["id"] for r in rows if r["updated_at"] >= cutoff}
+        stale_ids = [r["id"] for r in rows if r["id"] not in keep_ids]
+        if not stale_ids:
+            return
+        placeholders = ",".join("?" * len(stale_ids))
+        conn.execute(
+            f"DELETE FROM messages WHERE conversation_id IN ({placeholders})", stale_ids
+        )
+        conn.execute(
+            f"DELETE FROM conversations WHERE id IN ({placeholders})", stale_ids
+        )

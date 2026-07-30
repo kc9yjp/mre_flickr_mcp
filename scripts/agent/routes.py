@@ -93,6 +93,7 @@ async def chat_stream(request: Request):
         conversation_id = store.create_conversation(
             username, message, conv_connection, conv_model
         )
+        store.prune_conversations(username)
 
     focused_photo_id = (body.get("focused_photo_id") or "").strip() or None
 
