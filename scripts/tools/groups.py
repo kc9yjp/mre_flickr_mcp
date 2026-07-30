@@ -18,8 +18,8 @@ TOOLS = [
         inputSchema={
             "type": "object",
             "properties": {
-                "query": {"type": "string", "description": "Keyword to search group names, descriptions, and keywords"},
-                "limit": {"type": "integer", "description": "Max results (default 10)"},
+                "query": {"type": "string", "description": "Keyword(s) to search group names, descriptions, and keywords. Comma-separate multiple unrelated keywords to OR them together (e.g. 'wildlife, sunset, macro')."},
+                "limit": {"type": "integer", "description": "Max results (default 25)"},
             },
         },
     ),
@@ -198,23 +198,37 @@ TOOLS = [
 
 async def _find_groups(args):
     query = args.get("query", "")
-    limit = int(args.get("limit", 10))
-    # Normalize query: replace hyphens/underscores with spaces, strip non-alphanumeric
+    limit = int(args.get("limit", 25))
     import re as _re
-    normalized = _re.sub(r"[-_]", " ", query)
-    normalized = _re.sub(r"[^\w\s]", "", normalized).strip()
-    pat = like_pattern(query)
-    # An empty normalized query would produce a match-everything pattern.
-    npat = like_pattern(normalized) if normalized else pat
+
+    # Comma-separated terms are OR'd together so multiple unrelated keywords
+    # can be searched in one call (e.g. "wildlife, sunset, macro").
+    terms = [t.strip() for t in query.split(",") if t.strip()]
+    if not terms:
+        terms = [query]
+
+    columns = ("name", "description", "keywords", "auto_keywords")
+    clauses = []
+    params = []
+    for term in terms:
+        # Normalize: replace hyphens/underscores with spaces, strip non-alphanumeric.
+        normalized = _re.sub(r"[-_]", " ", term)
+        normalized = _re.sub(r"[^\w\s]", "", normalized).strip()
+        patterns = {like_pattern(term)}
+        if normalized:
+            patterns.add(like_pattern(normalized))
+        for pat in patterns:
+            for col in columns:
+                clauses.append(f"{col} LIKE ? ESCAPE '\\'")
+                params.append(pat)
+
+    where_sql = " OR ".join(clauses)
     with get_db() as conn:
         rows = conn.execute(
-            "SELECT id, name, members, pool_count FROM groups "
-            "WHERE name LIKE ? ESCAPE '\\' OR name LIKE ? ESCAPE '\\' "
-            "   OR description LIKE ? ESCAPE '\\' OR description LIKE ? ESCAPE '\\' "
-            "   OR keywords LIKE ? ESCAPE '\\' OR keywords LIKE ? ESCAPE '\\' "
-            "   OR auto_keywords LIKE ? ESCAPE '\\' OR auto_keywords LIKE ? ESCAPE '\\' "
+            f"SELECT id, name, members, pool_count, description FROM groups "
+            f"WHERE {where_sql} "
             "ORDER BY members DESC LIMIT ?",
-            (pat, npat, pat, npat, pat, npat, pat, npat, limit),
+            (*params, limit),
         ).fetchall()
         if not rows:
             if table_empty(conn, "groups"):
