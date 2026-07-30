@@ -49,14 +49,34 @@ export function SyncPage() {
 
   const onSyncConnectionChange = async (connection: string) => {
     setSyncModels(null);
+    // Auto-pick the connection's first available model rather than leaving
+    // it blank: an explicit connection with no model would otherwise resolve
+    // to nothing usable (the backend won't borrow the chat model from a
+    // different connection — see resolve_sync_cfg).
+    let firstModel = "";
     if (connection && llmSettings?.connections[connection]) {
       try {
-        setSyncModels(await listModels(connection));
+        const models = await listModels(connection);
+        setSyncModels(models);
+        firstModel = models.models[0] ?? "";
       } catch {
         setSyncModels(null);
       }
     }
-    await saveSyncModel(connection, "");
+    await saveSyncModel(connection, firstModel);
+  };
+
+  const saveThrottle = async (seconds: number) => {
+    setModelMsg("");
+    try {
+      const saved = await postJSON<LLMSettings>("/api/llm-settings", {
+        sync_throttle_seconds: seconds,
+      });
+      setLlmSettings(saved);
+      setModelMsg("Saved.");
+    } catch (e) {
+      setModelMsg(e instanceof Error ? e.message : String(e));
+    }
   };
 
   const load = async () => {
@@ -172,6 +192,8 @@ export function SyncPage() {
         Model used by background sync jobs that call an LLM (currently the AI group-summary
         phase). This is a global preference shared by every sync job, separate from your chat
         model. Leave on "Use chat model" to always follow whatever model is active in Chat.
+        The throttle paces successive requests within one sync run — defaults to 60s (one
+        per minute), gentle on a local LLM.
       </p>
       {llmSettings && (
         <div className="sync-model-row">
@@ -195,6 +217,18 @@ export function SyncPage() {
               ))}
             </select>
           )}
+          <label className="sync-throttle-label">
+            Throttle
+            <input
+              type="number"
+              min={0}
+              step={1}
+              className="sync-throttle-input"
+              value={llmSettings.sync_throttle_seconds}
+              onChange={(e) => saveThrottle(Math.max(0, Number(e.target.value) || 0))}
+            />
+            sec between requests
+          </label>
           {modelMsg && <span className="hint">{modelMsg}</span>}
         </div>
       )}

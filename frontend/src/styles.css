@@ -1054,6 +1054,16 @@ select:focus {
   margin: 8px 0 16px;
 }
 
+.sync-throttle-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.sync-throttle-input {
+  width: 4em;
+}
+
 .btn-primary {
   border-color: var(--accent);
   color: var(--accent);

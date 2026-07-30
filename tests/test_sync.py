@@ -202,6 +202,56 @@ class TestSyncGroupSummaries:
         assert "milestone" in row["ai_keywords"]
         assert row["summary_generated_at"]
 
+    def test_throttles_between_successive_groups(self):
+        """Regression: pacing must apply between groups (not before the first,
+        not after the last) and use the configured throttle value."""
+        conn = _groups_db()
+        _insert_group(conn, "1@N", "Group One", needs_summary=1)
+        _insert_group(conn, "2@N", "Group Two", needs_summary=1)
+        from agent import llm, settings, prompts_store
+
+        cfg = {**self._fake_cfg(), "sync_throttle_seconds": 5}
+        with (
+            patch.object(settings, "resolve_sync_cfg", return_value=cfg),
+            patch.object(llm, "stream_chat", self._fake_stream_chat),
+            patch.object(prompts_store, "get_prompt_by_code", return_value=None),
+            patch("flickr_sync.asyncio.sleep") as mock_sleep,
+        ):
+            updated = flickr_sync.sync_group_summaries(conn, "user@N00")
+        assert updated == 2
+        mock_sleep.assert_called_once_with(5)
+
+    def test_no_throttle_sleep_for_single_group(self):
+        conn = _groups_db()
+        _insert_group(conn, "1@N", "Only Group", needs_summary=1)
+        from agent import llm, settings, prompts_store
+
+        cfg = {**self._fake_cfg(), "sync_throttle_seconds": 60}
+        with (
+            patch.object(settings, "resolve_sync_cfg", return_value=cfg),
+            patch.object(llm, "stream_chat", self._fake_stream_chat),
+            patch.object(prompts_store, "get_prompt_by_code", return_value=None),
+            patch("flickr_sync.asyncio.sleep") as mock_sleep,
+        ):
+            flickr_sync.sync_group_summaries(conn, "user@N00")
+        mock_sleep.assert_not_called()
+
+    def test_zero_throttle_disables_pacing(self):
+        conn = _groups_db()
+        _insert_group(conn, "1@N", "Group One", needs_summary=1)
+        _insert_group(conn, "2@N", "Group Two", needs_summary=1)
+        from agent import llm, settings, prompts_store
+
+        cfg = {**self._fake_cfg(), "sync_throttle_seconds": 0}
+        with (
+            patch.object(settings, "resolve_sync_cfg", return_value=cfg),
+            patch.object(llm, "stream_chat", self._fake_stream_chat),
+            patch.object(prompts_store, "get_prompt_by_code", return_value=None),
+            patch("flickr_sync.asyncio.sleep") as mock_sleep,
+        ):
+            flickr_sync.sync_group_summaries(conn, "user@N00")
+        mock_sleep.assert_not_called()
+
     def test_no_groups_need_summary(self):
         conn = _groups_db()
         _insert_group(conn, "1@N", "Fine As Is", needs_summary=0)

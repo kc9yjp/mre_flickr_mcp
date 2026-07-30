@@ -124,6 +124,16 @@ default — both fields empty) falls back to the active chat connection/model
 at call time. This is a single global preference shared by every such sync
 job, not a per-run picker. See `resolve_sync_cfg()` in `scripts/agent/settings.py`.
 
+Picking a distinct connection with no explicit model auto-selects that
+connection's first available model (fetched live) rather than leaving it
+blank — `resolve_sync_cfg` never falls back to `active_model` for a
+different connection, since that model id may not exist there at all.
+
+A **Throttle** field on the same row (`sync_throttle_seconds`, default `60`)
+paces successive group-summary calls within one sync run — one request per
+throttle interval rather than back-to-back, easy on a local LLM (the
+default assumes one). Set to `0` to disable pacing entirely.
+
 ## Connection fields
 
 | Field | Valid values | Effect |

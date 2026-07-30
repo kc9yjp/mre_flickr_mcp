@@ -531,11 +531,19 @@ def _build_group_summary_prompt(nsid: str, name: str, description: str, user_not
 async def _sync_group_summaries_async(conn, cfg: dict, nsid: str, rows) -> int:
     import httpx
     from agent import llm
+    from agent.settings import DEFAULT_SYNC_THROTTLE_SECONDS
 
+    throttle_seconds = cfg.get("sync_throttle_seconds", DEFAULT_SYNC_THROTTLE_SECONDS)
     stream = llm.stream_responses if cfg.get("api_mode") == "responses" else llm.stream_chat
     updated = 0
     async with httpx.AsyncClient(timeout=httpx.Timeout(300.0, connect=15.0)) as client:
-        for group_id, name, description, user_note in rows:
+        for i, (group_id, name, description, user_note) in enumerate(rows):
+            if i > 0 and throttle_seconds > 0:
+                # Paced to be gentle on a local LLM (the common case here) —
+                # one request every throttle_seconds rather than back-to-back
+                # calls for every flagged group. Configurable on the Sync page.
+                await asyncio.sleep(throttle_seconds)
+
             # One-time call, no tools, no history: each group gets a fresh
             # session containing only the (editable) prompt + this group's
             # own table data — nothing else.
