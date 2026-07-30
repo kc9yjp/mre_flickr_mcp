@@ -1046,6 +1046,14 @@ select:focus {
   margin: 8px 0;
 }
 
+.sync-model-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0 16px;
+}
+
 .btn-primary {
   border-color: var(--accent);
   color: var(--accent);

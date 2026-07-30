@@ -88,10 +88,14 @@ _MIGRATIONS = [
     "ALTER TABLE groups ADD COLUMN needs_summary INTEGER DEFAULT 1",
     "ALTER TABLE groups ADD COLUMN summary_md TEXT",
     "ALTER TABLE groups ADD COLUMN is_milestone INTEGER DEFAULT 0",
-    "ALTER TABLE groups ADD COLUMN min_faves INTEGER",
-    "ALTER TABLE groups ADD COLUMN min_views INTEGER",
+    "ALTER TABLE groups ADD COLUMN fave_min INTEGER",
+    "ALTER TABLE groups ADD COLUMN view_min INTEGER",
     "ALTER TABLE groups ADD COLUMN ai_keywords TEXT",
     "ALTER TABLE groups ADD COLUMN summary_generated_at INTEGER",
+    # User-editable per-group note (replaces the old manual `keywords` field)
+    # — incorporated into the prompt the next time the AI summary regenerates.
+    "ALTER TABLE groups ADD COLUMN user_note TEXT",
+    "ALTER TABLE groups ADD COLUMN open_subject INTEGER",
 ]
 
 SCHEMA_VERSION = len(_MIGRATIONS)
@@ -493,22 +497,6 @@ def sync_group_descriptions(conn):
     return changed
 
 
-_GROUP_SUMMARY_PROMPT = """You are cataloging a Flickr group for photo-sharing automation.
-
-Group name: {name}
-
-Group description (rules/restrictions, as written by the group admin):
-{description}
-
-Reply with ONLY a JSON object (no markdown code fences, no commentary) with these keys:
-- "summary": a short markdown summary (2-5 sentences) of what the group is about, and any posting rules or restrictions (limits on photos per day/week, required themes, content restrictions, etc).
-- "is_milestone": true if this is a "milestone"/threshold group that only accepts photos once they reach a minimum view or favorite count, else false.
-- "min_faves": integer minimum favorite count required to post, or null if none/not applicable.
-- "min_views": integer minimum view count required to post, or null if none/not applicable.
-- "keywords": a list of 5-15 lowercase keywords and synonyms describing the group's theme, useful for search.
-"""
-
-
 def _parse_group_summary_json(text: str) -> dict:
     """Best-effort parse of the LLM's JSON reply, tolerating markdown code fences."""
     text = text.strip()
@@ -518,18 +506,40 @@ def _parse_group_summary_json(text: str) -> dict:
     return json.loads(text)
 
 
-async def _sync_group_summaries_async(conn, cfg: dict, rows) -> int:
+def _build_group_summary_prompt(nsid: str, name: str, description: str, user_note: str) -> str:
+    """Fill the user-editable group-summary prompt template (see
+    agent.prompts_store) with this group's own name/description/note.
+
+    Uses ``.replace()`` on literal ``{token}`` placeholders rather than
+    ``str.format()`` — a group description is freeform text that may itself
+    contain stray ``{``/``}`` characters, which would break ``.format()``.
+    """
+    from agent.prompts_store import GROUP_SUMMARY_PROMPT_DEFAULT, get_prompt_by_code
+
+    prompt = get_prompt_by_code(nsid, "group-summary")
+    template = prompt["text"] if prompt else GROUP_SUMMARY_PROMPT_DEFAULT
+
+    desc_text = html.unescape(re.sub(r"<[^>]+>", " ", description or ""))[:3000].strip()
+    return (
+        template
+        .replace("{group_name}", name or "")
+        .replace("{group_description}", desc_text or "(no description provided)")
+        .replace("{group_user_note}", (user_note or "").strip() or "(none)")
+    )
+
+
+async def _sync_group_summaries_async(conn, cfg: dict, nsid: str, rows) -> int:
     import httpx
     from agent import llm
 
     stream = llm.stream_responses if cfg.get("api_mode") == "responses" else llm.stream_chat
     updated = 0
     async with httpx.AsyncClient(timeout=httpx.Timeout(300.0, connect=15.0)) as client:
-        for group_id, name, description in rows:
-            desc_text = html.unescape(re.sub(r"<[^>]+>", " ", description or ""))[:3000].strip()
-            prompt = _GROUP_SUMMARY_PROMPT.format(
-                name=name or "", description=desc_text or "(no description provided)",
-            )
+        for group_id, name, description, user_note in rows:
+            # One-time call, no tools, no history: each group gets a fresh
+            # session containing only the (editable) prompt + this group's
+            # own table data — nothing else.
+            prompt = _build_group_summary_prompt(nsid, name, description, user_note)
             messages = [{"role": "user", "content": prompt}]
             try:
                 content = ""
@@ -543,14 +553,15 @@ async def _sync_group_summaries_async(conn, cfg: dict, rows) -> int:
 
             keywords = result.get("keywords") or []
             conn.execute("""
-                UPDATE groups SET summary_md=?, is_milestone=?, min_faves=?, min_views=?,
-                    ai_keywords=?, needs_summary=0, summary_generated_at=?
+                UPDATE groups SET summary_md=?, is_milestone=?, fave_min=?, view_min=?,
+                    open_subject=?, ai_keywords=?, needs_summary=0, summary_generated_at=?
                 WHERE id=?
             """, (
                 result.get("summary", ""),
                 int(bool(result.get("is_milestone"))),
-                result.get("min_faves"),
-                result.get("min_views"),
+                result.get("fave_min"),
+                result.get("view_min"),
+                None if result.get("open_subject") is None else int(bool(result.get("open_subject"))),
                 " ".join(str(k) for k in keywords),
                 int(time.time()),
                 group_id,
@@ -561,22 +572,23 @@ async def _sync_group_summaries_async(conn, cfg: dict, rows) -> int:
 
 
 def sync_group_summaries(conn, nsid: str) -> int:
-    """Generate AI summaries (rules, milestone thresholds, keywords) for
-    groups flagged needs_summary=1 by the earlier DB-update phase."""
+    """Generate AI summaries (rules, milestone thresholds, open-subject
+    flag, keywords) for groups flagged needs_summary=1 by the earlier
+    DB-update phase, or by a user_note edit via set_group_note."""
     rows = conn.execute(
-        "SELECT id, name, description FROM groups WHERE needs_summary=1"
+        "SELECT id, name, description, user_note FROM groups WHERE needs_summary=1"
     ).fetchall()
     if not rows:
         print("  No groups need a summary refresh.")
         return 0
 
-    from agent.settings import resolve_cfg
-    cfg = resolve_cfg(nsid)
+    from agent.settings import resolve_sync_cfg
+    cfg = resolve_sync_cfg(nsid)
     if not cfg.get("base_url") or not cfg.get("model"):
-        print("  Skipping AI summaries: no LLM connection/model configured (set one up in the chat Models panel).")
+        print("  Skipping AI summaries: no LLM connection/model configured (set one on the Sync page).")
         return 0
 
-    updated = asyncio.run(_sync_group_summaries_async(conn, cfg, rows))
+    updated = asyncio.run(_sync_group_summaries_async(conn, cfg, nsid, rows))
     print(f"  {updated}/{len(rows)} group summaries generated.")
     return updated
 

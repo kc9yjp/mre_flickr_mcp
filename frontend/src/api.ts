@@ -172,6 +172,10 @@ export interface LLMSettings {
   // LLM-written summary once it nears the active model's context_window,
   // before sending the next turn. Off by default — compaction is lossy.
   auto_compact: boolean;
+  // Connection/model used by background sync jobs (e.g. the AI group
+  // summary phase). Empty means "fall back to active_connection/active_model".
+  sync_connection: string;
+  sync_model: string;
 }
 
 // ── Prompts ────────────────────────────────────────────────────────────────

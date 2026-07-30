@@ -934,11 +934,13 @@ def test_prompts_seed_once_and_are_idempotent():
         "system", "own_photo", "other_photo", "collection",
     }
     assert {p["code"] for p in data["prompts"]} == {
-        "system-core", "user-memory", "compact-conversation", "improve-photo",
-        "suggest-groups", "suggest-albums", "threshold-groups", "reply-comments",
-        "weak-photos", "unearth-private",
+        "system-core", "user-memory", "compact-conversation", "group-summary",
+        "improve-photo", "suggest-groups", "suggest-albums", "threshold-groups",
+        "reply-comments", "weak-photos", "unearth-private",
     }
-    assert {v["code"] for v in data["variables"]} == {"photo_id", "user_nsid"}
+    assert {v["code"] for v in data["variables"]} == {
+        "photo_id", "user_nsid", "group_name", "group_description", "group_user_note",
+    }
 
     # Calling again must not duplicate rows.
     data2 = prompts_store.all_data(NSID)

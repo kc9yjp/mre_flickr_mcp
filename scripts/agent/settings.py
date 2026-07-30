@@ -201,6 +201,10 @@ def save_settings(nsid: str, data: dict) -> dict:
         current["active_model"] = data["active_model"]
     if "auto_compact" in data:
         current["auto_compact"] = bool(data["auto_compact"])
+    if "sync_connection" in data:
+        current["sync_connection"] = data["sync_connection"]
+    if "sync_model" in data:
+        current["sync_model"] = data["sync_model"]
 
     # ── merge connections ────────────────────────────────────────────────
     incoming = data.get("connections") or {}
@@ -390,6 +394,16 @@ def resolve_cfg(
     }
 
 
+def resolve_sync_cfg(nsid: str) -> dict:
+    """Build the flat cfg dict for background sync jobs (e.g. the AI group
+    summary phase), using the user's dedicated ``sync_connection``/
+    ``sync_model`` pick, or falling back to their active chat connection/
+    model if unset.
+    """
+    s = load_settings(nsid)
+    return resolve_cfg(nsid, s.get("sync_connection") or None, s.get("sync_model") or None)
+
+
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
 
@@ -505,6 +519,13 @@ def _merge_defaults(raw: dict) -> dict:
         # Off by default — compaction discards raw history irreversibly, and
         # a user should opt into that rather than have it happen silently.
         "auto_compact": bool(raw.get("auto_compact", False)),
+        # Connection/model used by background sync jobs (e.g. the AI group
+        # summary phase) — deliberately separate from active_connection/
+        # active_model so switching chat models doesn't silently change what
+        # sync jobs use. Empty means "fall back to the active chat pick" —
+        # see resolve_sync_cfg().
+        "sync_connection": raw.get("sync_connection", ""),
+        "sync_model": raw.get("sync_model", ""),
         "schema_version": 4,
     }
 

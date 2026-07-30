@@ -2,7 +2,7 @@
 // database reset action.
 
 import { useEffect, useRef, useState } from "react";
-import { SyncStatus, getJSON, postJSON } from "../api";
+import { LLMSettings, ModelList, SyncStatus, getJSON, listModels, postJSON } from "../api";
 import { relativeTime } from "../format";
 
 const SYNC_TYPES = ["photos", "contacts", "groups", "albums"] as const;
@@ -14,6 +14,50 @@ export function SyncPage() {
   const [confirmReset, setConfirmReset] = useState(false);
   const timer = useRef<number | undefined>(undefined);
   const aliveRef = useRef(true);
+
+  // Model used for background sync jobs that call an LLM (currently the AI
+  // group-summary phase; more sync jobs may use this same setting later).
+  // This is a global preference, not a per-run picker.
+  const [llmSettings, setLlmSettings] = useState<LLMSettings | null>(null);
+  const [syncModels, setSyncModels] = useState<ModelList | null>(null);
+  const [modelMsg, setModelMsg] = useState("");
+
+  useEffect(() => {
+    getJSON<LLMSettings>("/api/llm-settings")
+      .then((s) => {
+        setLlmSettings(s);
+        if (s.sync_connection && s.connections[s.sync_connection]) {
+          listModels(s.sync_connection).then(setSyncModels).catch(() => setSyncModels(null));
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  const saveSyncModel = async (connection: string, model: string) => {
+    setModelMsg("");
+    try {
+      const saved = await postJSON<LLMSettings>("/api/llm-settings", {
+        sync_connection: connection,
+        sync_model: model,
+      });
+      setLlmSettings(saved);
+      setModelMsg("Saved.");
+    } catch (e) {
+      setModelMsg(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  const onSyncConnectionChange = async (connection: string) => {
+    setSyncModels(null);
+    if (connection && llmSettings?.connections[connection]) {
+      try {
+        setSyncModels(await listModels(connection));
+      } catch {
+        setSyncModels(null);
+      }
+    }
+    await saveSyncModel(connection, "");
+  };
 
   const load = async () => {
     try {
@@ -122,6 +166,38 @@ export function SyncPage() {
       </div>
 
       {msg && <p className={msg.includes("Error") || msg.includes("error") ? "error" : "hint"}>{msg}</p>}
+
+      <h3>Sync Model</h3>
+      <p className="hint">
+        Model used by background sync jobs that call an LLM (currently the AI group-summary
+        phase). This is a global preference shared by every sync job, separate from your chat
+        model. Leave on "Use chat model" to always follow whatever model is active in Chat.
+      </p>
+      {llmSettings && (
+        <div className="sync-model-row">
+          <select
+            value={llmSettings.sync_connection}
+            onChange={(e) => onSyncConnectionChange(e.target.value)}
+          >
+            <option value="">Use chat model ({llmSettings.active_connection || "none set"})</option>
+            {Object.entries(llmSettings.connections).map(([id, conn]) => (
+              <option key={id} value={id}>{conn.name}</option>
+            ))}
+          </select>
+          {llmSettings.sync_connection && (
+            <select
+              value={llmSettings.sync_model}
+              onChange={(e) => saveSyncModel(llmSettings.sync_connection, e.target.value)}
+            >
+              <option value="">Default model</option>
+              {(syncModels?.models ?? []).map((m) => (
+                <option key={m} value={m}>{m}</option>
+              ))}
+            </select>
+          )}
+          {modelMsg && <span className="hint">{modelMsg}</span>}
+        </div>
+      )}
 
       <h3>Reset Database</h3>
       <p className="hint">

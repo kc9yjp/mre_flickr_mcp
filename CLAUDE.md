@@ -89,8 +89,9 @@ contact_engagement — contact_id, faves, comments, last_updated
 do_not_unfollow   — contact_id, reason, added_at
 never_follow      — contact_id, reason, added_at (excluded from follow suggestions)
 groups            — id, name, members, pool_count, synced_at, description,
-                    needs_summary, summary_md, is_milestone, min_faves,
-                    min_views, ai_keywords, summary_generated_at
+                    user_note, needs_summary, summary_md, is_milestone,
+                    fave_min, view_min, open_subject, ai_keywords,
+                    summary_generated_at
 albums            — id, title, description, primary_photo_id, count_photos, count_views, synced_at
 photo_groups      — photo_id, group_id (which of your photos are in each group)
 sync_log          — type, mode, photos_fetched, synced_at
@@ -121,7 +122,8 @@ sync_log          — type, mode, photos_fetched, synced_at
 | `create_album` | Create a new album |
 | `edit_album` | Update album title/description |
 | `delete_album` | Delete an album |
-| `find_groups` | Search joined groups by keyword |
+| `find_groups` | Search joined groups by keyword; returns a markdown listing (one section per group, headed by its id) with the AI summary, milestone thresholds, and your note |
+| `set_group_note` | Set a personal note about a group, incorporated into its AI summary on the next sync |
 | `get_group_stats` | Groups ranked by how many of your photos are in each |
 | `get_photo_group_count` | Photos ranked by how many groups they belong to |
 | `add_to_group` | Add photo to a group pool |

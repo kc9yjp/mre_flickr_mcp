@@ -283,15 +283,32 @@ class TestGroups:
     async def test_find_groups_by_name(self, db):
         import mcp_tools
         result = await mcp_tools._find_groups({"query": "Landscape"})
-        groups = _json(result)
-        assert len(groups) == 1
-        assert groups[0]["id"] == "group1@N00"
+        text = _text(result)
+        assert "Landscape Lovers" in text
+        assert "`group1@N00`" in text
 
     @pytest.mark.asyncio
     async def test_find_groups_by_keyword(self, db):
         import mcp_tools
         result = await mcp_tools._find_groups({"query": "nature"})
-        assert len(_json(result)) == 1
+        assert "`group1@N00`" in _text(result)
+
+    @pytest.mark.asyncio
+    async def test_find_groups_includes_summary_and_thresholds(self, db):
+        import mcp_tools
+        db.execute(
+            "UPDATE groups SET is_milestone=1, fave_min=50, view_min=500, "
+            "open_subject=0, user_note='post at most 1/day' WHERE id='group1@N00'"
+        )
+        db.commit()
+        result = await mcp_tools._find_groups({"query": "Landscape"})
+        text = _text(result)
+        assert "milestone group" in text
+        assert "min faves: 50" in text
+        assert "min views: 500" in text
+        assert "themed subject" in text
+        assert "post at most 1/day" in text
+        assert "A group for landscape photography." in text  # summary_md
 
     @pytest.mark.asyncio
     async def test_find_groups_no_match(self, db):
@@ -312,6 +329,21 @@ class TestGroups:
         import mcp_tools
         result = await mcp_tools._find_groups({"query": "Land_cape"})
         assert "No groups match" in _text(result)
+
+    @pytest.mark.asyncio
+    async def test_set_group_note(self, db):
+        import mcp_tools
+        result = await mcp_tools._set_group_note({"group_id": "group1@N00", "note": "max 2 posts/week"})
+        assert "Note saved" in _text(result)
+        row = db.execute("SELECT user_note, needs_summary FROM groups WHERE id='group1@N00'").fetchone()
+        assert row["user_note"] == "max 2 posts/week"
+        assert row["needs_summary"] == 1
+
+    @pytest.mark.asyncio
+    async def test_set_group_note_not_found(self, db):
+        import mcp_tools
+        result = await mcp_tools._set_group_note({"group_id": "bad@N00", "note": "x"})
+        assert "not found" in _text(result)
 
 
 # ---------------------------------------------------------------------------

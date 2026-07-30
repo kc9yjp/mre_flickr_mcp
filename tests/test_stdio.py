@@ -66,7 +66,7 @@ class TestStdioProtocol:
             "search_photos", "get_photo", "get_summary", "update_photo",
             "fetch_photo_image", "find_albums", "get_album_photos",
             "add_to_album", "remove_from_album", "create_album", "edit_album",
-            "delete_album", "find_groups", "add_to_group", "remove_from_group",
+            "delete_album", "find_groups", "set_group_note", "add_to_group", "remove_from_group",
             "find_unfollow_candidates", "protect_contact",
             "unfollow_contact", "get_contacts_summary", "get_photo_comments",
             "add_comment", "delete_comment", "fave_photo", "get_photo_stats",

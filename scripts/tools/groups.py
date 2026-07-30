@@ -24,6 +24,21 @@ TOOLS = [
         },
     ),
     Tool(
+        name="set_group_note",
+        description=(
+            "Set a personal note about a group (e.g. posting limits you've noticed, or a reminder). "
+            "Incorporated into the group's AI-generated summary the next time groups are synced."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "group_id": {"type": "string", "description": "Flickr group NSID"},
+                "note": {"type": "string", "description": "Freeform note text"},
+            },
+            "required": ["group_id", "note"],
+        },
+    ),
+    Tool(
         name="add_to_group",
         description=(
             "Add a photo to a Flickr group pool. "
@@ -214,7 +229,7 @@ async def _find_groups(args):
     with get_db() as conn:
         rows = conn.execute(
             f"SELECT id, name, members, pool_count, description, summary_md, "
-            f"is_milestone, min_faves, min_views FROM groups "
+            f"is_milestone, fave_min, view_min, open_subject, user_note FROM groups "
             f"WHERE {where_sql} "
             "ORDER BY members DESC LIMIT ?",
             (*params, limit),
@@ -223,7 +238,58 @@ async def _find_groups(args):
             if table_empty(conn, "groups"):
                 return [TextContent(type="text", text="No groups found. Run 'sync groups' first via the web UI or the sync tool.")]
             return [TextContent(type="text", text=f"No groups match '{query}'.")]
-    return [TextContent(type="text", text=json.dumps([dict(r) for r in rows], indent=2))]
+    return [TextContent(type="text", text=_format_groups_markdown(rows))]
+
+
+def _format_groups_markdown(rows) -> str:
+    """Render group rows as a markdown listing, one section per group,
+    each headed by the group id so it can be passed straight to
+    add_to_group/remove_from_group without a further lookup."""
+    sections = []
+    for r in rows:
+        lines = [f"## {r['name']} (`{r['id']}`)"]
+        lines.append(f"- Members: {r['members']} · Pool: {r['pool_count']}")
+
+        flags = []
+        if r["is_milestone"]:
+            flags.append("milestone group")
+        if r["fave_min"] is not None:
+            flags.append(f"min faves: {r['fave_min']}")
+        if r["view_min"] is not None:
+            flags.append(f"min views: {r['view_min']}")
+        if r["open_subject"] is not None:
+            flags.append("open subject" if r["open_subject"] else "themed subject")
+        if flags:
+            lines.append(f"- {' · '.join(flags)}")
+
+        if r["user_note"]:
+            lines.append(f"- Your note: {r['user_note']}")
+
+        if r["summary_md"]:
+            lines.append("")
+            lines.append(r["summary_md"])
+        elif r["description"]:
+            lines.append("")
+            lines.append(r["description"])
+
+        sections.append("\n".join(lines))
+    return "\n\n".join(sections)
+
+
+async def _set_group_note(args):
+    group_id = args["group_id"]
+    note = args["note"]
+    with get_db() as conn:
+        updated = conn.execute(
+            "UPDATE groups SET user_note=?, needs_summary=1 WHERE id=?",
+            (note, group_id),
+        ).rowcount
+    if not updated:
+        return [TextContent(type="text", text=f"Group {group_id} not found in local database.")]
+    return [TextContent(type="text", text=(
+        f"Note saved for group {group_id}. It will be incorporated into the group's AI summary "
+        "the next time groups are synced."
+    ))]
 
 
 # TODO: read _RETRY_TZ from DB settings key "group_queue_retry_tz" (see db.SETTINGS_DEFAULTS)
@@ -621,6 +687,7 @@ async def _remove_from_queue(args):
 
 HANDLERS = {
     "find_groups":       _find_groups,
+    "set_group_note":    _set_group_note,
     "add_to_group":      _add_to_group,
     "remove_from_group": _remove_from_group,
     "join_group":        _join_group,

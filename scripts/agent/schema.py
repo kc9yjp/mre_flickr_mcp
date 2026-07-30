@@ -18,7 +18,7 @@ WRITE_TOOLS: frozenset[str] = frozenset({
     "create_gallery", "add_to_gallery",
     "follow_contact", "unfollow_contact",
     # Local-DB writes
-    "remove_from_queue",
+    "remove_from_queue", "set_group_note",
     "protect_contact", "add_to_never_follow",
     "add_to_keeper_list", "remove_from_keeper_list",
     # Long-running
