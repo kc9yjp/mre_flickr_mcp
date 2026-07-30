@@ -5,14 +5,15 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Conversation,
   LLMSettings,
+  PromptsData,
   WireMessage,
+  compactConversation,
   getJSON,
   listModels,
   postJSON,
   streamChat,
 } from "../api";
 import * as bus from "../bus";
-import { SessionStatsPanel } from "../components/SessionStats";
 import { Markdown } from "../markdown";
 
 interface ToolCard {
@@ -149,7 +150,6 @@ export function Chat() {
   const [denyReason, setDenyReason] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [autoApprove, setAutoApprove] = useState(false);
-  const [showStats, setShowStats] = useState(false);
 
   // Connection / model selector state — one flat "connectionId::model" value.
   const [llmCfg, setLlmCfg] = useState<LLMSettings | null>(null);
@@ -164,6 +164,8 @@ export function Chat() {
   const focusedPhotoRef = useRef<string | null>(null);
   const autoApproveRef = useRef(false);
   autoApproveRef.current = autoApprove;
+  const streamingRef = useRef(false);
+  streamingRef.current = streaming;
 
   const refreshConversations = useCallback(() => {
     getJSON<{ conversations: Conversation[] }>("/api/chat/conversations")
@@ -172,6 +174,11 @@ export function Chat() {
   }, []);
 
   useEffect(refreshConversations, [refreshConversations]);
+
+  // Let the (separately-mounted) Stats panel track which conversation is active.
+  useEffect(() => {
+    bus.emit("activeConversationChanged", activeId);
+  }, [activeId]);
 
   const fetchModelsForConnection = useCallback((connectionId: string) => {
     listModels(connectionId)
@@ -339,6 +346,50 @@ export function Chat() {
     [send],
   );
 
+  // Triggered by the Stats panel's "Compact now" button. Runs in the chat
+  // window rather than silently in that panel: shows the compact prompt
+  // (from the "compact-conversation" builtin prompt, editable in the Prompts
+  // panel) as a collapsed origin bubble, then the resulting summary — the
+  // same shape as a workflow-prompt run. These bubbles aren't persisted
+  // messages of their own; the actual stored history is replaced server-side
+  // by compactConversation(), so on success the whole visible transcript
+  // collapses to just the summary bubble, and on failure the two ephemeral
+  // bubbles are removed to leave the view exactly as it was.
+  const compactNow = useCallback(async () => {
+    const conversationId = activeIdRef.current;
+    if (!conversationId || streamingRef.current) return;
+    setError("");
+    let promptText = "Summarize this conversation so it can continue seamlessly.";
+    let promptId = "";
+    try {
+      const data = await getJSON<PromptsData>("/api/prompts");
+      const p = data.prompts.find((pr) => pr.code === "compact-conversation");
+      if (p) {
+        promptText = p.text;
+        promptId = p.id;
+      }
+    } catch {
+      // Fall back to the placeholder text above — the instruction actually
+      // sent server-side always comes from the compact-conversation prompt
+      // (or its built-in default) regardless of whether this lookup succeeds.
+    }
+    setMsgs((prev) => [
+      ...prev,
+      { role: "user", text: promptText, tools: [], origin: { title: "Compact conversation", promptId } },
+      { role: "assistant", text: "Compacting…", tools: [] },
+    ]);
+    try {
+      const result = await compactConversation(conversationId);
+      setMsgs([{ role: "assistant", text: `**Conversation compacted.**\n\n${result.summary}`, tools: [] }]);
+      refreshConversations();
+    } catch (e) {
+      setMsgs((prev) => prev.slice(0, -2));
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  }, [refreshConversations]);
+
+  useEffect(() => bus.on("compactConversation", compactNow), [compactNow]);
+
   const answerConfirm = async (approve: boolean, reason?: string) => {
     if (!confirm) return;
     setConfirm(null);
@@ -467,9 +518,9 @@ export function Chat() {
           ⚡
         </button>
         <button
-          onClick={() => setShowStats((s) => !s)}
-          title="Show session stats"
-          className={showStats ? "icon-btn active" : "icon-btn"}
+          onClick={() => bus.emit("openPanel", "stats")}
+          title="Open session stats panel"
+          className="icon-btn"
         >
           📊
         </button>
@@ -488,9 +539,6 @@ export function Chat() {
           📝
         </button>
       </div>
-      {showStats && activeId && (
-        <SessionStatsPanel conversationId={activeId} onCompacted={() => activeId && openConversation(activeId)} />
-      )}
       <div className="chat-messages" ref={scrollRef}>
         {error && (
           <p className="error" style={{ marginBottom: 12 }}>{error}</p>

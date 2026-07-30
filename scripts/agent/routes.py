@@ -185,7 +185,7 @@ async def chat_conversation_compact(request: Request):
         )
 
     async with lock:
-        summary = await compact.compact(username, conversation_id, cfg)
+        summary = await compact.compact(username, nsid, conversation_id, cfg)
     if not summary:
         return JSONResponse({"error": "Nothing to compact, or the LLM call failed."}, status_code=400)
     loop.reset_context_stats(conversation_id)

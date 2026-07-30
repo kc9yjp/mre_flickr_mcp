@@ -1,52 +1,58 @@
-// Small stats readout (turns/tokens/latency) for the active chat conversation,
-// plus a manual "Compact now" control that summarizes the conversation via
-// the LLM and replaces its stored history with that summary in place.
+// Session Stats dockview panel: turns/tokens/latency for the active chat
+// conversation, polled frequently for a live-ish readout, plus a "Compact
+// now" trigger. This panel doesn't perform compaction itself — it just asks
+// Chat.tsx (via the "compactConversation" bus event) to run it, so the
+// compaction and its summary show up as part of the chat transcript instead
+// of vanishing silently into this popup. See Chat.tsx's compactNow.
 
-import { useEffect, useState } from "react";
-import { SessionStats, compactConversation, getSessionStats } from "../api";
+import { useEffect, useRef, useState } from "react";
+import { SessionStats, getSessionStats } from "../api";
+import * as bus from "../bus";
 
-interface SessionStatsProps {
-  conversationId: string | null;
-  /** Called after a successful manual compaction so the caller can refresh
-   * the visible message list (the compacted summary replaces it) and this
-   * panel's own stats. */
-  onCompacted?: () => void;
-}
+const POLL_MS = 3000;
 
-export function SessionStatsPanel({ conversationId, onCompacted }: SessionStatsProps) {
+export function SessionStatsPanel() {
+  const [conversationId, setConversationId] = useState<string | null>(null);
   const [stats, setStats] = useState<SessionStats | null>(null);
-  const [compacting, setCompacting] = useState(false);
-  const [error, setError] = useState("");
+  const conversationIdRef = useRef<string | null>(null);
+  conversationIdRef.current = conversationId;
 
-  const refresh = () => {
-    if (!conversationId) {
-      setStats(null);
-      return;
-    }
-    getSessionStats(conversationId)
-      .then(setStats)
-      .catch(() => setStats(null));
+  useEffect(() => bus.on("activeConversationChanged", setConversationId), []);
+
+  useEffect(() => {
+    const refresh = () => {
+      const id = conversationIdRef.current;
+      if (!id) {
+        setStats(null);
+        return;
+      }
+      getSessionStats(id).then(setStats).catch(() => setStats(null));
+    };
+    refresh();
+    if (!conversationId) return;
+    const timer = window.setInterval(refresh, POLL_MS);
+    return () => window.clearInterval(timer);
+  }, [conversationId]);
+
+  const compact = () => {
+    if (!conversationId) return;
+    bus.emit("compactConversation", undefined);
   };
 
-  useEffect(refresh, [conversationId]);
-
-  const compact = async () => {
-    if (!conversationId || compacting) return;
-    setCompacting(true);
-    setError("");
-    try {
-      await compactConversation(conversationId);
-      refresh();
-      onCompacted?.();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setCompacting(false);
-    }
-  };
+  if (!conversationId) {
+    return (
+      <div className="panel session-stats">
+        <p className="hint">No active conversation yet — start chatting to see stats here.</p>
+      </div>
+    );
+  }
 
   if (!stats || stats.turns === 0) {
-    return null;
+    return (
+      <div className="panel session-stats">
+        <p className="hint">No turns yet in this conversation.</p>
+      </div>
+    );
   }
 
   const avgLatencyMs = Math.round(stats.total_latency_ms / stats.turns);
@@ -55,7 +61,7 @@ export function SessionStatsPanel({ conversationId, onCompacted }: SessionStatsP
   const contextUsedPercent = Math.round((stats.last_prompt_tokens / contextWindow) * 100);
 
   return (
-    <div className="session-stats">
+    <div className="panel session-stats">
       <div className="stats-grid">
         <div className="stat-item">
           <span className="stat-label">Turns</span>
@@ -91,10 +97,10 @@ export function SessionStatsPanel({ conversationId, onCompacted }: SessionStatsP
         </div>
       </div>
       <div className="session-stats-actions">
-        <button type="button" className="btn-sm" onClick={compact} disabled={compacting}>
-          {compacting ? "Compacting…" : "Compact now"}
+        <button type="button" className="btn-sm" onClick={compact}>
+          Compact now
         </button>
-        {error && <span className="error">{error}</span>}
+        <span className="hint">Sends the conversation to Chat to summarize and replace its history.</span>
       </div>
     </div>
   );

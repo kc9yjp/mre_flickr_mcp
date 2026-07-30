@@ -3,7 +3,9 @@
     "allow": [
       "Bash(python -m pytest tests/test_agent_routes.py -q)",
       "Bash(python -m pytest tests/test_agent.py tests/test_settings.py tests/test_agent_routes.py -q)",
-      "Bash(python -m pytest tests/test_flickr_api_cache.py -v)"
+      "Bash(python -m pytest tests/test_flickr_api_cache.py -v)",
+      "Bash(node_modules/.bin/tsc --noEmit -p .)",
+      "Bash(python -m pytest tests/test_agent.py -k compact -q)"
     ]
   },
   "enableAllProjectMcpServers": true

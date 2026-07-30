@@ -17,6 +17,8 @@ interface Events {
   showPhotoList: string[]; // a tool found these photo ids — show them in the Photo Browser grid
   switchPanel: string;  // mobile: switch to named panel
   openPanel: string;    // request desktop dockview to open/focus a panel by id
+  activeConversationChanged: string | null; // Chat's active conversation id, for the Stats panel to track
+  compactConversation: void; // Stats panel requests Chat compact the active conversation
 }
 
 type Handler<K extends keyof Events> = (payload: Events[K]) => void;

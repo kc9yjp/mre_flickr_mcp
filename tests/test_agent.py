@@ -309,7 +309,7 @@ async def test_compact_replaces_history_with_summary(user_db):
         yield {"type": "message", "content": "Summary of the chat.", "tool_calls": [], "finish_reason": "stop"}
 
     with patch("agent.compact.llm.stream_chat", fake_stream_chat):
-        summary = await compact.compact(USERNAME, conv, CFG)
+        summary = await compact.compact(USERNAME, NSID, conv, CFG)
 
     assert summary == "Summary of the chat."
     msgs = store.get_messages(USERNAME, conv)
@@ -323,7 +323,7 @@ async def test_compact_empty_conversation_is_a_no_op(user_db):
     from agent import compact, store
 
     conv = store.create_conversation(USERNAME, "t")
-    summary = await compact.compact(USERNAME, conv, CFG)
+    summary = await compact.compact(USERNAME, NSID, conv, CFG)
     assert summary == ""
     assert store.get_messages(USERNAME, conv) == []
 
@@ -340,7 +340,7 @@ async def test_compact_llm_error_is_a_no_op(user_db):
         yield  # pragma: no cover
 
     with patch("agent.compact.llm.stream_chat", broken):
-        summary = await compact.compact(USERNAME, conv, CFG)
+        summary = await compact.compact(USERNAME, NSID, conv, CFG)
 
     assert summary == ""
     # History is left untouched — a failed summarization must not still wipe it.
@@ -361,14 +361,14 @@ async def test_run_turn_auto_compacts_when_over_threshold(user_db):
     call sites), so this dispatches on the request content instead of
     patching two "different" targets that are actually one.
     """
-    from agent import compact, loop, store
+    from agent import loop, prompts_store, store
 
     conv = store.create_conversation(USERNAME, "t")
     store.append_message(USERNAME, conv, {"role": "user", "content": "x" * 400})
     store.append_message(USERNAME, conv, {"role": "assistant", "content": "y" * 400})
 
     async def fake_stream_chat(cfg, messages, tools=None, client=None):
-        if messages and messages[-1].get("content") == compact.COMPACT_INSTRUCTION:
+        if messages and messages[-1].get("content") == prompts_store.COMPACT_PROMPT_DEFAULT:
             yield {"type": "message", "content": "Old chat summarized.", "tool_calls": [], "finish_reason": "stop"}
         else:
             yield {"type": "message", "content": "Answered after compaction.", "tool_calls": [], "finish_reason": "stop"}
@@ -934,9 +934,9 @@ def test_prompts_seed_once_and_are_idempotent():
         "system", "own_photo", "other_photo", "collection",
     }
     assert {p["code"] for p in data["prompts"]} == {
-        "system-core", "user-memory", "improve-photo", "suggest-groups",
-        "suggest-albums", "threshold-groups", "reply-comments", "weak-photos",
-        "unearth-private",
+        "system-core", "user-memory", "compact-conversation", "improve-photo",
+        "suggest-groups", "suggest-albums", "threshold-groups", "reply-comments",
+        "weak-photos", "unearth-private",
     }
     assert {v["code"] for v in data["variables"]} == {"photo_id", "user_nsid"}
 

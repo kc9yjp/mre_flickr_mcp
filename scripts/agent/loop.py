@@ -327,7 +327,7 @@ async def run_turn(
         prior_messages = store.get_messages(username, conversation_id)
         context_window = cfg.get("context_window") or DEFAULT_CONTEXT_WINDOW
         if approx_tokens(prior_messages) >= context_window * AUTO_COMPACT_THRESHOLD:
-            summary = await compact.compact(username, conversation_id, cfg)
+            summary = await compact.compact(username, nsid, conversation_id, cfg)
             if summary:
                 reset_context_stats(conversation_id)
                 yield {"type": "compacted", "summary": summary}

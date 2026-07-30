@@ -16,6 +16,7 @@ import { OtherPhotoView } from "./panels/OtherPhotoView";
 import { Summary } from "./panels/Summary";
 import { Command } from "./panels/Command";
 import { Chat } from "./panels/Chat";
+import { SessionStatsPanel } from "./components/SessionStats";
 import { ModelsPage } from "./panels/ModelsPage";
 import { PromptsPage } from "./panels/PromptsPage";
 import { SyncPage } from "./panels/SyncPage";
@@ -37,6 +38,7 @@ const components: Record<string, React.FC<IDockviewPanelProps>> = {
   summary: Summary,
   command: Command,
   chat: Chat,
+  stats: SessionStatsPanel,
   models: ModelsPage,
   prompts: PromptsPage,
   sync: SyncPage,

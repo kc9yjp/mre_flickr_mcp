@@ -108,6 +108,15 @@ SYSTEM_PROMPT_DEFAULT = (
     "plainly instead of inventing an explanation for why it couldn't be done."
 )
 
+COMPACT_PROMPT_DEFAULT = (
+    "Summarize this entire conversation so it can continue seamlessly without "
+    "the full history above. Capture what the user asked for and why, "
+    "decisions made, any photo/album/group ids or titles referenced, and "
+    "anything left unresolved. Be concise but keep the specifics the "
+    "assistant will need to keep working correctly. Write the summary "
+    "itself, not a description of writing one."
+)
+
 _STYLE_RULES = (
     "Style rules: never include year tags (e.g. '2007'); compound tags are "
     "concatenated lowercase (oakpark, not oak-park); don't add location tags "
@@ -158,6 +167,11 @@ _SEED_PROMPTS = [
          context="global", text="",
          description="Accumulated guidance saved via the `remember` tool "
          "or edited here; sent as a second system message on every turn."),
+    dict(code="compact-conversation", name="Compact conversation", category_id="system",
+         context="global", text=COMPACT_PROMPT_DEFAULT,
+         description="Instruction sent to the LLM to summarize a conversation "
+         "when compacting it, replacing its stored history in place — used "
+         "by both the manual \"Compact now\" action and auto-compact."),
     dict(code="improve-photo", name="Improve metadata", category_id="own_photo",
          context="photo", description="Suggest title/description/tags for "
          "the current photo.",
