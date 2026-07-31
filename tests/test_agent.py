@@ -939,7 +939,7 @@ def test_prompts_seed_once_and_are_idempotent():
         "reply-comments", "weak-photos", "unearth-private",
     }
     assert {v["code"] for v in data["variables"]} == {
-        "photo_id", "user_nsid", "group_name", "group_description", "group_user_note",
+        "photo_id", "user_nsid", "username", "group_name", "group_description", "group_user_note",
     }
 
     # Calling again must not duplicate rows.

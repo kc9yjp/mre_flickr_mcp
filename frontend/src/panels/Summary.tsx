@@ -3,7 +3,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { getJSON, Stats, SyncStatus } from "../api";
-import { compactNumber, relativeTime } from "../format";
+import { compactNumber, relativeTime, syncStatusLabel } from "../format";
 
 function Tile({ label, value }: { label: string; value: string }) {
   return (
@@ -85,6 +85,8 @@ export function Summary() {
           <thead>
             <tr>
               <th>Type</th>
+              <th>Total</th>
+              <th>Pending summaries</th>
               <th>Last</th>
               <th>Duration</th>
               <th>Status</th>
@@ -94,9 +96,17 @@ export function Summary() {
             {sync.rows.map((r) => (
               <tr key={r.type}>
                 <td>{r.type}</td>
+                <td>{r.total != null ? compactNumber(r.total) : "—"}</td>
+                <td>{r.pending_summary != null ? compactNumber(r.pending_summary) : "—"}</td>
                 <td>{relativeTime(r.last)}</td>
                 <td>{r.duration ?? "—"}</td>
-                <td>{r.running ? <span className="badge-running">⟳ running</span> : "idle"}</td>
+                <td>
+                  {r.running ? (
+                    <span className="badge-running">{syncStatusLabel(r.running, r.phase)}</span>
+                  ) : (
+                    "idle"
+                  )}
+                </td>
               </tr>
             ))}
           </tbody>

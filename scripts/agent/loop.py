@@ -335,10 +335,10 @@ async def run_turn(
     user_msg = {"role": "user", "content": user_message}
     store.append_message(username, conversation_id, user_msg)
     system_prompt = prompts_store.get_prompt_by_code(nsid, "system-core")
+    system_text = system_prompt["text"] if system_prompt else prompts_store.SYSTEM_PROMPT_DEFAULT
     messages = [{
         "role": "system",
-        "content": (system_prompt["text"] if system_prompt
-                    else prompts_store.SYSTEM_PROMPT_DEFAULT),
+        "content": prompts_store.resolve_server_variables(system_text, nsid, username),
     }]
     user_memory = prompts_store.get_prompt_by_code(nsid, "user-memory")
     memory_text = ((user_memory["text"] if user_memory else "") or "").strip()

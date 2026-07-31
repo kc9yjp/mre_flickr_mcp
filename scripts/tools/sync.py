@@ -31,6 +31,13 @@ REFRESH_CHECK_INTERVAL = 600  # 10 minutes — how often the loop wakes to check
 
 _user_locks: dict[str, asyncio.Lock] = {}  # username -> per-user sync lock
 _active_syncs: dict[str, float] = {}       # label -> start timestamp
+_sync_phase: dict[str, str] = {}           # label -> "flickr" | "model", while running
+
+# Substring (case-insensitive) a sync script prints to stdout right before it
+# starts calling an LLM, e.g. sync_groups.py's "Generating AI group summaries...".
+# Used to flip the reported phase from "flickr" (API retrieval) to "model"
+# (AI summarization) so the sync page can show which one is in flight.
+_MODEL_PHASE_MARKER = "generating ai"
 
 
 def _get_user_lock(username: str) -> asyncio.Lock:
@@ -114,7 +121,12 @@ async def _run_sync_script(
     extra_args: list[str] | None = None,
     username: str | None = None,
 ) -> int:
-    """Spawn a sync script subprocess and log its output.
+    """Spawn a sync script subprocess, streaming and logging its output live.
+
+    Output is read line-by-line as it's produced (rather than buffered until
+    exit) so ``_sync_phase[label]`` can flip from "flickr" to "model" the
+    moment a script announces it's starting AI summarization — the sync page
+    polls this to show which phase is in flight.
 
     After the script exits, updates the ``duration_seconds`` column in
     ``sync_log`` for the matching entry.  Uses ``get_db_for_user(username)``
@@ -125,6 +137,7 @@ async def _run_sync_script(
     """
     started = time.time()
     _active_syncs[label] = started
+    _sync_phase[label] = "flickr"
     logging.info("Sync starting: %s", label)
     try:
         p = await asyncio.create_subprocess_exec(
@@ -132,10 +145,14 @@ async def _run_sync_script(
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
         )
-        stdout, _ = await p.communicate()
-        for line in stdout.decode().splitlines():
-            if line.strip():
+        assert p.stdout is not None
+        async for raw_line in p.stdout:
+            line = raw_line.decode(errors="replace").rstrip()
+            if line:
                 logging.info("[%s] %s", label, line)
+                if _MODEL_PHASE_MARKER in line.lower():
+                    _sync_phase[label] = "model"
+        await p.wait()
         duration = int(time.time() - started)
         if p.returncode != 0:
             logging.error("Sync failed: %s (exit %s, %ds)", label, p.returncode, duration)
@@ -156,6 +173,7 @@ async def _run_sync_script(
         return p.returncode
     finally:
         _active_syncs.pop(label, None)
+        _sync_phase.pop(label, None)
 
 
 def _flush_queue_for_user(user: dict) -> list[dict]:

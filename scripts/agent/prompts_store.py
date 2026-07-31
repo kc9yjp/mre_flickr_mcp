@@ -65,7 +65,16 @@ SYSTEM_PROMPT_DEFAULT = (
     "You are the Flickr Workbench assistant. You manage the user's own Flickr "
     "account through the provided tools: their photos, albums, groups, "
     "galleries, and contacts, backed by a local database synced from Flickr.\n"
+    "The logged-in account is NSID {user_nsid}, currently using the username "
+    "'{username}' (this is the name that appears in flickr.com URLs, e.g. "
+    "flickr.com/photos/{username}/...).\n"
     "Guidelines:\n"
+    "- The NSID is the only identifier that's guaranteed stable — usernames "
+    "can be renamed at any time. If a URL, profile, or comment mentions a "
+    "username that looks unfamiliar or different from '{username}', don't "
+    "assume it's a different person: call get_person_info on it (it accepts "
+    "a username, NSID, or profile/photo URL) and check its `is_you` field "
+    "before concluding whether it belongs to this account or someone else.\n"
     "- Read current state before changing anything (e.g. get_photo before "
     "update_photo).\n"
     "- Propose changes and wait for the user's go-ahead; write tools "
@@ -176,8 +185,14 @@ def _context_for_category(category_id: str) -> str:
 _SEED_VARIABLES = [
     ("photo_id", "Photo ID", "The photo in context. Substituted client-side "
      "from the selected photo before the prompt is sent.", "client"),
-    ("user_nsid", "Your Flickr NSID", "Your own Flickr user ID. Substituted "
-     "server-side when the workflow list is fetched.", "server"),
+    ("user_nsid", "Your Flickr NSID", "Your own Flickr user ID — the stable "
+     "identifier that never changes even if your username does. Substituted "
+     "server-side from your logged-in credentials.", "server"),
+    ("username", "Your Flickr username", "Your current Flickr username/URL "
+     "path alias. This can change over time (renaming your account), so old "
+     "links or messages may reference a previous username for the same "
+     "account. Substituted server-side from your logged-in credentials.",
+     "server"),
     ("group_name", "Group name", "The joined group's name. Substituted by "
      "the background groups sync before calling the LLM.", "server"),
     ("group_description", "Group description", "The joined group's Flickr "
@@ -329,6 +344,7 @@ def _prompts_db(nsid: str):
         if conn.execute(check_sql).fetchone() is None:
             conn.execute(alter_sql)
     _seed_defaults(conn, nsid)
+    _sync_builtin_defaults(conn)
     try:
         yield conn
         conn.commit()
@@ -375,6 +391,40 @@ def _seed_defaults(conn: sqlite3.Connection, nsid: str) -> None:
             "VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, 1, ?, ?, ?)",
             (uuid.uuid4().hex, p["code"], p["name"], p.get("description", ""),
              p["category_id"], p["context"], text, p["text"], i, now, now),
+        )
+
+
+def _sync_builtin_defaults(conn: sqlite3.Connection) -> None:
+    """Keep builtin prompt/variable definitions in step with code changes.
+
+    ``_seed_defaults`` only inserts rows once, when a user's DB is brand new —
+    it never revisits an existing DB, so a variable added or a default prompt
+    edited in a later release would otherwise never reach users who logged in
+    before that release. Runs on every connection open:
+    - Inserts any builtin variable in ``_SEED_VARIABLES`` missing from an
+      existing DB (``INSERT OR IGNORE``, so it's a no-op once present).
+    - Refreshes a builtin prompt's ``default_text`` whenever the shipped
+      default in ``_SEED_PROMPTS`` changes, and carries that change into the
+      live ``text`` too — but only if the user hasn't diverged their own
+      edited ``text`` away from the old default already.
+    """
+    conn.executemany(
+        "INSERT OR IGNORE INTO prompt_variables (code, label, description, resolved_by, builtin) "
+        "VALUES (?, ?, ?, ?, 1)",
+        _SEED_VARIABLES,
+    )
+    now = int(time.time())
+    for p in _SEED_PROMPTS:
+        row = conn.execute(
+            "SELECT text, default_text FROM prompts WHERE code = ? AND builtin = 1",
+            (p["code"],),
+        ).fetchone()
+        if row is None or row["default_text"] == p["text"]:
+            continue
+        new_text = p["text"] if row["text"] == row["default_text"] else row["text"]
+        conn.execute(
+            "UPDATE prompts SET text = ?, default_text = ?, updated_at = ? WHERE code = ?",
+            (new_text, p["text"], now, p["code"]),
         )
 
 
@@ -567,6 +617,15 @@ def append_user_memory(nsid: str, guidance: str) -> str:
 
 
 # ── Variables ─────────────────────────────────────────────────────────────
+
+
+def resolve_server_variables(text: str, nsid: str, username: str) -> str:
+    """Substitute server-resolved placeholders ({user_nsid}, {username}) into *text*.
+
+    Shared by the system prompt (agent/loop.py) and the workflow command list
+    (agent/commands.py) so both stay in sync with prompt_variables' contract.
+    """
+    return text.replace("{user_nsid}", nsid).replace("{username}", username)
 
 
 def list_variables(nsid: str) -> list[dict]:

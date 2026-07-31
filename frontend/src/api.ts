@@ -75,6 +75,9 @@ export interface SyncRow {
   duration: string | null;
   next: number | null;
   running: boolean;
+  phase: "flickr" | "model" | null;
+  total: number | null;
+  pending_summary: number | null;
 }
 
 export interface SyncStatus {

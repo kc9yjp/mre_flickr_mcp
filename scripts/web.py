@@ -44,7 +44,7 @@ from flickr_api import (
     credentials_file, _load_credentials, _save_credentials,
     _load_env, _oauth_params, _sign,
 )
-from mcp_tools import SYNC_SCRIPT, _active_syncs, _background_refresh, _get_user_lock, _run_sync_script, server
+from mcp_tools import SYNC_SCRIPT, _active_syncs, _background_refresh, _get_user_lock, _run_sync_script, _sync_phase, server
 
 import secrets
 from starlette.middleware.sessions import SessionMiddleware
@@ -334,13 +334,25 @@ async def _trigger_full_sync(username: str, user_nsid: str, user_args: list[str]
         await _run_sync_script(os.path.join(scripts_dir, "sync_engagement.py"), f"engagement/{username}", extra_args=user_args, username=username)
 
 
+_SYNC_TABLE_MAP = {
+    "photos":     "photos",
+    "contacts":   "contacts",
+    "groups":     "groups",
+    "albums":     "albums",
+    "engagement": "contact_engagement",
+}
+
+
 def _build_sync_rows(db_username: str) -> list[dict]:
-    """Query sync_log and return rows enriched with active-sync status."""
+    """Query sync_log and return rows enriched with active-sync status,
+    total record counts, and pending group-summary counts."""
     import random
     from db import get_db_for_user
     from tools.sync import MIN_REFRESH_INTERVAL, REFRESH_INTERVAL
 
     raw_rows = []
+    totals: dict[str, int] = {}
+    pending_summaries = 0
     try:
         with get_db_for_user(db_username) as conn:
             raw_rows = conn.execute(
@@ -349,10 +361,22 @@ def _build_sync_rows(db_username: str) -> list[dict]:
                 " JOIN (SELECT type, MAX(synced_at) AS ts FROM sync_log GROUP BY type) m"
                 " ON s.type = m.type AND s.synced_at = m.ts"
             ).fetchall()
+            for stype, table in _SYNC_TABLE_MAP.items():
+                try:
+                    totals[stype] = conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+                except Exception:
+                    pass
+            try:
+                pending_summaries = conn.execute(
+                    "SELECT COUNT(*) FROM groups WHERE needs_summary=1"
+                ).fetchone()[0]
+            except Exception:
+                pass
     except Exception as e:
         logging.warning("Could not load sync log for %s: %s", db_username, e)
 
     active_types = {label.split("/")[0] for label in _active_syncs}
+    active_phases = {label.split("/")[0]: phase for label, phase in _sync_phase.items()}
 
     rows = []
     for r in raw_rows:
@@ -367,6 +391,9 @@ def _build_sync_rows(db_username: str) -> list[dict]:
             "duration": _fmt_dur(r["duration_seconds"]),
             "next": next_ts,
             "running": stype in active_types,
+            "phase": active_phases.get(stype),
+            "total": totals.get(stype),
+            "pending_summary": pending_summaries if stype == "groups" else None,
         })
     return rows
 

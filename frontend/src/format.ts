@@ -10,6 +10,11 @@ export function compactNumber(n: number): string {
   return n < 10_000 ? n.toLocaleString("en") : compact.format(n);
 }
 
+export function syncStatusLabel(running: boolean, phase: "flickr" | "model" | null): string {
+  if (!running) return "idle";
+  return phase === "model" ? "⟳ generating summaries" : "⟳ retrieving from Flickr";
+}
+
 export function relativeTime(unixSeconds: number | null): string {
   if (!unixSeconds) return "never";
   const delta = Date.now() / 1000 - unixSeconds;

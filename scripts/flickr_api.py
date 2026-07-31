@@ -387,10 +387,18 @@ def _api_post(method, extra=None):
 
 
 _NSID_RE = re.compile(r"^\d+@N\d+$")
+_PROFILE_URL_RE = re.compile(r"flickr\.com/(?:photos|people)/([^/\s]+)")
 
 
 def resolve_user_id(user_id: str) -> str:
-    """Return a Flickr NSID for user_id, resolving usernames via the API if needed."""
+    """Return a Flickr NSID for user_id, resolving usernames or profile/photo URLs via the API if needed.
+
+    A flickr.com/photos/<x>/... or flickr.com/people/<x>/ URL has ``<x>`` pulled
+    out first, since that's usually a username/path-alias rather than an NSID.
+    """
+    m = _PROFILE_URL_RE.search(user_id)
+    if m:
+        user_id = m.group(1)
     if _NSID_RE.match(user_id):
         return user_id
     try:

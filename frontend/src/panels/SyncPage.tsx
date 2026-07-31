@@ -3,7 +3,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { LLMSettings, ModelList, SyncStatus, getJSON, listModels, postJSON } from "../api";
-import { relativeTime } from "../format";
+import { relativeTime, syncStatusLabel } from "../format";
 
 const SYNC_TYPES = ["photos", "contacts", "groups", "albums"] as const;
 
@@ -143,6 +143,8 @@ export function SyncPage() {
           <thead>
             <tr>
               <th>Type</th>
+              <th>Total</th>
+              <th>Pending summaries</th>
               <th>Last</th>
               <th>Duration</th>
               <th>Status</th>
@@ -152,11 +154,13 @@ export function SyncPage() {
             {sync.rows.map((r) => (
               <tr key={r.type}>
                 <td>{r.type}</td>
+                <td>{r.total != null ? r.total.toLocaleString("en") : "—"}</td>
+                <td>{r.pending_summary != null ? r.pending_summary.toLocaleString("en") : "—"}</td>
                 <td>{relativeTime(r.last)}</td>
                 <td>{r.duration ?? "—"}</td>
                 <td>
                   {r.running ? (
-                    <span className="badge-running">⟳ running</span>
+                    <span className="badge-running">{syncStatusLabel(r.running, r.phase)}</span>
                   ) : (
                     "idle"
                   )}

@@ -281,11 +281,19 @@ TOOLS = [
     ),
     Tool(
         name="get_person_info",
-        description="Fetch public profile info for a Flickr user by NSID or username.",
+        description=(
+            "Fetch public profile info for a Flickr user by NSID, username, or a "
+            "flickr.com/photos/<x>/ or /people/<x>/ URL. Returns an `is_you` flag "
+            "comparing the resolved NSID against the logged-in account. Use this "
+            "whenever a username or URL is ambiguous or looks unfamiliar — Flickr "
+            "usernames/path aliases can be renamed at any time, so an old link or "
+            "profile mention may show a different username than the account uses "
+            "today even though the NSID (and the account) hasn't changed."
+        ),
         inputSchema={
             "type": "object",
             "properties": {
-                "user_id": {"type": "string", "description": "Flickr NSID or username"},
+                "user_id": {"type": "string", "description": "Flickr NSID, username, or profile/photo URL"},
             },
             "required": ["user_id"],
         },
@@ -766,9 +774,15 @@ async def _get_person_info(args):
     except Exception:
         pass
 
+    try:
+        own_nsid = flickr_api._load_credentials().get("user_nsid", "")
+    except RuntimeError:
+        own_nsid = ""
+
     return [TextContent(type="text", text=json.dumps({
         "nsid":           nsid,
         "username":       p.get("username", {}).get("_content", ""),
+        "path_alias":     p.get("path_alias", ""),
         "realname":       p.get("realname", {}).get("_content", ""),
         "location":       p.get("location", {}).get("_content", ""),
         "description":    p.get("description", {}).get("_content", ""),
@@ -780,6 +794,10 @@ async def _get_person_info(args):
         "is_friend":      bool(p.get("friend")),
         "is_family":      bool(p.get("family")),
         "last_upload":    last_upload,
+        # NSID is the only stable identifier — usernames/path aliases (what
+        # shows up in flickr.com URLs) can be renamed at any time, so an old
+        # link may show a username that no longer matches this same account.
+        "is_you":         bool(own_nsid) and nsid == own_nsid,
     }, indent=2))]
 
 

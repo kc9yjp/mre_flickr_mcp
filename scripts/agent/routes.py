@@ -340,7 +340,7 @@ async def api_commands(request: Request):
     user = _session_user(request)
     if not user:
         return _unauthorized()
-    return JSONResponse({"commands": commands.commands_for_api(user["nsid"])})
+    return JSONResponse({"commands": commands.commands_for_api(user["nsid"], user["username"])})
 
 
 async def prompts_collection(request: Request):
