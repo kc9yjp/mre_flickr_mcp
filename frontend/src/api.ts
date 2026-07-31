@@ -78,6 +78,12 @@ export interface SyncRow {
   phase: "flickr" | "model" | null;
   total: number | null;
   pending_summary: number | null;
+  // Populated only while phase === "model" (AI group-summary generation):
+  // how many groups are done/total, and an estimated seconds remaining
+  // derived from the observed pace so far.
+  progress_done: number | null;
+  progress_total: number | null;
+  eta_seconds: number | null;
 }
 
 export interface SyncStatus {
@@ -348,6 +354,10 @@ export interface ModelList {
 
 export async function listModels(connectionId: string): Promise<ModelList> {
   return getJSON<ModelList>(`/api/llm-models`, { connection: connectionId });
+}
+
+export async function cancelSync(type: string): Promise<{ cancelled: boolean; reason?: string }> {
+  return postJSON(`/api/sync/${type}/cancel`);
 }
 
 export async function getConnectionPresets(): Promise<Record<string, ConnectionPreset>> {

@@ -15,6 +15,15 @@ export function syncStatusLabel(running: boolean, phase: "flickr" | "model" | nu
   return phase === "model" ? "⟳ generating summaries" : "⟳ retrieving from Flickr";
 }
 
+export function formatDuration(seconds: number | null): string {
+  if (seconds == null) return "";
+  if (seconds < 60) return "<1 min";
+  const h = Math.floor(seconds / 3600);
+  const m = Math.round((seconds % 3600) / 60);
+  if (h > 0) return m > 0 ? `${h}h ${m}m` : `${h}h`;
+  return `${m} min`;
+}
+
 export function relativeTime(unixSeconds: number | null): string {
   if (!unixSeconds) return "never";
   const delta = Date.now() / 1000 - unixSeconds;

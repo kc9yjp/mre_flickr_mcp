@@ -15,6 +15,7 @@ import asyncio
 import logging
 import os
 import random
+import re
 import sys
 import time
 
@@ -32,12 +33,18 @@ REFRESH_CHECK_INTERVAL = 600  # 10 minutes — how often the loop wakes to check
 _user_locks: dict[str, asyncio.Lock] = {}  # username -> per-user sync lock
 _active_syncs: dict[str, float] = {}       # label -> start timestamp
 _sync_phase: dict[str, str] = {}           # label -> "flickr" | "model", while running
+_sync_progress: dict[str, dict] = {}       # label -> {"done", "total", "started"}, while in the "model" phase
+_active_processes: dict[str, asyncio.subprocess.Process] = {}  # label -> live subprocess, for cancellation
 
 # Substring (case-insensitive) a sync script prints to stdout right before it
 # starts calling an LLM, e.g. sync_groups.py's "Generating AI group summaries...".
 # Used to flip the reported phase from "flickr" (API retrieval) to "model"
 # (AI summarization) so the sync page can show which one is in flight.
 _MODEL_PHASE_MARKER = "generating ai"
+
+# Matches the "  Summary 3/12: Group Name" progress lines printed by
+# flickr_sync._sync_group_summaries_async, one per group processed.
+_PROGRESS_RE = re.compile(r"^\s*Summary (\d+)/(\d+):")
 
 
 def _get_user_lock(username: str) -> asyncio.Lock:
@@ -145,6 +152,7 @@ async def _run_sync_script(
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
         )
+        _active_processes[label] = p
         assert p.stdout is not None
         async for raw_line in p.stdout:
             line = raw_line.decode(errors="replace").rstrip()
@@ -152,6 +160,11 @@ async def _run_sync_script(
                 logging.info("[%s] %s", label, line)
                 if _MODEL_PHASE_MARKER in line.lower():
                     _sync_phase[label] = "model"
+                m = _PROGRESS_RE.match(line)
+                if m:
+                    done, total = int(m.group(1)), int(m.group(2))
+                    prog = _sync_progress.setdefault(label, {"started": time.time()})
+                    prog["done"], prog["total"] = done, total
         await p.wait()
         duration = int(time.time() - started)
         if p.returncode != 0:
@@ -174,6 +187,33 @@ async def _run_sync_script(
     finally:
         _active_syncs.pop(label, None)
         _sync_phase.pop(label, None)
+        _sync_progress.pop(label, None)
+        _active_processes.pop(label, None)
+
+
+def cancel_sync(sync_type: str, username: str | None = None) -> bool:
+    """Terminate the subprocess backing a running sync, if any.
+
+    Matches labels the same way ``_build_sync_rows`` groups them for display:
+    a bare label (single-user trigger) or ``"{type}/{username}"`` (background
+    refresh / post-login sync). When *username* is given, only a matching
+    per-user label — or a bare label when no per-user one is active — is
+    cancelled, so one user's Cancel click can't kill another user's sync.
+
+    Killing mid-run is safe: each sync phase commits its own work as it goes
+    (e.g. one group's AI summary at a time), so a cancelled run just leaves
+    the remaining items flagged for the next sync rather than corrupting data.
+    """
+    for label, proc in list(_active_processes.items()):
+        base, _, suffix = label.partition("/")
+        if base != sync_type:
+            continue
+        if suffix and username and suffix != username:
+            continue
+        if proc.returncode is None:
+            proc.terminate()
+            return True
+    return False
 
 
 def _flush_queue_for_user(user: dict) -> list[dict]:

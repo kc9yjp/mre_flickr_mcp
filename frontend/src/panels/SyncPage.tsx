@@ -2,8 +2,8 @@
 // database reset action.
 
 import { useEffect, useRef, useState } from "react";
-import { LLMSettings, ModelList, SyncStatus, getJSON, listModels, postJSON } from "../api";
-import { relativeTime, syncStatusLabel } from "../format";
+import { LLMSettings, ModelList, SyncStatus, cancelSync, getJSON, listModels, postJSON } from "../api";
+import { formatDuration, relativeTime, syncStatusLabel } from "../format";
 
 const SYNC_TYPES = ["photos", "contacts", "groups", "albums"] as const;
 
@@ -119,6 +119,20 @@ export function SyncPage() {
     }
   };
 
+  const cancel = async (type: string) => {
+    setBusy(true);
+    setMsg("");
+    try {
+      await cancelSync(type);
+      setMsg(`${type} sync cancelled.`);
+      window.setTimeout(load, 500);
+    } catch (e) {
+      setMsg(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const resetDb = async () => {
     setBusy(true);
     setMsg("");
@@ -160,7 +174,25 @@ export function SyncPage() {
                 <td>{r.duration ?? "—"}</td>
                 <td>
                   {r.running ? (
-                    <span className="badge-running">{syncStatusLabel(r.running, r.phase)}</span>
+                    <span className="sync-status-cell">
+                      <span className="badge-running">{syncStatusLabel(r.running, r.phase)}</span>
+                      {r.phase === "model" && r.progress_total != null && (
+                        <span className="hint">
+                          {" "}
+                          {r.progress_done}/{r.progress_total}
+                          {r.eta_seconds != null && ` · ~${formatDuration(r.eta_seconds)} left`}
+                        </span>
+                      )}
+                      {r.phase === "model" && (
+                        <button
+                          className="btn-danger-sm"
+                          disabled={busy}
+                          onClick={() => cancel(r.type)}
+                        >
+                          Cancel
+                        </button>
+                      )}
+                    </span>
                   ) : (
                     "idle"
                   )}

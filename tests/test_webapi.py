@@ -331,6 +331,33 @@ def test_api_sync_trigger_busy_returns_409(client):
     assert response.json()["started"] is False
 
 
+def test_api_sync_cancel_running_returns_ok(client):
+    _login(client)
+    import webapi
+
+    with patch.object(webapi, "cancel_sync", return_value=True) as cancel:
+        response = client.post("/api/sync/groups/cancel", headers={"X-CSRF-Token": CSRF})
+    assert response.status_code == 200
+    assert response.json()["cancelled"] is True
+    cancel.assert_called_once_with("groups", USERNAME)
+
+
+def test_api_sync_cancel_not_running_returns_409(client):
+    _login(client)
+    import webapi
+
+    with patch.object(webapi, "cancel_sync", return_value=False):
+        response = client.post("/api/sync/groups/cancel", headers={"X-CSRF-Token": CSRF})
+    assert response.status_code == 409
+    assert response.json()["cancelled"] is False
+
+
+def test_api_sync_cancel_unknown_type_returns_400(client):
+    _login(client)
+    response = client.post("/api/sync/bogus/cancel", headers={"X-CSRF-Token": CSRF})
+    assert response.status_code == 400
+
+
 # --- no database yet ---
 
 def test_api_photos_no_db_returns_404(client, tmp_path):

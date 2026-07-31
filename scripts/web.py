@@ -44,7 +44,10 @@ from flickr_api import (
     credentials_file, _load_credentials, _save_credentials,
     _load_env, _oauth_params, _sign,
 )
-from mcp_tools import SYNC_SCRIPT, _active_syncs, _background_refresh, _get_user_lock, _run_sync_script, _sync_phase, server
+from mcp_tools import (
+    SYNC_SCRIPT, _active_syncs, _background_refresh, _get_user_lock, _run_sync_script,
+    _sync_phase, _sync_progress, cancel_sync, server,
+)
 
 import secrets
 from starlette.middleware.sessions import SessionMiddleware
@@ -377,6 +380,7 @@ def _build_sync_rows(db_username: str) -> list[dict]:
 
     active_types = {label.split("/")[0] for label in _active_syncs}
     active_phases = {label.split("/")[0]: phase for label, phase in _sync_phase.items()}
+    active_progress = {label.split("/")[0]: prog for label, prog in _sync_progress.items()}
 
     rows = []
     for r in raw_rows:
@@ -385,6 +389,18 @@ def _build_sync_rows(db_username: str) -> list[dict]:
         # Mirror the background refresh logic: stable random threshold seeded by last_ts.
         user_threshold = random.Random(int(last_ts)).uniform(MIN_REFRESH_INTERVAL, REFRESH_INTERVAL) if last_ts else REFRESH_INTERVAL
         next_ts = (last_ts + user_threshold) if last_ts else None
+
+        # ETA for the AI group-summary phase: derived from the actual observed
+        # pace (elapsed time / groups done so far) rather than the configured
+        # throttle alone, so it also reflects real LLM response latency.
+        prog = active_progress.get(stype)
+        done = total = eta_seconds = None
+        if prog and prog.get("total"):
+            done, total = prog["done"], prog["total"]
+            if done > 0:
+                avg = (time.time() - prog["started"]) / done
+                eta_seconds = max(0, round(avg * (total - done)))
+
         rows.append({
             "type": stype,
             "last": last_ts,
@@ -394,6 +410,9 @@ def _build_sync_rows(db_username: str) -> list[dict]:
             "phase": active_phases.get(stype),
             "total": totals.get(stype),
             "pending_summary": pending_summaries if stype == "groups" else None,
+            "progress_done": done,
+            "progress_total": total,
+            "eta_seconds": eta_seconds,
         })
     return rows
 

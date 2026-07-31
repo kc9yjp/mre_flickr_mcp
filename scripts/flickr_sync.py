@@ -528,16 +528,26 @@ def _build_group_summary_prompt(nsid: str, name: str, description: str, user_not
     )
 
 
-async def _sync_group_summaries_async(conn, cfg: dict, nsid: str, rows) -> int:
+async def _sync_group_summaries_async(conn, nsid: str, rows) -> int:
     import httpx
     from agent import llm
-    from agent.settings import DEFAULT_SYNC_THROTTLE_SECONDS
+    from agent.settings import DEFAULT_SYNC_THROTTLE_SECONDS, resolve_sync_cfg
 
-    throttle_seconds = cfg.get("sync_throttle_seconds", DEFAULT_SYNC_THROTTLE_SECONDS)
-    stream = llm.stream_responses if cfg.get("api_mode") == "responses" else llm.stream_chat
+    total = len(rows)
     updated = 0
     async with httpx.AsyncClient(timeout=httpx.Timeout(300.0, connect=15.0)) as client:
         for i, (group_id, name, description, user_note) in enumerate(rows):
+            # Re-resolved every iteration (instead of once up front) so a
+            # model/connection/throttle change made on the Sync page while
+            # this loop is running takes effect on the very next group,
+            # rather than only on the next sync run.
+            cfg = resolve_sync_cfg(nsid)
+            if not cfg.get("base_url") or not cfg.get("model"):
+                print(f"  Stopping: no LLM connection/model configured ({total - i} group(s) left for next sync).")
+                break
+            throttle_seconds = cfg.get("sync_throttle_seconds", DEFAULT_SYNC_THROTTLE_SECONDS)
+            stream = llm.stream_responses if cfg.get("api_mode") == "responses" else llm.stream_chat
+
             if i > 0 and throttle_seconds > 0:
                 # Paced to be gentle on a local LLM (the common case here) —
                 # one request every throttle_seconds rather than back-to-back
@@ -557,25 +567,28 @@ async def _sync_group_summaries_async(conn, cfg: dict, nsid: str, rows) -> int:
                 result = _parse_group_summary_json(content)
             except Exception as e:
                 print(f"  Warning: summary generation failed for group {group_id} ({name}): {e}")
-                continue
-
-            keywords = result.get("keywords") or []
-            conn.execute("""
-                UPDATE groups SET summary_md=?, is_milestone=?, fave_min=?, view_min=?,
-                    open_subject=?, ai_keywords=?, needs_summary=0, summary_generated_at=?
-                WHERE id=?
-            """, (
-                result.get("summary", ""),
-                int(bool(result.get("is_milestone"))),
-                result.get("fave_min"),
-                result.get("view_min"),
-                None if result.get("open_subject") is None else int(bool(result.get("open_subject"))),
-                " ".join(str(k) for k in keywords),
-                int(time.time()),
-                group_id,
-            ))
-            conn.commit()
-            updated += 1
+            else:
+                keywords = result.get("keywords") or []
+                conn.execute("""
+                    UPDATE groups SET summary_md=?, is_milestone=?, fave_min=?, view_min=?,
+                        open_subject=?, ai_keywords=?, needs_summary=0, summary_generated_at=?
+                    WHERE id=?
+                """, (
+                    result.get("summary", ""),
+                    int(bool(result.get("is_milestone"))),
+                    result.get("fave_min"),
+                    result.get("view_min"),
+                    None if result.get("open_subject") is None else int(bool(result.get("open_subject"))),
+                    " ".join(str(k) for k in keywords),
+                    int(time.time()),
+                    group_id,
+                ))
+                conn.commit()
+                updated += 1
+            finally:
+                # Machine-parsed by _run_sync_script (tools/sync.py) to drive the
+                # Sync page's progress bar and estimated-time-remaining display.
+                print(f"  Summary {i + 1}/{total}: {name}", flush=True)
     return updated
 
 
@@ -596,7 +609,7 @@ def sync_group_summaries(conn, nsid: str) -> int:
         print("  Skipping AI summaries: no LLM connection/model configured (set one on the Sync page).")
         return 0
 
-    updated = asyncio.run(_sync_group_summaries_async(conn, cfg, nsid, rows))
+    updated = asyncio.run(_sync_group_summaries_async(conn, nsid, rows))
     print(f"  {updated}/{len(rows)} group summaries generated.")
     return updated
 

@@ -20,8 +20,10 @@ _user_locks = sync_tools._user_locks
 _get_user_lock = sync_tools._get_user_lock
 _active_syncs = sync_tools._active_syncs
 _sync_phase = sync_tools._sync_phase
+_sync_progress = sync_tools._sync_progress
 _run_sync_script = sync_tools._run_sync_script
 _background_refresh = sync_tools._background_refresh
+cancel_sync = sync_tools.cancel_sync
 
 _ALL_MODULES = [photos, albums, groups, contacts, galleries, sync_tools]
 

@@ -21,7 +21,7 @@ from starlette.routing import Route
 
 import flickr_api
 from db import db_file, get_db_for_user, SETTINGS_DEFAULTS, get_setting, set_setting
-from mcp_tools import _get_user_lock
+from mcp_tools import _get_user_lock, cancel_sync
 
 # Accessed as attributes at call time so tests can reload/patch web freely.
 import web as _web
@@ -495,6 +495,21 @@ async def api_sync_trigger(request: Request):
     return JSONResponse({"started": True, "type": sync_type, "full": full})
 
 
+async def api_sync_cancel(request: Request):
+    user = _session_user(request)
+    if not user:
+        return _unauthorized()
+
+    sync_type = request.path_params["type"]
+    if sync_type not in SYNC_TYPES:
+        return JSONResponse({"error": f"unknown sync type: {sync_type}"}, status_code=400)
+
+    cancelled = cancel_sync(sync_type, user["username"])
+    if not cancelled:
+        return JSONResponse({"cancelled": False, "reason": "not running"}, status_code=409)
+    return JSONResponse({"cancelled": True})
+
+
 async def api_queue(request: Request):
     """GET /api/queue — queue data; POST /api/queue — retry/delete actions."""
     user = _session_user(request)
@@ -893,6 +908,7 @@ def api_routes() -> list[Route]:
         Route("/api/albums/{id}/photos", endpoint=api_album_photos),
         Route("/api/stats",        endpoint=api_stats),
         Route("/api/sync/status",  endpoint=api_sync_status),
+        Route("/api/sync/{type}/cancel", endpoint=api_sync_cancel, methods=["POST"]),
         Route("/api/sync/{type}",  endpoint=api_sync_trigger, methods=["POST"]),
         Route("/api/queue",        endpoint=api_queue, methods=["GET", "POST"]),
         Route("/api/setup",        endpoint=api_setup),
