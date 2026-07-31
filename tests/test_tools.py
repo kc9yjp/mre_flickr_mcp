@@ -331,6 +331,26 @@ class TestGroups:
         assert "No groups match" in _text(result)
 
     @pytest.mark.asyncio
+    async def test_find_groups_converts_html_description_when_no_summary_yet(self, db):
+        """A group with no AI summary yet falls back to its raw Flickr
+        description, which comes back as HTML — it must be converted to
+        plain text with structure preserved, not dumped with markup intact."""
+        import mcp_tools
+        db.execute(
+            "UPDATE groups SET summary_md=NULL, "
+            "description='<p>Trees only.</p><ul><li>One post per day</li><li>No watermarks</li></ul>' "
+            "WHERE id='group1@N00'"
+        )
+        db.commit()
+        result = await mcp_tools._find_groups({"query": "Landscape"})
+        text = _text(result)
+        assert "<p>" not in text
+        assert "<li>" not in text
+        assert "Trees only." in text
+        assert "- One post per day" in text
+        assert "- No watermarks" in text
+
+    @pytest.mark.asyncio
     async def test_set_group_note(self, db):
         import mcp_tools
         result = await mcp_tools._set_group_note({"group_id": "group1@N00", "note": "max 2 posts/week"})

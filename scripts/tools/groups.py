@@ -10,6 +10,7 @@ from mcp.types import TextContent, Tool
 import flickr_api
 from flickr_api import FlickrAPIError
 from db import get_db, like_pattern, table_empty
+from text_utils import html_to_text
 
 TOOLS = [
     Tool(
@@ -269,8 +270,10 @@ def _format_groups_markdown(rows) -> str:
             lines.append("")
             lines.append(r["summary_md"])
         elif r["description"]:
+            # No AI summary yet (e.g. group just synced) — fall back to the
+            # raw Flickr description, which comes back as HTML.
             lines.append("")
-            lines.append(r["description"])
+            lines.append(html_to_text(r["description"]))
 
         sections.append("\n".join(lines))
     return "\n\n".join(sections)

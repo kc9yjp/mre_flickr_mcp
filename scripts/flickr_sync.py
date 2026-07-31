@@ -16,7 +16,6 @@ defaults (``~/.flickr_mcp/credentials.json`` and ``data/flickr.db``).
 
 import argparse
 import asyncio
-import html
 import json
 import os
 import re
@@ -515,11 +514,12 @@ def _build_group_summary_prompt(nsid: str, name: str, description: str, user_not
     contain stray ``{``/``}`` characters, which would break ``.format()``.
     """
     from agent.prompts_store import GROUP_SUMMARY_PROMPT_DEFAULT, get_prompt_by_code
+    from text_utils import html_to_text
 
     prompt = get_prompt_by_code(nsid, "group-summary")
     template = prompt["text"] if prompt else GROUP_SUMMARY_PROMPT_DEFAULT
 
-    desc_text = html.unescape(re.sub(r"<[^>]+>", " ", description or ""))[:3000].strip()
+    desc_text = html_to_text(description or "", limit=3000)
     return (
         template
         .replace("{group_name}", name or "")

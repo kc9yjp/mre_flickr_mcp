@@ -166,6 +166,22 @@ class TestBuildGroupSummaryPrompt:
             )
         assert "{no watermarks}" in prompt
 
+    def test_html_description_is_converted_to_plain_text(self):
+        """Flickr group descriptions come back as HTML — the prompt sent to
+        the LLM must not contain raw markup, and block structure (paragraphs,
+        list items) should survive as line breaks rather than collapsing."""
+        from agent import prompts_store
+        html_description = "<p>Trees only.</p><ul><li>Max 1/day</li><li>No watermarks</li></ul>"
+        with patch.object(prompts_store, "get_prompt_by_code", return_value=None):
+            prompt = flickr_sync._build_group_summary_prompt(
+                "user@N00", "Tree Pics", html_description, ""
+            )
+        assert "<p>" not in prompt
+        assert "<li>" not in prompt
+        assert "Trees only." in prompt
+        assert "- Max 1/day" in prompt
+        assert "- No watermarks" in prompt
+
 
 class TestSyncGroupSummaries:
     def _fake_cfg(self):
