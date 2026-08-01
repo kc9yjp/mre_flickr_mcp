@@ -397,6 +397,67 @@ def test_create_connection_seeds_zen_responses_only_models(_creds_dir):
     assert out["connections"][cid]["disabled_models"] == sorted(settings._ZEN_RESPONSES_ONLY_MODELS)
 
 
+# --- timeout_seconds ---
+
+def test_create_connection_defaults_timeout(_creds_dir):
+    from agent import settings
+
+    cid, out = settings.create_connection(NSID, "LM Studio", "openai_compatible", "http://host.docker.internal:1234/v1")
+    assert out["connections"][cid]["timeout_seconds"] == settings.DEFAULT_TIMEOUT_SECONDS
+
+
+def test_create_connection_accepts_custom_timeout(_creds_dir):
+    from agent import settings
+
+    cid, out = settings.create_connection(
+        NSID, "LM Studio", "openai_compatible", "http://host.docker.internal:1234/v1",
+        timeout_seconds=900,
+    )
+    assert out["connections"][cid]["timeout_seconds"] == 900
+
+
+def test_update_connection_timeout_is_clamped(_creds_dir):
+    from agent import settings
+
+    cid, _ = settings.create_connection(NSID, "LM Studio", "openai_compatible", "http://host.docker.internal:1234/v1")
+
+    updated = settings.update_connection(NSID, cid, {"timeout_seconds": 1})
+    assert updated["connections"][cid]["timeout_seconds"] == 5  # floor
+
+    updated = settings.update_connection(NSID, cid, {"timeout_seconds": 999999})
+    assert updated["connections"][cid]["timeout_seconds"] == 3600  # ceiling
+
+    # Non-numeric value falls back to the default rather than raising.
+    updated = settings.update_connection(NSID, cid, {"timeout_seconds": "not-a-number"})
+    assert updated["connections"][cid]["timeout_seconds"] == settings.DEFAULT_TIMEOUT_SECONDS
+
+
+def test_resolve_cfg_includes_timeout_seconds(_creds_dir):
+    from agent import settings
+
+    cid, _ = settings.create_connection(
+        NSID, "LM Studio", "openai_compatible", "http://host.docker.internal:1234/v1",
+        timeout_seconds=900,
+    )
+    cfg = settings.resolve_cfg(NSID, cid, "qwen/qwen3.5-9b")
+    assert cfg["timeout_seconds"] == 900
+
+
+def test_pre_existing_connection_without_timeout_field_gets_default(_creds_dir):
+    """Older llm.json files predate timeout_seconds — load_settings must
+    backfill it rather than leave it missing."""
+    from agent import settings
+
+    settings.create_connection(NSID, "Ollama chat", "ollama", "http://host.docker.internal:11434/v1")
+    raw = settings._raw_load(NSID)
+    cid = next(iter(raw["connections"]))
+    del raw["connections"][cid]["timeout_seconds"]
+    settings._write_settings(NSID, raw)
+
+    loaded = settings.load_settings(NSID)
+    assert loaded["connections"][cid]["timeout_seconds"] == settings.DEFAULT_TIMEOUT_SECONDS
+
+
 # --- per-model settings CRUD ---
 
 def test_update_model_settings_creates_and_patches_entry(_creds_dir):

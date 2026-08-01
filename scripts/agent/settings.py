@@ -10,7 +10,7 @@ Storage shape (v4 — named connections, per-model settings)::
       "connections": {
         "ollama": {"name": "Ollama", "kind": "ollama", "api_mode": "chat_completions",
                     "base_url": "http://host.docker.internal:11434/v1", "api_key": "",
-                    "disabled_models": [],
+                    "timeout_seconds": 300, "disabled_models": [],
                     "models": {
                       "llama3.1": {"max_tokens": 1024, "vision": false,
                                     "temperature": "", "top_p": "", "frequency_penalty": "",
@@ -30,6 +30,14 @@ A connection's ``kind`` (``ollama`` | ``openai_compatible``) only picks a
 default base_url/preset at creation time — it has no effect on request
 behavior. ``api_mode`` (``chat_completions`` | ``responses``) is what
 ``llm.py``/``loop.py`` actually branch on.
+
+``timeout_seconds`` is the read timeout for one streamed turn on this
+connection — how long to wait for the next chunk of data before giving up.
+It lives on the connection (not per-model) because it's a transport
+property: local backends (Ollama, LM Studio) doing slow prompt processing on
+modest hardware need it much higher than a fast cloud endpoint does. Defaults
+to 300s for a freshly created connection. Never applies to the quick
+``list_models`` metadata fetch, which uses its own short fixed timeout.
 
 ``max_tokens``/``vision``/``temperature``/``top_p``/``frequency_penalty``/
 ``presence_penalty``/``seed``/``tool_choice``/``context_window`` (the
@@ -103,10 +111,15 @@ DEFAULT_CONNECTIONS: dict[str, dict] = {
         "api_mode": "chat_completions",
         "base_url": CONNECTION_PRESETS["ollama"]["base_url"],
         "api_key": "",
+        "timeout_seconds": 300,
         "disabled_models": [],
         "models": {},
     },
 }
+
+# Read timeout (seconds) a freshly created connection starts with — long
+# enough for slow local prompt processing (see timeout_seconds note above).
+DEFAULT_TIMEOUT_SECONDS = 300
 
 DEFAULTS = {
     "max_tokens": 1024,
@@ -223,6 +236,8 @@ def save_settings(nsid: str, data: dict) -> dict:
         for field in ("name", "base_url", "kind", "api_mode"):
             if field in conn:
                 base[field] = conn[field]
+        if "timeout_seconds" in conn:
+            base["timeout_seconds"] = _coerce_timeout(conn["timeout_seconds"])
         if "disabled_models" in conn:
             base["disabled_models"] = list(conn["disabled_models"])
         # mask-guard the api_key
@@ -251,6 +266,7 @@ def create_connection(
     base_url: str,
     api_key: str = "",
     api_mode: str = "chat_completions",
+    timeout_seconds: int | None = None,
 ) -> tuple[str, dict]:
     """Create a new named connection with a unique generated id.
 
@@ -272,6 +288,7 @@ def create_connection(
         "api_mode": api_mode,
         "base_url": base_url,
         "api_key": api_key,
+        "timeout_seconds": _coerce_timeout(timeout_seconds),
         "disabled_models": sorted(suggested_disabled_models(kind, base_url)),
         "models": {},
     }
@@ -291,6 +308,8 @@ def update_connection(nsid: str, connection_id: str, patch: dict) -> dict | None
     for field in ("name", "base_url", "kind", "api_mode"):
         if field in patch:
             conn[field] = patch[field]
+    if "timeout_seconds" in patch:
+        conn["timeout_seconds"] = _coerce_timeout(patch["timeout_seconds"])
     if "disabled_models" in patch:
         conn["disabled_models"] = list(patch["disabled_models"])
     if "api_key" in patch:
@@ -405,6 +424,7 @@ def resolve_cfg(
         "base_url": conn.get("base_url", ""),
         "api_key": conn.get("api_key", ""),
         "api_mode": conn.get("api_mode", "chat_completions"),
+        "timeout_seconds": _coerce_timeout(conn.get("timeout_seconds")),
         "model": model_id,
     }
 
@@ -449,6 +469,16 @@ def resolve_sync_cfg(nsid: str) -> dict:
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
+
+
+def _coerce_timeout(value) -> int:
+    """Clamp to a sane read-timeout range, falling back to the default for
+    anything blank or unparseable."""
+    try:
+        seconds = int(value)
+    except (TypeError, ValueError):
+        return DEFAULT_TIMEOUT_SECONDS
+    return min(max(seconds, 5), 3600)
 
 
 def _mask_key(key: str) -> str:
@@ -556,6 +586,7 @@ def _merge_defaults(raw: dict) -> dict:
         raw["connections"] = copy.deepcopy(DEFAULT_CONNECTIONS)
     for conn in raw["connections"].values():
         conn.setdefault("models", {})
+        conn.setdefault("timeout_seconds", DEFAULT_TIMEOUT_SECONDS)
     return {
         "connections": raw["connections"],
         "active_connection": raw.get("active_connection", ""),

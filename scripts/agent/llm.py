@@ -107,7 +107,7 @@ async def stream_chat(
     url = cfg.get("base_url", "").rstrip("/") + "/chat/completions"
     owns_client = client is None
     if owns_client:
-        client = httpx.AsyncClient(timeout=httpx.Timeout(300.0, connect=15.0))
+        client = httpx.AsyncClient(timeout=httpx.Timeout(float(cfg.get("timeout_seconds") or 300), connect=15.0))
 
     content_parts: list[str] = []
     acc = _ToolCallAccumulator()
@@ -299,7 +299,7 @@ async def stream_responses(
     url = cfg.get("base_url", "").rstrip("/") + "/responses"
     owns_client = client is None
     if owns_client:
-        client = httpx.AsyncClient(timeout=httpx.Timeout(300.0, connect=15.0))
+        client = httpx.AsyncClient(timeout=httpx.Timeout(float(cfg.get("timeout_seconds") or 300), connect=15.0))
 
     content_parts: list[str] = []
     acc = _ResponsesToolCallAccumulator()

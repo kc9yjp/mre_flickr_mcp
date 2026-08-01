@@ -266,6 +266,7 @@ async def llm_connections_create(request: Request):
             user["nsid"], name, kind, base_url,
             api_key=body.get("api_key", ""),
             api_mode=body.get("api_mode", "chat_completions"),
+            timeout_seconds=body.get("timeout_seconds"),
         )
     except (OSError, ValueError) as e:
         logging.warning("llm_connections_create: failed for %s: %s", user["nsid"], e)

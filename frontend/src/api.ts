@@ -162,9 +162,15 @@ export interface Connection {
   api_mode: ApiMode;
   base_url: string;
   api_key: string;
+  // Read timeout (seconds) for one streamed turn — how long to wait for the
+  // next chunk before giving up. Raise it for a local backend (Ollama, LM
+  // Studio) doing slow prompt processing on modest hardware.
+  timeout_seconds: number;
   disabled_models: string[];
   models: Record<string, ModelSettings>;
 }
+
+export const DEFAULT_TIMEOUT_SECONDS = 300;
 
 export interface ConnectionPreset {
   label: string;
@@ -371,6 +377,7 @@ export async function createConnection(input: {
   base_url: string;
   api_key?: string;
   api_mode?: ApiMode;
+  timeout_seconds?: number;
 }): Promise<{ id: string } & LLMSettings> {
   return postJSON(`/api/llm-connections`, input);
 }

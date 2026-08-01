@@ -1,10 +1,10 @@
 // Models panel: a list of named LLM connections (add / update / delete).
-// "Update" expands a connection inline to edit its base URL/API key/api
-// mode, refresh its model list, and enable/disable individual models. Each
-// model also has a "Details" panel of its own — vision/max_tokens/sampling/
-// tool_choice all apply to one specific model, not the whole connection or
-// the whole page (a model's capabilities and ideal settings vary even
-// within one connection).
+// "Edit" expands a connection inline to edit its base URL/API key/api
+// mode/timeout, refresh its model list, and enable/disable individual
+// models. Each model also has a "Details" panel of its own —
+// vision/max_tokens/sampling/tool_choice all apply to one specific model,
+// not the whole connection or the whole page (a model's capabilities and
+// ideal settings vary even within one connection).
 
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import {
@@ -22,6 +22,7 @@ import {
   Connection,
   ConnectionKind,
   ConnectionPreset,
+  DEFAULT_TIMEOUT_SECONDS,
   LLMSettings,
   ModelList,
   ModelSettings,
@@ -34,6 +35,7 @@ interface NewConnectionDraft {
   kind: ConnectionKind;
   base_url: string;
   api_mode: ApiMode;
+  timeout_seconds: number;
 }
 
 function draftKey(connectionId: string, model: string): string {
@@ -120,6 +122,7 @@ export function ModelsPage() {
         base_url: conn.base_url,
         api_key: conn.api_key,
         api_mode: conn.api_mode,
+        timeout_seconds: conn.timeout_seconds,
       });
       setCfg(updated);
       flash("Connection saved.");
@@ -273,7 +276,7 @@ export function ModelsPage() {
               <strong>{conn.name || cid}</strong>
               <span className="hint">— {conn.kind}, {conn.base_url}</span>
               <button type="button" className="btn-sm" onClick={() => toggleExpandedConnection(cid, conn)}>
-                {expanded ? "Close" : "Update"}
+                {expanded ? "Close" : "Edit"}
               </button>
               <button type="button" className="danger" onClick={() => removeConnection(cid)}>
                 Delete
@@ -282,6 +285,7 @@ export function ModelsPage() {
 
             {expanded && (
               <div style={{ marginTop: 8 }}>
+                <p className="settings-label">Connection details</p>
                 <div className="settings-row">
                   <input
                     value={conn.name}
@@ -317,11 +321,29 @@ export function ModelsPage() {
                       <option value="responses">Responses</option>
                     </select>
                   </label>
-                  <button type="button" className="btn-sm" onClick={() => saveConnection(cid)}>
+                </div>
+                <div className="settings-row">
+                  <input
+                    type="number"
+                    step="1"
+                    min="5"
+                    value={conn.timeout_seconds ?? DEFAULT_TIMEOUT_SECONDS}
+                    onChange={(e) => setConnectionField(cid, { timeout_seconds: Number(e.target.value) })}
+                  />
+                  <span className="hint">
+                    request timeout (seconds) — how long to wait for the model to respond before giving up; raise
+                    this for a slow local backend
+                  </span>
+                </div>
+                <div className="settings-row">
+                  <button type="button" onClick={() => saveConnection(cid)}>
                     Save connection
                   </button>
                 </div>
 
+                <p className="settings-label" style={{ marginTop: 12 }}>
+                  Models
+                </p>
                 <div className="settings-row">
                   <button
                     type="button"
@@ -488,7 +510,13 @@ export function ModelsPage() {
                 key={pid}
                 type="button"
                 onClick={() =>
-                  setNewConn({ name: preset.label, kind: preset.kind, base_url: preset.base_url, api_mode: preset.api_mode })
+                  setNewConn({
+                    name: preset.label,
+                    kind: preset.kind,
+                    base_url: preset.base_url,
+                    api_mode: preset.api_mode,
+                    timeout_seconds: DEFAULT_TIMEOUT_SECONDS,
+                  })
                 }
               >
                 Quick add: {preset.label}
@@ -525,6 +553,18 @@ export function ModelsPage() {
                   <option value="responses">Responses</option>
                 </select>
               </label>
+            </div>
+            <div className="settings-row">
+              <input
+                type="number"
+                step="1"
+                min="5"
+                value={newConn.timeout_seconds}
+                onChange={(e) => setNewConn({ ...newConn, timeout_seconds: Number(e.target.value) })}
+              />
+              <span className="hint">request timeout (seconds) — raise for a slow local backend</span>
+            </div>
+            <div className="settings-row">
               <button type="button" onClick={addConnection}>
                 Add connection
               </button>

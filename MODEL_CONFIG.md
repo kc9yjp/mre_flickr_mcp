@@ -8,7 +8,7 @@ Each user's LLM config is stored at `~/.flickr_mcp/{nsid}/llm.json`
 Settings have two layers:
 1. **Connections** — any number of user-named connections (e.g. "Ollama",
    "OpenCode Zen", "My LM Studio"), each with its own `base_url`, `api_key`,
-   `api_mode`, and `disabled_models` list.
+   `api_mode`, `timeout_seconds`, and `disabled_models` list.
 2. **Global output/sampling params** — shared across all connections
    (`max_tokens`, `vision`, `temperature`, `tool_choice`, etc.).
 
@@ -31,6 +31,13 @@ A connection has:
   actually controls the wire format used.
 - **Base URL** — API endpoint (must end in `/v1`).
 - **API key** — Bearer token (blank for Ollama, required for most others).
+- **Request timeout** — read timeout in seconds for one streamed turn: how
+  long to wait for the next chunk of data before giving up. Defaults to
+  `300`. Per-connection because it's a transport property, not a model
+  one — a local backend (Ollama, LM Studio) doing slow prompt processing on
+  modest hardware needs it much higher than a fast cloud endpoint. If a slow
+  local model's turn gets cut off mid-generation (client disconnects while
+  the backend is still working), raise this.
 - **Disabled models** — a per-connection list of model ids to hide from the
   chat selector, editable via checkboxes in the Models panel after fetching
   the connection's model list.
@@ -55,11 +62,11 @@ from `GET /api/llm-connection-presets`).
 - **Add**: Models panel → "Add connection" → pick a quick-add preset (or
   fill in the fields manually) → "Add connection". Calls
   `POST /api/llm-connections`.
-- **Edit** (name/base_url/api_key/api_mode): edit inline in the connection's
-  card, then hit the panel's main **Save** button (whole-object
-  `POST /api/llm-settings`, same as other settings).
-- **Disable specific models**: "Fetch models" on a connection, uncheck any
-  models to hide, then that connection's own "Save models" button
+- **Edit** (name/base_url/api_key/api_mode/timeout): "Edit" on a connection's
+  card expands its "Connection details" fields inline; "Save connection"
+  persists them (`POST /api/llm-connections/{id}/update`).
+- **Disable specific models**: "Refresh models" under that same card's
+  "Models" section, uncheck any to hide, then "Save enabled/disabled models"
   (`POST /api/llm-connections/{id}/update`) — a separate, immediate save so
   toggling checkboxes doesn't get bundled with unrelated pending edits.
 - **Delete**: "Delete" button on the connection card

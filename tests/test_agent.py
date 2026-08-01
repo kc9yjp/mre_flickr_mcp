@@ -126,6 +126,35 @@ async def test_stream_chat_http_error_raises():
                 pass
 
 
+@pytest.mark.asyncio
+async def test_stream_chat_owned_client_uses_cfg_timeout():
+    """When no client is passed in, stream_chat must build its own
+    httpx.AsyncClient using cfg['timeout_seconds'] as the read timeout —
+    not the old hardcoded 300s — so a per-connection override actually
+    takes effect."""
+    from agent import llm
+
+    captured = {}
+
+    class _FakeClient:
+        def __init__(self, timeout=None):
+            captured["timeout"] = timeout
+
+        def stream(self, *a, **kw):
+            raise RuntimeError("stop before any real network call")
+
+        async def aclose(self):
+            pass
+
+    with patch("agent.llm.httpx.AsyncClient", _FakeClient):
+        with pytest.raises(RuntimeError):
+            async for _ in llm.stream_chat({**CFG, "timeout_seconds": 900}, []):
+                pass
+
+    assert captured["timeout"].read == 900
+    assert captured["timeout"].connect == 15.0
+
+
 # --- llm stream parsing (Responses API) ---
 
 def _responses_sse_body(events: list[tuple[str, dict]]) -> bytes:
