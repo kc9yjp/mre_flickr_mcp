@@ -349,12 +349,14 @@ export function Chat() {
   // Triggered by the Stats panel's "Compact now" button. Runs in the chat
   // window rather than silently in that panel: shows the compact prompt
   // (from the "compact-conversation" builtin prompt, editable in the Prompts
-  // panel) as a collapsed origin bubble, then the resulting summary — the
-  // same shape as a workflow-prompt run. These bubbles aren't persisted
-  // messages of their own; the actual stored history is replaced server-side
-  // by compactConversation(), so on success the whole visible transcript
-  // collapses to just the summary bubble, and on failure the two ephemeral
-  // bubbles are removed to leave the view exactly as it was.
+  // panel via the same "Edit prompt →" link every workflow prompt gets) as a
+  // collapsed origin bubble, then the resulting summary — the same shape and
+  // the same in-progress (streaming-indicator) display as a normal send().
+  // This ephemeral bubble isn't a persisted message of its own — the actual
+  // stored history is replaced server-side by compactConversation(), so on
+  // success the whole visible transcript collapses to just the summary
+  // bubble, and on failure the ephemeral bubble is removed to leave the view
+  // exactly as it was.
   const compactNow = useCallback(async () => {
     const conversationId = activeIdRef.current;
     if (!conversationId || streamingRef.current) return;
@@ -376,15 +378,17 @@ export function Chat() {
     setMsgs((prev) => [
       ...prev,
       { role: "user", text: promptText, tools: [], origin: { title: "Compact conversation", promptId } },
-      { role: "assistant", text: "Compacting…", tools: [] },
     ]);
+    setStreaming(true);
     try {
       const result = await compactConversation(conversationId);
       setMsgs([{ role: "assistant", text: `**Conversation compacted.**\n\n${result.summary}`, tools: [] }]);
       refreshConversations();
     } catch (e) {
-      setMsgs((prev) => prev.slice(0, -2));
+      setMsgs((prev) => prev.slice(0, -1));
       setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setStreaming(false);
     }
   }, [refreshConversations]);
 
