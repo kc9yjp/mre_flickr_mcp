@@ -47,22 +47,35 @@ interface PendingConfirm {
   warning: string | null;
 }
 
+// Content is usually a plain string, but a stored tool result can be
+// multimodal (an image-fetching tool ran with vision on) — a list of
+// {type:"text"|"image_url", ...} parts. React can't render that list
+// directly (throws "object as child"), so flatten it to display text,
+// same idea as loop.py's own vision-disabled fallback note.
+function contentToText(content: WireMessage["content"]): string {
+  if (content == null) return "";
+  if (typeof content === "string") return content;
+  return content
+    .map((p) => (p.type === "text" ? p.text : "(image)"))
+    .join("\n");
+}
+
 function wireToRender(messages: WireMessage[]): ChatMsg[] {
   const out: ChatMsg[] = [];
   const cardsById = new Map<string, ToolCard>();
   for (const m of messages) {
     if (m.role === "user") {
-      out.push({ role: "user", text: m.content ?? "", tools: [] });
+      out.push({ role: "user", text: contentToText(m.content), tools: [] });
     } else if (m.role === "assistant") {
       const tools = (m.tool_calls ?? []).map((c) => {
         const card: ToolCard = { id: c.id, name: c.function.name, arguments: c.function.arguments };
         cardsById.set(c.id, card);
         return card;
       });
-      out.push({ role: "assistant", text: m.content ?? "", tools });
+      out.push({ role: "assistant", text: contentToText(m.content), tools });
     } else if (m.role === "tool" && m.tool_call_id) {
       const card = cardsById.get(m.tool_call_id);
-      if (card) card.result = m.content ?? "";
+      if (card) card.result = contentToText(m.content);
     }
   }
   return out;

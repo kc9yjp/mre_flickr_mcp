@@ -258,9 +258,16 @@ export interface Conversation {
   model: string;
 }
 
+// A tool result's content can be multimodal (see loop.py's _result_content):
+// a plain string, or a list of parts when vision is on and an image tool
+// (e.g. fetch_photo_image) ran — stored and returned as-is by the backend.
+export type ContentPart =
+  | { type: "text"; text: string }
+  | { type: "image_url"; image_url: { url: string } };
+
 export interface WireMessage {
   role: "user" | "assistant" | "tool" | "system";
-  content: string | null;
+  content: string | ContentPart[] | null;
   tool_calls?: { id: string; function: { name: string; arguments: string } }[];
   tool_call_id?: string;
 }
