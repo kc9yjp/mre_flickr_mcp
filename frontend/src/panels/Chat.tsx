@@ -603,11 +603,9 @@ export function Chat() {
             </option>
           ))}
         </select>
-        {activeId && (
-          <button onClick={deleteConversation} title="Delete conversation" className="icon-btn">
-            🗑
-          </button>
-        )}
+        <button onClick={newConversation} title="New conversation" className="icon-btn">
+          ＋
+        </button>
 
         {/* Connection + model selector — one flat "Connection: model" list */}
         <select
@@ -667,6 +665,11 @@ export function Chat() {
         >
           📝
         </button>
+        {activeId && (
+          <button onClick={deleteConversation} title="Delete conversation" className="icon-btn">
+            🗑
+          </button>
+        )}
       </div>
       <div className="chat-messages" ref={scrollRef}>
         {error && (
