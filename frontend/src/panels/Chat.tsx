@@ -3,12 +3,15 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
+  ApiError,
   Conversation,
   LLMSettings,
   PromptsData,
   WireMessage,
+  cancelChat,
   compactConversation,
   getJSON,
+  injectChat,
   listModels,
   postJSON,
   streamChat,
@@ -150,6 +153,9 @@ export function Chat() {
   const [denyReason, setDenyReason] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [autoApprove, setAutoApprove] = useState(false);
+  // Messages typed while a turn is streaming, waiting to be sent as a fresh
+  // turn once the current one finishes (see the effect below).
+  const [queued, setQueued] = useState<string[]>([]);
 
   // Connection / model selector state — one flat "connectionId::model" value.
   const [llmCfg, setLlmCfg] = useState<LLMSettings | null>(null);
@@ -159,8 +165,17 @@ export function Chat() {
   connectionModelRef.current = connectionModel;
 
   const scrollRef = useRef<HTMLDivElement>(null);
+  // Kept in sync with activeId, but ONLY via setActive below — never derived
+  // from the activeId state at render time. State updates are batched and
+  // only land on the next render, which is too late for send()'s stale()
+  // check: right after a brand-new conversation's "start" event calls
+  // setActive, the very next SSE event in that same synchronous stream needs
+  // this ref to already reflect the new id, not lag a render behind.
   const activeIdRef = useRef<string | null>(null);
-  activeIdRef.current = activeId;
+  const setActive = useCallback((id: string | null) => {
+    activeIdRef.current = id;
+    setActiveId(id);
+  }, []);
   const focusedPhotoRef = useRef<string | null>(null);
   const autoApproveRef = useRef(false);
   autoApproveRef.current = autoApprove;
@@ -265,6 +280,17 @@ export function Chat() {
     const patchLast = (fn: (m: ChatMsg) => ChatMsg) =>
       setMsgs((prev) => prev.map((m, i) => (i === prev.length - 1 ? fn(m) : m)));
 
+    // This send() call is "for" whichever conversation was active when it
+    // started (a brand-new one gets its id from the "start" event). If the
+    // user switches to a different conversation — or back to "new" — before
+    // this stream ends, later events must stop touching msgs/confirm: the
+    // backend still finishes and persists the turn, but a stale event
+    // handler silently patching whatever conversation happens to be on
+    // screen right now is exactly what caused an old turn's compacted-
+    // conversation summary to bleed into a totally unrelated new chat.
+    let forConversationId = activeIdRef.current;
+    const stale = () => activeIdRef.current !== forConversationId;
+
     const { connectionId, model } = parseSelector(connectionModelRef.current);
     try {
       await streamChat(
@@ -278,18 +304,30 @@ export function Chat() {
         (event) => {
           switch (event.type) {
             case "start":
-              setActiveId(event.conversation_id);
+              // A brand-new conversation only gets its real id here — if the
+              // user is still looking at "new conversation" (activeId still
+              // null), adopt it as the still-current view.
+              if (activeIdRef.current === forConversationId && forConversationId === null) {
+                setActive(event.conversation_id);
+              }
+              forConversationId = event.conversation_id;
               break;
             case "delta":
+              if (stale()) break;
               patchLast((m) => ({ ...m, text: m.text + event.text }));
               break;
             case "tool_call":
+              if (stale()) break;
               patchLast((m) => ({
                 ...m,
                 tools: [...m.tools, { id: event.id, name: event.name, arguments: event.arguments }],
               }));
               break;
             case "confirm_request":
+              // Always actionable even if stale — a confirmation left
+              // unanswered just times out server-side and stalls that
+              // (invisible) turn, so still surface it regardless of which
+              // conversation is on screen.
               if (autoApproveRef.current && !event.warning) {
                 postJSON("/api/chat/confirm", { confirm_id: event.confirm_id, approve: true }).catch(() => {});
               } else {
@@ -299,15 +337,18 @@ export function Chat() {
             case "tool_result":
               setConfirm(null);
               setDenyReason(null);
+              if (stale()) break;
               patchLast((m) => ({
                 ...m,
                 tools: m.tools.map((t) => (t.id === event.id ? { ...t, result: event.text } : t)),
               }));
               break;
             case "focus":
+              if (stale()) break;
               bus.emit("focusPhoto", event.photo_id);
               break;
             case "compacted":
+              if (stale()) break;
               // Auto-compact replaced the whole stored history (down to just
               // a summary message) before this turn even started, so every
               // earlier bubble in this view is now stale — drop them and
@@ -319,11 +360,29 @@ export function Chat() {
                 ...prev.slice(-2),
               ]);
               break;
+            case "injected":
+              if (stale()) break;
+              // A live "add info" note was folded into this same turn —
+              // append it as its own user bubble, then a fresh assistant
+              // bubble for whatever the model says next (mirrors the
+              // user/assistant pair pushed when this send() call started).
+              setMsgs((prev) => [
+                ...prev,
+                { role: "user", text: event.text, tools: [] },
+                { role: "assistant", text: "", tools: [] },
+              ]);
+              break;
             case "photo_list":
+              if (stale()) break;
               bus.emit("openPanel", "photos");
               bus.emit("showPhotoList", event.photo_ids);
               break;
+            case "cancelled":
+              if (stale()) break;
+              patchLast((m) => ({ ...m, text: m.text + (m.text ? "\n\n" : "") + "*(cancelled)*" }));
+              break;
             case "error":
+              if (stale()) break;
               setError(event.message);
               break;
             case "done":
@@ -332,14 +391,67 @@ export function Chat() {
         },
       );
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      if (!stale()) setError(e instanceof Error ? e.message : String(e));
     } finally {
       setStreaming(false);
-      setConfirm(null);
-      setDenyReason(null);
+      if (!stale()) {
+        setConfirm(null);
+        setDenyReason(null);
+      }
       refreshConversations();
     }
-  }, [refreshConversations]);
+  }, [refreshConversations, setActive]);
+
+  // Auto-send the next queued message once the current turn finishes.
+  useEffect(() => {
+    if (streaming || queued.length === 0) return;
+    const [next, ...rest] = queued;
+    setQueued(rest);
+    send(next);
+  }, [streaming, queued, send]);
+
+  const cancelTurn = useCallback(async () => {
+    try {
+      await cancelChat();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  }, []);
+
+  // While a turn is running, Enter/Send means "add this to the turn that's
+  // already in flight" rather than starting a new one.
+  const addInfo = useCallback(async () => {
+    const text = input.trim();
+    const conversationId = activeIdRef.current;
+    if (!text) return;
+    setInput("");
+    if (!conversationId || !streamingRef.current) {
+      send(text);
+      return;
+    }
+    try {
+      await injectChat(conversationId, text);
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 409) {
+        // The turn finished in the race between typing and hitting send —
+        // just send it as a normal new message instead of losing it.
+        send(text);
+      } else {
+        setError(e instanceof Error ? e.message : String(e));
+      }
+    }
+  }, [input, send]);
+
+  const queueNext = useCallback(() => {
+    const text = input.trim();
+    if (!text) return;
+    setInput("");
+    setQueued((prev) => [...prev, text]);
+  }, [input]);
+
+  const removeQueued = useCallback((index: number) => {
+    setQueued((prev) => prev.filter((_, i) => i !== index));
+  }, []);
 
   useEffect(
     () => bus.on("runCommand", (cmd) => send(cmd.text, { title: cmd.title, promptId: cmd.promptId })),
@@ -406,7 +518,7 @@ export function Chat() {
   };
 
   const openConversation = async (id: string) => {
-    setActiveId(id);
+    setActive(id);
     setError("");
     try {
       const detail = await getJSON<{ provider: string; model: string; messages: WireMessage[] }>(
@@ -424,7 +536,7 @@ export function Chat() {
   };
 
   const newConversation = () => {
-    setActiveId(null);
+    setActive(null);
     setMsgs([]);
     setError("");
   };
@@ -622,38 +734,68 @@ export function Chat() {
           </div>
         )}
         {streaming && !confirm && (
-          <div className="streaming-indicator" aria-label="Working" role="status">
-            <span className="dot" />
-            <span className="dot" />
-            <span className="dot" />
-            <span className="dot" />
-            <span className="dot" />
+          <div className="streaming-row">
+            <div className="streaming-indicator" aria-label="Working" role="status">
+              <span className="dot" />
+              <span className="dot" />
+              <span className="dot" />
+              <span className="dot" />
+              <span className="dot" />
+            </div>
+            <button type="button" className="cancel-turn-btn" onClick={cancelTurn}>
+              Cancel
+            </button>
           </div>
         )}
         {error && <p className="error">{error}</p>}
       </div>
+      {queued.length > 0 && (
+        <div className="queued-messages">
+          {queued.map((q, i) => (
+            <div key={i} className="queued-item">
+              <span className="hint">Up next:</span> {q}
+              <button type="button" className="icon-btn" onClick={() => removeQueued(i)} title="Remove">
+                ✕
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
       <form
         className="chat-input"
         onSubmit={(e) => {
           e.preventDefault();
-          if (!streaming) send(input);
+          if (streaming) addInfo();
+          else send(input);
         }}
       >
         <textarea
           value={input}
           rows={2}
-          placeholder="Message the workbench agent…"
+          placeholder={streaming ? "Add info to the running turn…" : "Message the workbench agent…"}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === "Enter" && !e.shiftKey) {
               e.preventDefault();
-              if (!streaming) send(input);
+              if (streaming) addInfo();
+              else send(input);
             }
           }}
         />
-        <button type="submit" disabled={streaming || !input.trim()}>
-          Send
-        </button>
+        {streaming ? (
+          <>
+            <button type="submit" disabled={!input.trim()} title="Fold this into the running turn">
+              Add info
+            </button>
+            <button type="button" disabled={!input.trim()} onClick={queueNext} title="Send after this turn finishes">
+              Queue
+            </button>
+          </>
+        ) : (
+          <button type="submit" disabled={!input.trim()}>
+            Send
+          </button>
+        )}
        </form>
         </>
       )}

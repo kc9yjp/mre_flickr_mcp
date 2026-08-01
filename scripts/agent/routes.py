@@ -16,11 +16,15 @@ from agent import commands, compact, llm, loop, prompts_store, settings, store
 _PING_INTERVAL = 15  # seconds between SSE keepalive comments
 
 
-async def _sse_events(inner) -> "asyncio.AsyncIterator[str]":
+async def _sse_events(inner, username: str) -> "asyncio.AsyncIterator[str]":
     """Wrap an event generator as SSE lines with keepalive pings.
 
     A producer task feeds a queue so pings flow even while the LLM or a
-    pending confirmation keeps the inner generator silent.
+    pending confirmation keeps the inner generator silent. That task is
+    registered under ``username`` for the duration so /api/chat/cancel has
+    something to actually cancel — cancelling it unwinds ``inner`` (which
+    holds the turn lock) via CancelledError, releasing the lock instead of
+    leaving it stuck.
     """
     queue: asyncio.Queue = asyncio.Queue()
 
@@ -28,10 +32,14 @@ async def _sse_events(inner) -> "asyncio.AsyncIterator[str]":
         try:
             async for event in inner:
                 await queue.put(event)
+        except asyncio.CancelledError:
+            await queue.put({"type": "cancelled"})
+            raise
         finally:
             await queue.put(None)
 
     task = asyncio.create_task(produce())
+    loop.register_task(username, task)
     try:
         while True:
             try:
@@ -44,6 +52,7 @@ async def _sse_events(inner) -> "asyncio.AsyncIterator[str]":
             yield f"data: {json.dumps(event)}\n\n"
     finally:
         task.cancel()
+        loop.unregister_task(username, task)
 
 
 async def chat_stream(request: Request):
@@ -104,10 +113,41 @@ async def chat_stream(request: Request):
                 yield event
 
     return StreamingResponse(
-        _sse_events(events()),
+        _sse_events(events(), username),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+async def chat_cancel(request: Request):
+    user = _session_user(request)
+    if not user:
+        return _unauthorized()
+    cancelled = loop.cancel_turn(user["username"])
+    return JSONResponse({"ok": cancelled})
+
+
+async def chat_inject(request: Request):
+    """Fold text into the NEXT LLM call of the user's currently-running turn.
+
+    Requires a turn to actually be in flight — otherwise there's nothing to
+    inject into and the caller should just send a normal new message instead.
+    """
+    user = _session_user(request)
+    if not user:
+        return _unauthorized()
+    try:
+        body = await request.json()
+    except ValueError:
+        return JSONResponse({"error": "invalid JSON body"}, status_code=400)
+    message = (body.get("message") or "").strip()
+    conversation_id = (body.get("conversation_id") or "").strip()
+    if not message or not conversation_id:
+        return JSONResponse({"error": "message and conversation_id are required"}, status_code=400)
+    if not loop.get_turn_lock(user["username"]).locked():
+        return JSONResponse({"error": "no turn is currently running"}, status_code=409)
+    loop.add_injection(conversation_id, message)
+    return JSONResponse({"ok": True})
 
 
 async def chat_confirm(request: Request):
@@ -506,6 +546,8 @@ async def chat_stats(request: Request):
 def api_routes() -> list[Route]:
     return [
         Route("/api/chat/stream",  endpoint=chat_stream, methods=["POST"]),
+        Route("/api/chat/cancel",  endpoint=chat_cancel, methods=["POST"]),
+        Route("/api/chat/inject",  endpoint=chat_inject, methods=["POST"]),
         Route("/api/chat/confirm", endpoint=chat_confirm, methods=["POST"]),
         Route("/api/chat/conversations", endpoint=chat_conversations),
         Route("/api/chat/conversations/{id}", endpoint=chat_conversation_detail),

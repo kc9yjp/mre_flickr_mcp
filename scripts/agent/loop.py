@@ -10,8 +10,13 @@
     {"type": "focus", "photo_id"}                        drive the photo viewer
     {"type": "photo_list", "photo_ids"}                  populate the grid
     {"type": "compacted", "summary"}                     auto-compact ran before this turn
+    {"type": "injected", "text"}                         user's add_injection text was folded in
     {"type": "error", "message"}
     {"type": "done"}
+
+A turn can also be ended early by cancelling its task (see loop.cancel_turn) —
+CancelledError unwinds through the "async with lock" in routes.py, releasing
+it, without this generator getting to yield a final event itself.
 """
 
 import asyncio
@@ -62,6 +67,19 @@ _REMEMBER_TOOL: dict = {
 # One agent turn at a time per user.
 _turn_locks: dict[str, asyncio.Lock] = {}
 
+# username -> the task actually driving that user's in-flight SSE stream, so
+# a cancel request has something concrete to call .cancel() on. Cancelling
+# this task (rather than e.g. just clearing _turn_locks) is what makes the
+# cancellation real: it throws CancelledError at whatever await point the
+# turn is suspended on, which unwinds through run_turn's "async with lock"
+# and actually releases the lock instead of leaving it stuck.
+_active_tasks: dict[str, asyncio.Task] = {}
+
+# conversation_id -> queued text the user submitted while a turn was still
+# running, to be folded into the next LLM call of THAT SAME turn (as opposed
+# to waiting for the turn to finish and starting a new one).
+_injections: dict[str, list[str]] = {}
+
 # confirm_id -> Future resolved with True (approve) / False (deny)
 _pending_confirms: dict[str, asyncio.Future] = {}
 
@@ -82,6 +100,32 @@ def _empty_stats() -> dict:
 
 def get_turn_lock(username: str) -> asyncio.Lock:
     return _turn_locks.setdefault(username, asyncio.Lock())
+
+
+def register_task(username: str, task: asyncio.Task) -> None:
+    _active_tasks[username] = task
+
+
+def unregister_task(username: str, task: asyncio.Task) -> None:
+    if _active_tasks.get(username) is task:
+        del _active_tasks[username]
+
+
+def cancel_turn(username: str) -> bool:
+    """Cancel the user's in-flight turn, if any. Returns False if nothing was running."""
+    task = _active_tasks.get(username)
+    if task is None or task.done():
+        return False
+    task.cancel()
+    return True
+
+
+def add_injection(conversation_id: str, text: str) -> None:
+    _injections.setdefault(conversation_id, []).append(text)
+
+
+def _pop_injections(conversation_id: str) -> list[str]:
+    return _injections.pop(conversation_id, [])
 
 
 def reset_context_stats(conversation_id: str) -> None:
@@ -367,6 +411,12 @@ async def run_turn(
 
     try:
         for _ in range(MAX_ITERATIONS):
+            for extra in _pop_injections(conversation_id):
+                extra_msg = {"role": "user", "content": extra}
+                store.append_message(username, conversation_id, extra_msg)
+                messages.append(extra_msg)
+                yield {"type": "injected", "text": extra}
+
             final = None
             async for event in stream_fn(cfg, _wire_messages(messages), tools=tools):
                 if event["type"] == "delta":
@@ -486,10 +536,22 @@ async def run_turn(
                 "type": "error",
                 "message": f"Stopped after {MAX_ITERATIONS} tool iterations.",
             }
+
+        # Anything submitted too late to be picked up by the loop above (the
+        # turn already finished its last iteration) still gets stored so it's
+        # not silently lost — just not addressed by this turn's LLM calls.
+        for extra in _pop_injections(conversation_id):
+            store.append_message(username, conversation_id, {"role": "user", "content": extra})
+            yield {"type": "injected", "text": extra}
     except llm.LLMError as e:
         yield {"type": "error", "message": str(e)}
     except Exception as e:
         logging.exception("agent: turn failed")
         yield {"type": "error", "message": f"Agent error: {type(e).__name__}: {e}"}
+    finally:
+        # Guarantees cleanup even on cancellation (CancelledError skips the
+        # `except Exception` above but not this) so a stray injection can
+        # never bleed into an unrelated later turn on this conversation.
+        _injections.pop(conversation_id, None)
 
     yield {"type": "done"}

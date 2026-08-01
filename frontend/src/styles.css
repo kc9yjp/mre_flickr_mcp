@@ -918,16 +918,63 @@ select:focus {
   padding: 6px 8px;
 }
 
+.streaming-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  margin: 6px auto;
+}
+
+.cancel-turn-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--ink-muted);
+  border-radius: 6px;
+  padding: 2px 10px;
+  font-size: 0.8125rem;
+  cursor: pointer;
+  flex: none;
+}
+
+.cancel-turn-btn:hover {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+
 .streaming-indicator {
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 8px;
   width: 50%;
-  margin: 6px auto;
   padding: 0 4px;
   height: 16px;
   animation: dotHue 4s linear infinite;
+}
+
+.queued-messages {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 4px 8px;
+  border-top: 1px solid var(--border);
+  flex: none;
+}
+
+.queued-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.8125rem;
+  color: var(--ink-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.queued-item .icon-btn {
+  margin-left: auto;
 }
 
 .streaming-indicator .dot {

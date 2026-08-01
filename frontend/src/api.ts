@@ -291,6 +291,8 @@ export type StreamEvent =
   | { type: "focus"; photo_id: string }
   | { type: "photo_list"; photo_ids: string[] }
   | { type: "compacted"; summary: string }
+  | { type: "injected"; text: string }
+  | { type: "cancelled" }
   | { type: "error"; message: string }
   | { type: "done" };
 
@@ -411,6 +413,16 @@ export async function getSessionStats(conversationId: string): Promise<SessionSt
 
 export async function compactConversation(conversationId: string): Promise<{ ok: true; summary: string }> {
   return postJSON(`/api/chat/conversations/${conversationId}/compact`, {});
+}
+
+/** Cancel the current user's in-flight turn, if any. `ok: false` just means nothing was running. */
+export async function cancelChat(): Promise<{ ok: boolean }> {
+  return postJSON("/api/chat/cancel", {});
+}
+
+/** Fold text into the NEXT LLM call of the currently-running turn on this conversation. */
+export async function injectChat(conversationId: string, message: string): Promise<{ ok: true }> {
+  return postJSON("/api/chat/inject", { conversation_id: conversationId, message });
 }
 
 // Models known to not support vision
