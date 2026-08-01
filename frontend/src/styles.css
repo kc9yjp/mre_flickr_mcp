@@ -927,14 +927,8 @@ select:focus {
 }
 
 .cancel-turn-btn {
-  background: transparent;
-  border: 1px solid var(--border);
-  color: var(--ink-muted);
-  border-radius: 6px;
-  padding: 2px 10px;
-  font-size: 0.8125rem;
-  cursor: pointer;
-  flex: none;
+  border-color: var(--border);
+  font-size: 1.0625rem;
 }
 
 .cancel-turn-btn:hover {

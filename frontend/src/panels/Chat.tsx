@@ -755,8 +755,14 @@ export function Chat() {
               <span className="dot" />
               <span className="dot" />
             </div>
-            <button type="button" className="cancel-turn-btn" onClick={cancelTurn}>
-              Cancel
+            <button
+              type="button"
+              className="icon-btn cancel-turn-btn"
+              onClick={cancelTurn}
+              title="Cancel this turn"
+              aria-label="Cancel this turn"
+            >
+              ⏹
             </button>
           </div>
         )}
