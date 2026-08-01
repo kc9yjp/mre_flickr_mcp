@@ -31,7 +31,17 @@ async def summarize(username: str, nsid: str, conversation_id: str, cfg: dict) -
         instruction_prompt["text"] if instruction_prompt
         else prompts_store.COMPACT_PROMPT_DEFAULT
     )
+    # Every other call to the model (agent turns) opens with a system
+    # message before any history. This one didn't, and when the history
+    # being summarized is itself just a prior compaction summary (a lone
+    # assistant message, e.g. re-compacting right after a compact with no
+    # new turns in between), the payload becomes bare [assistant, user] with
+    # no framing at all — a shape unlike anything else this connection ever
+    # sends. Some stricter backends (e.g. LM Studio's jinja chat templates)
+    # fail to find "a user query" against that shape and error out, so give
+    # this call the same system-first shape every other call has.
     prompt_messages = [
+        {"role": "system", "content": "You are summarizing a conversation. Read the history below, then follow the instruction in the final message."},
         *wire_messages(messages),
         {"role": "user", "content": instruction},
     ]

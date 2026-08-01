@@ -334,7 +334,10 @@ async def test_compact_replaces_history_with_summary(user_db):
     store.append_message(USERNAME, conv, {"role": "user", "content": "hello"})
     store.append_message(USERNAME, conv, {"role": "assistant", "content": "hi"})
 
+    seen_messages = []
+
     async def fake_stream_chat(cfg, messages, tools=None, client=None):
+        seen_messages.append(messages)
         yield {"type": "message", "content": "Summary of the chat.", "tool_calls": [], "finish_reason": "stop"}
 
     with patch("agent.compact.llm.stream_chat", fake_stream_chat):
@@ -345,6 +348,10 @@ async def test_compact_replaces_history_with_summary(user_db):
     assert len(msgs) == 1
     assert msgs[0]["role"] == "assistant"
     assert "Summary of the chat." in msgs[0]["content"]
+    # Must open with a system message like every other call to the model —
+    # re-compacting a conversation whose only history is a prior compaction
+    # summary (bare [assistant, user]) broke some backends' chat templates.
+    assert seen_messages[0][0]["role"] == "system"
 
 
 @pytest.mark.asyncio
@@ -583,6 +590,10 @@ async def test_focused_photo_context_is_ephemeral_not_persisted(user_db):
 
     assert events[-1]["type"] == "done"
     assert any("9999999" in (m.get("content") or "") for m in seen_messages[0])
+    # Some OpenAI-compatible backends (e.g. LM Studio's stricter chat
+    # templates) require the conversation to end on a "user" turn — the
+    # focused-photo note must not be the trailing message.
+    assert seen_messages[0][-1]["role"] == "user"
 
     stored = store.get_messages(USERNAME, conv)
     assert all("9999999" not in json.dumps(m) for m in stored)
@@ -831,6 +842,29 @@ def test_wire_messages_splits_tool_image_into_following_user_message():
     # through unchanged — no extra message inserted.
     plain = [{"role": "tool", "tool_call_id": "c1", "content": "just text"}]
     assert _wire_messages(plain) == plain
+
+
+def test_wire_messages_inserts_user_turn_after_compaction():
+    """A compacted conversation's stored history is a single assistant
+    message (see compact.compact) — so a payload built from it after
+    compaction is [system…, assistant, user] with no user turn before the
+    assistant one. Some backends' chat templates (e.g. LM Studio's stricter
+    jinja ones) can't find "a user query" in that shape and error out, so
+    _wire_messages must insert a placeholder user turn right after any
+    leading system messages."""
+    from agent.loop import _wire_messages
+
+    messages = [
+        {"role": "system", "content": "system prompt"},
+        {"role": "assistant", "content": "**Conversation compacted.**\n\nSummary text."},
+        {"role": "user", "content": "what tags are on this photo?"},
+    ]
+
+    wire = _wire_messages(messages)
+
+    assert [m["role"] for m in wire] == ["system", "user", "assistant", "user"]
+    assert wire[2]["content"] == "**Conversation compacted.**\n\nSummary text."
+    assert wire[3]["content"] == "what tags are on this photo?"
 
 
 @pytest.mark.asyncio

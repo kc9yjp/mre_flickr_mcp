@@ -48,6 +48,21 @@ def wire_messages(messages: list[dict]) -> list[dict]:
                 })
         else:
             out.append(m)
+
+    # A compacted conversation's stored history starts as a single assistant
+    # message (the summary bubble, see compact.py) — so every turn after a
+    # compaction sends a payload shaped [system…, assistant, user…] with an
+    # assistant turn first and no user message ever before it. Some backends'
+    # chat templates (e.g. LM Studio's stricter jinja ones) can't find "a
+    # user query" in that shape and error out. Insert a placeholder user
+    # turn right after any leading system messages so every payload starts
+    # its actual dialogue on a user turn, same as a fresh conversation would.
+    idx = 0
+    while idx < len(out) and out[idx].get("role") == "system":
+        idx += 1
+    if idx < len(out) and out[idx].get("role") == "assistant":
+        out.insert(idx, {"role": "user", "content": "(continuing this conversation)"})
+
     return out
 
 

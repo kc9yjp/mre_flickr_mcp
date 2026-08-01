@@ -347,11 +347,15 @@ async def run_turn(
     messages += store.get_messages(username, conversation_id)
     _coerce_null_content(messages)
     if focused_photo_id:
-        # Appended AFTER the full history (right before the model's turn),
-        # not near the top: on a long-running conversation a note buried
-        # before dozens of older turns gets lost-in-the-middle and the model
-        # falls back to whatever photo it last discussed instead of this one.
-        messages.append({
+        # Inserted just BEFORE the final message (right before the model's
+        # turn), not near the top: on a long-running conversation a note
+        # buried before dozens of older turns gets lost-in-the-middle and the
+        # model falls back to whatever photo it last discussed instead of
+        # this one. It can't go strictly last, though — some OpenAI-compatible
+        # backends (e.g. LM Studio's stricter chat templates) require the
+        # conversation to end on a "user" turn and error ("No user query
+        # found in messages") if the trailing message is a system note.
+        messages.insert(len(messages) - 1, {
             "role": "system",
             "content": (
                 f"The user currently has photo {focused_photo_id} open in "
