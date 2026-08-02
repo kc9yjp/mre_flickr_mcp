@@ -15,7 +15,8 @@
       "mcp__MCP_DOCKER__browser_navigate",
       "mcp__MCP_DOCKER__browser_console_messages",
       "mcp__MCP_DOCKER__browser_evaluate",
-      "Bash(python3 -c ' *)"
+      "Bash(python3 -c ' *)",
+      "Bash(xargs wc -l)"
     ]
   },
   "enableAllProjectMcpServers": true
