@@ -83,20 +83,6 @@ _injections: dict[str, list[str]] = {}
 # confirm_id -> Future resolved with True (approve) / False (deny)
 _pending_confirms: dict[str, asyncio.Future] = {}
 
-# Session stats per conversation: {conversation_id: {turns: N, tokens: N, latency_ms: N}}
-_session_stats: dict[str, dict] = {}
-
-
-def _empty_stats() -> dict:
-    return {
-        "turns": 0,
-        "prompt_tokens": 0,
-        "completion_tokens": 0,
-        "total_tokens": 0,
-        "total_latency_ms": 0,
-        "last_prompt_tokens": 0,
-    }
-
 
 def get_turn_lock(username: str) -> asyncio.Lock:
     return _turn_locks.setdefault(username, asyncio.Lock())
@@ -128,17 +114,6 @@ def _pop_injections(conversation_id: str) -> list[str]:
     return _injections.pop(conversation_id, [])
 
 
-def reset_context_stats(conversation_id: str) -> None:
-    """Zero out just the "current context size" stat after a compaction.
-
-    The cumulative turn/token counters are left alone (they're historical
-    spend, still accurate) — only ``last_prompt_tokens`` is stale the moment
-    the stored history shrinks, since it won't be recomputed until the next
-    turn actually calls the LLM.
-    """
-    _session_stats.setdefault(conversation_id, _empty_stats())["last_prompt_tokens"] = 0
-
-
 def resolve_confirm(confirm_id: str, approve: bool, reason: str | None = None) -> bool:
     """Resolve a pending write-tool confirmation. Returns False if unknown.
 
@@ -150,17 +125,6 @@ def resolve_confirm(confirm_id: str, approve: bool, reason: str | None = None) -
         return False
     future.set_result({"approve": bool(approve), "reason": (reason or "").strip() or None})
     return True
-
-
-def get_session_stats(conversation_id: str) -> dict:
-    """Get accumulated stats for a conversation session.
-
-    ``last_prompt_tokens`` is the prompt size of the most recent turn (the
-    actual current context size), unlike ``prompt_tokens`` which sums across
-    every turn this session — that distinction is what lets the frontend
-    show a meaningful "context used" percentage.
-    """
-    return _session_stats.get(conversation_id, _empty_stats())
 
 
 def _register_confirm(confirm_id: str) -> asyncio.Future:
@@ -373,7 +337,7 @@ async def run_turn(
         if approx_tokens(prior_messages) >= context_window * AUTO_COMPACT_THRESHOLD:
             summary = await compact.compact(username, nsid, conversation_id, cfg)
             if summary:
-                reset_context_stats(conversation_id)
+                store.reset_context_stats(username, conversation_id)
                 yield {"type": "compacted", "summary": summary}
 
     user_msg = {"role": "user", "content": user_message}
@@ -426,16 +390,15 @@ async def run_turn(
 
             # Track session stats
             if final:
-                stats = _session_stats.setdefault(conversation_id, _empty_stats())
-                stats["turns"] += 1
-                if final.get("usage"):
-                    usage = final["usage"]
-                    stats["prompt_tokens"] += usage.get("prompt_tokens", 0)
-                    stats["completion_tokens"] += usage.get("completion_tokens", 0)
-                    stats["total_tokens"] += usage.get("total_tokens", 0)
-                    if usage.get("prompt_tokens"):
-                        stats["last_prompt_tokens"] = usage["prompt_tokens"]
-                stats["total_latency_ms"] += final.get("latency_ms", 0)
+                usage = final.get("usage") or {}
+                store.record_turn_stats(
+                    username,
+                    conversation_id,
+                    prompt_tokens=usage.get("prompt_tokens", 0),
+                    completion_tokens=usage.get("completion_tokens", 0),
+                    total_tokens=usage.get("total_tokens", 0),
+                    latency_ms=final.get("latency_ms", 0),
+                )
 
             assistant_msg: dict = {"role": "assistant", "content": final["content"]}
             if final["tool_calls"]:

@@ -42,7 +42,36 @@ _MIGRATIONS = [
         "SELECT 1 FROM pragma_table_info('conversations') WHERE name='model'",
         "ALTER TABLE conversations ADD COLUMN model TEXT DEFAULT ''",
     ),
+    (
+        "SELECT 1 FROM pragma_table_info('conversations') WHERE name='turns'",
+        "ALTER TABLE conversations ADD COLUMN turns INTEGER DEFAULT 0",
+    ),
+    (
+        "SELECT 1 FROM pragma_table_info('conversations') WHERE name='prompt_tokens'",
+        "ALTER TABLE conversations ADD COLUMN prompt_tokens INTEGER DEFAULT 0",
+    ),
+    (
+        "SELECT 1 FROM pragma_table_info('conversations') WHERE name='completion_tokens'",
+        "ALTER TABLE conversations ADD COLUMN completion_tokens INTEGER DEFAULT 0",
+    ),
+    (
+        "SELECT 1 FROM pragma_table_info('conversations') WHERE name='total_tokens'",
+        "ALTER TABLE conversations ADD COLUMN total_tokens INTEGER DEFAULT 0",
+    ),
+    (
+        "SELECT 1 FROM pragma_table_info('conversations') WHERE name='total_latency_ms'",
+        "ALTER TABLE conversations ADD COLUMN total_latency_ms INTEGER DEFAULT 0",
+    ),
+    (
+        "SELECT 1 FROM pragma_table_info('conversations') WHERE name='last_prompt_tokens'",
+        "ALTER TABLE conversations ADD COLUMN last_prompt_tokens INTEGER DEFAULT 0",
+    ),
 ]
+
+_STATS_COLUMNS = (
+    "turns", "prompt_tokens", "completion_tokens",
+    "total_tokens", "total_latency_ms", "last_prompt_tokens",
+)
 
 
 def _chat_db_path(username: str) -> str:
@@ -106,6 +135,70 @@ def get_conversation_meta(username: str, conversation_id: str) -> dict | None:
             (conversation_id,),
         ).fetchone()
     return dict(row) if row else None
+
+
+def get_session_stats(username: str, conversation_id: str) -> dict:
+    """Cumulative turn/token/latency stats for a conversation.
+
+    Persisted on the conversation row (rather than kept only in server
+    memory) so they survive a restart and are available the moment you
+    switch to any past conversation, not just ones that already had a turn
+    run against them in the current process.
+    """
+    with _chat_db(username) as conn:
+        row = conn.execute(
+            f"SELECT {', '.join(_STATS_COLUMNS)} FROM conversations WHERE id = ?",
+            (conversation_id,),
+        ).fetchone()
+    return {col: (row[col] if row else 0) for col in _STATS_COLUMNS}
+
+
+def record_turn_stats(
+    username: str,
+    conversation_id: str,
+    *,
+    prompt_tokens: int = 0,
+    completion_tokens: int = 0,
+    total_tokens: int = 0,
+    latency_ms: int = 0,
+) -> None:
+    """Fold one completed turn's usage into a conversation's running stats.
+
+    ``last_prompt_tokens`` (the current context size, as opposed to the
+    cumulative ``prompt_tokens``) only updates when this turn actually
+    reported prompt_tokens — 0 means "no usage in the response", not "empty
+    context".
+    """
+    with _chat_db(username) as conn:
+        conn.execute(
+            """
+            UPDATE conversations SET
+                turns = turns + 1,
+                prompt_tokens = prompt_tokens + ?,
+                completion_tokens = completion_tokens + ?,
+                total_tokens = total_tokens + ?,
+                total_latency_ms = total_latency_ms + ?,
+                last_prompt_tokens = CASE WHEN ? > 0 THEN ? ELSE last_prompt_tokens END
+            WHERE id = ?
+            """,
+            (prompt_tokens, completion_tokens, total_tokens, latency_ms,
+             prompt_tokens, prompt_tokens, conversation_id),
+        )
+
+
+def reset_context_stats(username: str, conversation_id: str) -> None:
+    """Zero out just the "current context size" stat after a compaction.
+
+    The cumulative turn/token counters are left alone (they're historical
+    spend, still accurate) — only ``last_prompt_tokens`` is stale the moment
+    the stored history shrinks, since it won't be recomputed until the next
+    turn actually calls the LLM.
+    """
+    with _chat_db(username) as conn:
+        conn.execute(
+            "UPDATE conversations SET last_prompt_tokens = 0 WHERE id = ?",
+            (conversation_id,),
+        )
 
 
 def get_messages(username: str, conversation_id: str) -> list[dict]:

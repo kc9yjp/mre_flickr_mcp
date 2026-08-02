@@ -228,7 +228,7 @@ async def chat_conversation_compact(request: Request):
         summary = await compact.compact(username, nsid, conversation_id, cfg)
     if not summary:
         return JSONResponse({"error": "Nothing to compact, or the LLM call failed."}, status_code=400)
-    loop.reset_context_stats(conversation_id)
+    store.reset_context_stats(username, conversation_id)
     return JSONResponse({"ok": True, "summary": summary})
 
 
@@ -537,7 +537,7 @@ async def chat_stats(request: Request):
     if not conversation_id:
         return JSONResponse({"error": "conversation_id query param required"}, status_code=400)
 
-    stats = dict(loop.get_session_stats(conversation_id))
+    stats = store.get_session_stats(user["username"], conversation_id)
     meta = store.get_conversation_meta(user["username"], conversation_id) or {}
     cfg = settings.resolve_cfg(user["nsid"], meta.get("provider") or None, meta.get("model") or None)
     stats["context_window"] = cfg.get("context_window") or loop.DEFAULT_CONTEXT_WINDOW
