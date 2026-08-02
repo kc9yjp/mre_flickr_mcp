@@ -131,6 +131,7 @@ sync_log          — type, mode, photos_fetched, synced_at
 | `get_photo` | Fetch single photo details — local DB for own photos, live API fallback for other users' |
 | `get_photo_stats` | Views, favorites, comments for a photo |
 | `get_photo_comments` | Fetch comments on a photo |
+| `get_unreplied_comments` | Scan recent activity (`flickr.activity.userPhotos`) and return photos with comments the user hasn't replied to yet |
 | `fetch_photo_image` | Download photo and return as image for visual inspection |
 | `update_photo` | Update title, description, tags (Flickr + local DB) |
 | `set_visibility` | Make photo public or private |

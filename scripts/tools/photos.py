@@ -386,6 +386,22 @@ TOOLS = [
         },
     ),
     Tool(
+        name="get_unreplied_comments",
+        description=(
+            "Check recent activity for comments on the user's photos and return only "
+            "those photos that have at least one comment without a reply from the "
+            "user yet, along with the unreplied comment(s). Uses "
+            "flickr.activity.userPhotos, so it only sees activity within the given "
+            "timeframe — it will miss older unreplied comments."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "timeframe": {"type": "string", "description": "Time window in Flickr format: hours ('4h', '12h') or days ('1d', '7d'). Default: '7d'. Max: '7d'."},
+            },
+        },
+    ),
+    Tool(
         name="add_to_keeper_list",
         description="Add a photo to the keeper list — a local list of public photos worth preserving even if weak on stats.",
         inputSchema={
@@ -1033,6 +1049,76 @@ async def _get_recent_activity(args):
     return [TextContent(type="text", text=json.dumps(results, indent=2))]
 
 
+async def _get_unreplied_comments(args):
+    timeframe = args.get("timeframe", "7d")
+    import re as _re
+    if not _re.match(r"^\d+[dh]$", timeframe):
+        timeframe = "7d"
+    data = flickr_api._api_get("flickr.activity.userPhotos", {"timeframe": timeframe, "per_page": "50"})
+    items = data.get("items", {}).get("item", [])
+    own_nsid = flickr_api._load_credentials().get("user_nsid", "")
+
+    # Only photos with a comment-type event are worth a full comment-thread
+    # fetch — faves/other event types can't be "unreplied".
+    commented_photo_ids = []
+    for item in items:
+        activity = item.get("activity", {}).get("event", [])
+        if isinstance(activity, dict):
+            activity = [activity]
+        if any(e.get("type") == "comment" for e in activity):
+            pid = item.get("id", "")
+            if pid and pid not in commented_photo_ids:
+                commented_photo_ids.append(pid)
+
+    results = []
+    for photo_id in commented_photo_ids:
+        try:
+            comments_data = flickr_api._api_get("flickr.photos.comments.getList", {"photo_id": photo_id})
+        except flickr_api.FlickrAPIError as e:
+            logging.warning("get_unreplied_comments: failed to fetch comments for photo %s: %s", photo_id, e)
+            continue
+        comments = comments_data.get("comments", {}).get("comment", [])
+        if isinstance(comments, dict):
+            comments = [comments]
+        if not comments:
+            continue
+
+        # Replies posted via add_comment always start with "[<author_url>]" to
+        # notify the commenter (see .claude/commands/flickr-thanks.md) — so a
+        # commenter has actually been replied to only if one of the owner's
+        # own comments mentions their nsid, not merely if the owner posted
+        # *something* afterward (that reply could be addressed to someone
+        # else entirely).
+        addressed_nsids = set()
+        for c in comments:
+            if c.get("author") == own_nsid:
+                addressed_nsids |= set(_re.findall(
+                    r"flickr\.com/(?:people|photos)/([^/\s\]]+)/?", c.get("_content", "")
+                ))
+
+        unreplied = [{
+            "author":      c["authorname"],
+            "author_nsid": c["author"],
+            "author_url":  f"https://www.flickr.com/photos/{c['author']}/",
+            "date":        datetime.fromtimestamp(int(c["datecreate"])).strftime("%Y-%m-%d"),
+            "comment":     c["_content"],
+            "permalink":   c["permalink"],
+        } for c in comments
+          if c.get("author") != own_nsid
+          and c.get("author") not in addressed_nsids]
+
+        if unreplied:
+            with get_db() as conn:
+                row = conn.execute("SELECT title, url_photopage FROM photos WHERE id = ?", (photo_id,)).fetchone()
+            results.append({
+                "photo_id":           photo_id,
+                "title":              row["title"] if row else "",
+                "url_photopage":      row["url_photopage"] if row else f"https://www.flickr.com/photos/{own_nsid}/{photo_id}/",
+                "unreplied_comments": unreplied,
+            })
+    return [TextContent(type="text", text=json.dumps(results, indent=2))]
+
+
 async def _add_to_keeper_list(args):
     photo_id = args.get("photo_id", "").strip()
     note = args.get("note", "").strip()
@@ -1107,6 +1193,7 @@ HANDLERS = {
     "get_faves":            _get_faves,
     "get_photos_with_comments": _get_photos_with_comments,
     "get_recent_activity":  _get_recent_activity,
+    "get_unreplied_comments": _get_unreplied_comments,
     "add_to_keeper_list":   _add_to_keeper_list,
     "get_keeper_list":      _get_keeper_list,
     "remove_from_keeper_list": _remove_from_keeper_list,

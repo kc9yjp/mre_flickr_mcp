@@ -74,7 +74,7 @@ class TestStdioProtocol:
             "list_recent_syncs", "get_exif", "get_upload_status",
             "get_person_info", "get_user_photos", "get_photostream_stats", "get_popular_photos",
             "get_gallery_photos", "get_group_photos", "get_faves",
-            "get_recent_activity", "remove_fave", "remove_location",
+            "get_recent_activity", "get_unreplied_comments", "remove_fave", "remove_location",
             "join_group", "leave_group", "set_safety_level", "set_content_type",
             "set_dates", "create_gallery", "add_to_gallery", "get_galleries",
             "get_contact_uploads", "search_all_groups",
