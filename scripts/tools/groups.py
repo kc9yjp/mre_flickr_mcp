@@ -382,6 +382,14 @@ def _fmt_chicago(ts: int) -> str:
     return dt.strftime("%Y-%m-%d %I:%M %p CT")
 
 
+# flickr.groups.pools.add error code, per Flickr's API docs: "Group limit
+# reached — the group throttle limit is currently reached; try again later."
+# This is the one retryable case (a per-group daily pool-add quota that
+# resets) — every other code (group/photo not found, blacklisted, already
+# in the group, permissions) is a permanent failure and must not be queued.
+_GROUP_THROTTLE_ERROR_CODE = 5
+
+
 def _flush_group_queue(conn, force: bool = False) -> list[dict]:
     """Process waiting queue items whose retry_after has passed.
 
@@ -413,7 +421,7 @@ def _flush_group_queue(conn, force: bool = False) -> list[dict]:
             )
             flushed.append({"photo_id": row["photo_id"], "group_id": row["group_id"], "result": "success"})
         except FlickrAPIError as e:
-            if e.code == 5:
+            if e.code == _GROUP_THROTTLE_ERROR_CODE:
                 conn.execute(
                     "UPDATE pending_group_adds SET retry_after=? WHERE id=?",
                     (_next_midnight_utc(), row["id"]),
@@ -476,7 +484,7 @@ async def _add_to_group(args):
             )
             return [TextContent(type="text", text=f"Photo {photo_id} added to group {group_id}.")]
         except FlickrAPIError as e:
-            if e.code == 5:
+            if e.code == _GROUP_THROTTLE_ERROR_CODE:
                 retry_after = _parse_retry_time(retry_at_str, days_offset)
                 existing = conn.execute(
                     "SELECT id FROM pending_group_adds WHERE photo_id=? AND group_id=? AND status='waiting'",
