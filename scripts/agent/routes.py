@@ -144,6 +144,8 @@ async def chat_inject(request: Request):
     conversation_id = (body.get("conversation_id") or "").strip()
     if not message or not conversation_id:
         return JSONResponse({"error": "message and conversation_id are required"}, status_code=400)
+    if not store.conversation_exists(user["username"], conversation_id):
+        return JSONResponse({"error": "conversation not found"}, status_code=404)
     if not loop.get_turn_lock(user["username"]).locked():
         return JSONResponse({"error": "no turn is currently running"}, status_code=409)
     loop.add_injection(conversation_id, message)

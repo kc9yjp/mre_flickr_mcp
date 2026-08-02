@@ -80,6 +80,51 @@ def test_llm_connections_create_unauthenticated_returns_403():
     assert resp.status_code == 403
 
 
+# --- chat_inject ---
+
+@pytest.fixture()
+def chat_data_dir(tmp_path):
+    """agent.store's chat.db lives under db._DATA_DIR/{username}/chat.db."""
+    with patch("db._DATA_DIR", str(tmp_path / "agentdata")):
+        yield str(tmp_path / "agentdata")
+
+
+def test_chat_inject_unknown_conversation_returns_404(client, chat_data_dir):
+    _login(client)
+    resp = client.post(
+        "/api/chat/inject", headers=HEADERS,
+        json={"message": "hi", "conversation_id": "doesnotexist"},
+    )
+    assert resp.status_code == 404
+
+
+def test_chat_inject_rejects_conversation_owned_by_another_user(client, chat_data_dir):
+    """A conversation_id created under a different username must be refused
+    even though injection only checked the caller's OWN turn lock, not who
+    the conversation_id actually belongs to."""
+    from agent import store
+
+    other_conv = store.create_conversation("someoneelse", "hello", "", "")
+    _login(client)
+    resp = client.post(
+        "/api/chat/inject", headers=HEADERS,
+        json={"message": "hi", "conversation_id": other_conv},
+    )
+    assert resp.status_code == 404
+
+
+def test_chat_inject_known_conversation_no_running_turn_returns_409(client, chat_data_dir):
+    from agent import store
+
+    conv = store.create_conversation(USERNAME, "hello", "", "")
+    _login(client)
+    resp = client.post(
+        "/api/chat/inject", headers=HEADERS,
+        json={"message": "hi", "conversation_id": conv},
+    )
+    assert resp.status_code == 409
+
+
 # --- presets ---
 
 def test_llm_connection_presets(client):
