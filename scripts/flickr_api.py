@@ -161,7 +161,8 @@ def _resolve_api_key(api_key: str) -> dict | None:
         try:
             with open(cpath) as f:
                 creds = json.load(f)
-            if creds.get("mcp_api_key") == api_key:
+            stored_key = creds.get("mcp_api_key") or ""
+            if stored_key and secrets.compare_digest(stored_key, api_key):
                 nsid = creds.get("user_nsid")
                 username = creds.get("username")
                 if nsid and username:
