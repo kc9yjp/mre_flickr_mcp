@@ -928,8 +928,8 @@ def test_commands_resolve_user_placeholder():
 # --- remember tool ---
 
 @pytest.mark.asyncio
-async def test_remember_appends_to_user_memory(user_db):
-    """'remember' pseudo-tool appends guidance to the user-memory prompt."""
+async def test_remember_appends_to_user_memory_when_approved(user_db):
+    """'remember' appends guidance to the user-memory prompt once approved."""
     from agent import loop, prompts_store, store
 
     conv = store.create_conversation(USERNAME, "t")
@@ -938,8 +938,12 @@ async def test_remember_appends_to_user_memory(user_db):
         {"content": "Got it."},
     ])
 
+    events = []
     with patch("agent.loop.llm.stream_chat", scripted):
-        events = [e async for e in loop.run_turn(USER, conv, "remember: always be concise", CFG)]
+        async for event in loop.run_turn(USER, conv, "remember: always be concise", CFG):
+            events.append(event)
+            if event["type"] == "confirm_request":
+                assert loop.resolve_confirm(event["confirm_id"], True)
 
     memory = prompts_store.get_prompt_by_code(NSID, "user-memory")
     assert "Always be concise." in memory["text"]
@@ -963,7 +967,9 @@ async def test_remember_appends_to_existing_user_memory(user_db):
     ])
 
     with patch("agent.loop.llm.stream_chat", scripted):
-        [e async for e in loop.run_turn(USER, conv, "remember second rule", CFG)]
+        async for event in loop.run_turn(USER, conv, "remember second rule", CFG):
+            if event["type"] == "confirm_request":
+                assert loop.resolve_confirm(event["confirm_id"], True)
 
     memory = prompts_store.get_prompt_by_code(NSID, "user-memory")
     assert "First rule." in memory["text"]
@@ -971,20 +977,52 @@ async def test_remember_appends_to_existing_user_memory(user_db):
 
 
 @pytest.mark.asyncio
-async def test_remember_does_not_require_confirm(user_db):
-    """'remember' must never emit a confirm_request event."""
+async def test_remember_requires_confirm(user_db):
+    """'remember' must be gated behind a confirm_request like other write tools —
+    otherwise guidance smuggled in via an untrusted photo/comment/group
+    description the model reads could silently steer all future sessions."""
     from agent import loop, store
 
     conv = store.create_conversation(USERNAME, "t")
     scripted = _scripted_llm([
-        {"tool_calls": [_tool_call("c1", "remember", {"guidance": "No confirms needed."})]},
+        {"tool_calls": [_tool_call("c1", "remember", {"guidance": "Confirm gated."})]},
         {"content": "Done."},
     ])
 
+    events = []
     with patch("agent.loop.llm.stream_chat", scripted):
-        events = [e async for e in loop.run_turn(USER, conv, "remember this", CFG)]
+        async for event in loop.run_turn(USER, conv, "remember this", CFG):
+            events.append(event)
+            if event["type"] == "confirm_request":
+                assert loop.resolve_confirm(event["confirm_id"], True)
 
-    assert not any(e["type"] == "confirm_request" for e in events)
+    assert any(e["type"] == "confirm_request" and e["name"] == "remember" for e in events)
+
+
+@pytest.mark.asyncio
+async def test_remember_denied_does_not_persist(user_db):
+    """Denying the remember confirmation must not write to user memory."""
+    from agent import loop, prompts_store, store
+
+    conv = store.create_conversation(USERNAME, "t")
+    scripted = _scripted_llm([
+        {"tool_calls": [_tool_call("c1", "remember", {"guidance": "Should not stick."})]},
+        {"content": "Okay, skipped."},
+    ])
+
+    events = []
+    with patch("agent.loop.llm.stream_chat", scripted):
+        async for event in loop.run_turn(USER, conv, "remember this", CFG):
+            events.append(event)
+            if event["type"] == "confirm_request":
+                assert loop.resolve_confirm(event["confirm_id"], False, "not now")
+
+    memory = prompts_store.get_prompt_by_code(NSID, "user-memory")
+    assert "Should not stick." not in (memory["text"] if memory else "")
+
+    result = next(e for e in events if e["type"] == "tool_result")
+    assert "declined" in result["text"]
+    assert "not now" in result["text"]
 
 
 # --- prompts_store ---

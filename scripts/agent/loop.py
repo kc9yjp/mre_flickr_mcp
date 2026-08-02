@@ -460,11 +460,36 @@ async def run_turn(
 
                 if args is not None and name == "remember":
                     guidance = (args.get("guidance") or "").strip()
-                    if guidance:
-                        prompts_store.append_user_memory(nsid, guidance)
-                        text = f"Remembered: {guidance}"
-                    else:
+                    if not guidance:
                         text = "Nothing to remember (empty guidance)."
+                    else:
+                        # Persisted guidance is re-injected into every future
+                        # turn's system prompt (see get_prompt_by_code("user-memory")
+                        # above), so it's gated behind the same confirm_request/
+                        # approve flow as any other write tool — otherwise text
+                        # smuggled in via an untrusted photo/comment/group
+                        # description the model reads could get the model to
+                        # "remember" instructions that steer all later sessions
+                        # without the user ever seeing them.
+                        confirm_id = uuid.uuid4().hex
+                        future = _register_confirm(confirm_id)
+                        yield {
+                            "type": "confirm_request",
+                            "confirm_id": confirm_id,
+                            "name": name,
+                            "arguments": raw_args,
+                            "photo": None,
+                            "group": None,
+                            "warning": None,
+                        }
+                        decision = await _await_confirmation(confirm_id, future)
+                        if decision["approve"]:
+                            prompts_store.append_user_memory(nsid, guidance)
+                            text = f"Remembered: {guidance}"
+                        else:
+                            text = f"User declined: {name} was not executed."
+                            if decision["reason"]:
+                                text += f" Reason: {decision['reason']}"
                     args = None
 
                 elif args is not None and name not in mcp_tools._HANDLERS:
