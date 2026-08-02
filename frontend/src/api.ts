@@ -403,14 +403,6 @@ export async function getJSON<T>(url: string, params?: Record<string, string>): 
   return handle<T>(await fetch(url + qs));
 }
 
-export async function favePhoto(id: string): Promise<{ ok: true }> {
-  return postJSON(`/api/photos/${id}/fave`, {});
-}
-
-export async function commentOnPhoto(id: string, commentText: string): Promise<{ ok: true; comment_id: string }> {
-  return postJSON(`/api/photos/${id}/comment`, { comment_text: commentText });
-}
-
 // ── Live browsing: other users, groups, site-wide search ──────────────────
 
 export async function lookupUser(q: string): Promise<UserProfile> {

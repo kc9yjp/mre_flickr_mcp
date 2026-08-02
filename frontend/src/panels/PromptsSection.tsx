@@ -11,8 +11,8 @@ import * as bus from "../bus";
 // server-side category → context mapping in agent/prompts_store.py.
 const CATEGORY_PLACEMENT: Record<string, string> = {
   system: "internal only — no button",
-  own_photo: "Photo Browser",
-  other_photo: "Photo Browser",
+  own_photo: "Photo Viewer",
+  other_photo: "Photo Viewer",
   collection: "Chat / Command Palette",
 };
 

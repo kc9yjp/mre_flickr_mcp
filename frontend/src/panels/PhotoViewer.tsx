@@ -8,7 +8,6 @@ import { getJSON, PhotoDetail } from "../api";
 import * as bus from "../bus";
 import { compactNumber } from "../format";
 import { useWorkflowCommands } from "../useWorkflowCommands";
-import { FaveAndCommentPrompt } from "./FaveAndCommentPrompt";
 
 function parseHashId(): string | null {
   const m = window.location.hash.match(/(?:photo|other)=(\d+)/);
@@ -129,8 +128,6 @@ export function PhotoViewer() {
           {detail.is_own && <span>{detail.is_public ? "public" : "private"}</span>}
           {detail.in_keeper_list && <span>keeper</span>}
         </div>
-
-        {!detail.is_own && <FaveAndCommentPrompt photoId={detail.id} />}
 
         <dl className="detail-meta">
           <dt>Taken</dt>

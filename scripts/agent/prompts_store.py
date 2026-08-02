@@ -168,7 +168,7 @@ _SEED_CATEGORIES = [
 
 # Categories aren't user-editable — a fixed, known set, so the system (not
 # the user) can use a prompt's category to decide which page its workflow
-# button belongs on. "photo" categories surface in the Photo Browser panel;
+# button belongs on. "photo" categories surface in the Photo Viewer panel;
 # everything else surfaces in the global Chat/Command Palette.
 _CATEGORY_CONTEXT = {
     "system": "global",
@@ -288,7 +288,7 @@ _SEED_PROMPTS = [
              "specific about the photo). Show it and wait for my go-ahead or edits "
              "before calling fave_photo and add_comment."
          )),
-    dict(code="other-photo-owner", name="User profile", category_id="other_photo",
+    dict(code="other-photo-owner", name="About the creator", category_id="other_photo",
          context="photo", description="Look up the owner of a photo you don't "
          "own, and your relationship to them.",
          text=(
@@ -427,19 +427,30 @@ def _seed_defaults(conn: sqlite3.Connection, nsid: str) -> None:
 
 
 def _sync_builtin_defaults(conn: sqlite3.Connection) -> None:
-    """Keep builtin prompt/variable definitions in step with code changes.
+    """Keep builtin category/prompt/variable definitions in step with code changes.
 
     ``_seed_defaults`` only inserts rows once, when a user's DB is brand new —
-    it never revisits an existing DB, so a variable added or a default prompt
-    edited in a later release would otherwise never reach users who logged in
-    before that release. Runs on every connection open:
-    - Inserts any builtin variable in ``_SEED_VARIABLES`` missing from an
-      existing DB (``INSERT OR IGNORE``, so it's a no-op once present).
+    it never revisits an existing DB, so a category, prompt, or variable added
+    in a later release would otherwise never reach users who logged in before
+    that release. Runs on every connection open:
+    - Inserts any builtin category in ``_SEED_CATEGORIES`` or variable in
+      ``_SEED_VARIABLES`` missing from an existing DB (``INSERT OR IGNORE``,
+      so it's a no-op once present) — categories first, since prompts below
+      reference them.
+    - Inserts any builtin prompt in ``_SEED_PROMPTS`` whose code doesn't
+      exist yet for this user (same shape ``_seed_defaults`` would have used
+      for a brand-new user), so a new builtin prompt reaches existing users
+      too instead of only ever appearing for accounts created after it shipped.
     - Refreshes a builtin prompt's ``default_text`` whenever the shipped
       default in ``_SEED_PROMPTS`` changes, and carries that change into the
       live ``text`` too — but only if the user hasn't diverged their own
       edited ``text`` away from the old default already.
     """
+    conn.executemany(
+        "INSERT OR IGNORE INTO prompt_categories (id, name, description, sort_order, builtin) "
+        "VALUES (?, ?, ?, ?, 1)",
+        _SEED_CATEGORIES,
+    )
     conn.executemany(
         "INSERT OR IGNORE INTO prompt_variables (code, label, description, resolved_by, builtin) "
         "VALUES (?, ?, ?, ?, 1)",
@@ -451,7 +462,20 @@ def _sync_builtin_defaults(conn: sqlite3.Connection) -> None:
             "SELECT text, default_text FROM prompts WHERE code = ? AND builtin = 1",
             (p["code"],),
         ).fetchone()
-        if row is None or row["default_text"] == p["text"]:
+        if row is None:
+            sort_order = conn.execute(
+                "SELECT COALESCE(MAX(sort_order), -1) + 1 FROM prompts WHERE category_id = ?",
+                (p["category_id"],),
+            ).fetchone()[0]
+            conn.execute(
+                "INSERT INTO prompts (id, code, name, description, category_id, context, "
+                "text, builtin, default_text, enabled, sort_order, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, 1, ?, ?, ?)",
+                (uuid.uuid4().hex, p["code"], p["name"], p.get("description", ""),
+                 p["category_id"], p["context"], p["text"], p["text"], sort_order, now, now),
+            )
+            continue
+        if row["default_text"] == p["text"]:
             continue
         new_text = p["text"] if row["text"] == row["default_text"] else row["text"]
         conn.execute(

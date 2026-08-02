@@ -1012,6 +1012,30 @@ def test_prompts_seed_once_and_are_idempotent():
     assert len(data2["prompts"]) == len(data["prompts"])
 
 
+def test_prompts_backfill_new_builtins_for_existing_db():
+    """A category/prompt added to the code after a user's DB was already
+    seeded must still reach them on the next load — not just brand-new
+    accounts (regression test for the other_photo prompts never appearing
+    for existing users)."""
+    from agent import prompts_store
+
+    trimmed_categories = [c for c in prompts_store._SEED_CATEGORIES if c[0] != "other_photo"]
+    trimmed_prompts = [p for p in prompts_store._SEED_PROMPTS if p["category_id"] != "other_photo"]
+
+    with patch.object(prompts_store, "_SEED_CATEGORIES", trimmed_categories), \
+         patch.object(prompts_store, "_SEED_PROMPTS", trimmed_prompts):
+        data = prompts_store.all_data(NSID)
+        assert "other_photo" not in {c["id"] for c in data["categories"]}
+        assert not any(p["category_id"] == "other_photo" for p in data["prompts"])
+
+    # Real _SEED_CATEGORIES/_SEED_PROMPTS restored — the next load should
+    # backfill the category and its prompts into this already-seeded DB.
+    data = prompts_store.all_data(NSID)
+    assert "other_photo" in {c["id"] for c in data["categories"]}
+    backfilled = {p["code"] for p in data["prompts"] if p["category_id"] == "other_photo"}
+    assert backfilled == {"suggest-comment-fave", "other-photo-owner", "other-photo-groups"}
+
+
 @pytest.mark.asyncio
 async def test_run_turn_uses_system_core_and_user_memory(user_db):
     """run_turn's first two messages are the DB-backed system-core and
