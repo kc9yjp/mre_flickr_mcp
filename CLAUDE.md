@@ -150,6 +150,7 @@ sync_log          — type, mode, photos_fetched, synced_at
 | `find_groups` | Search joined groups by keyword; returns a markdown listing (one section per group, headed by its id) with the AI summary, milestone thresholds, and your note |
 | `set_group_note` | Set a personal note about a group, incorporated into its AI summary on the next sync |
 | `get_group_stats` | Groups ranked by how many of your photos are in each |
+| `get_threshold_groups` | Joined groups with a fave or view count minimum to post, sorted by that threshold |
 | `get_photo_group_count` | Photos ranked by how many groups they belong to |
 | `add_to_group` | Add photo to a group pool |
 | `remove_from_group` | Remove photo from a group pool |

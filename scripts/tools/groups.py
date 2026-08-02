@@ -171,6 +171,22 @@ TOOLS = [
         },
     ),
     Tool(
+        name="get_threshold_groups",
+        description=(
+            "List joined groups that require a minimum fave or view count to post in, "
+            "sorted by that threshold. Use metric='faves' for groups with a fave_min "
+            "requirement or metric='views' for groups with a view_min requirement."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "metric": {"type": "string", "enum": ["faves", "views"], "description": "Which threshold to list: faves or views"},
+                "order":  {"type": "string", "enum": ["asc", "desc"], "default": "asc", "description": "Sort order by threshold minimum (default: lowest first)"},
+            },
+            "required": ["metric"],
+        },
+    ),
+    Tool(
         name="get_group_stats",
         description="Show how many of your photos are in each group you've joined, ranked by photo count. Requires groups sync to have run.",
         inputSchema={
@@ -632,6 +648,24 @@ async def _get_photo_contexts(args):
     }, indent=2))]
 
 
+async def _get_threshold_groups(args):
+    metric = args.get("metric")
+    if metric not in ("faves", "views"):
+        return [TextContent(type="text", text="metric must be 'faves' or 'views'.")]
+    column = "fave_min" if metric == "faves" else "view_min"
+    order = "DESC" if args.get("order") == "desc" else "ASC"
+    with get_db() as conn:
+        rows = conn.execute(
+            f"SELECT id, name, members, pool_count, fave_min, view_min, user_note "
+            f"FROM groups WHERE {column} IS NOT NULL ORDER BY {column} {order}"
+        ).fetchall()
+        if not rows:
+            if table_empty(conn, "groups"):
+                return [TextContent(type="text", text="No groups found. Run 'sync groups' first via the web UI or the sync tool.")]
+            return [TextContent(type="text", text=f"No groups with a {metric} threshold found.")]
+    return [TextContent(type="text", text=json.dumps([dict(r) for r in rows], indent=2))]
+
+
 async def _get_group_stats(args):
     limit = int(args.get("limit", 20))
     with get_db() as conn:
@@ -746,6 +780,7 @@ HANDLERS = {
     "search_all_groups":    _search_all_groups,
     "get_group_info":       _get_group_info,
     "get_photo_contexts":   _get_photo_contexts,
+    "get_threshold_groups": _get_threshold_groups,
     "get_group_stats":      _get_group_stats,
     "get_photo_group_count": _get_photo_group_count,
     "get_group_queue":      _get_group_queue,
