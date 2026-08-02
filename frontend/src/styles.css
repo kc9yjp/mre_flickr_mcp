@@ -1169,27 +1169,69 @@ select:focus {
 .mobile-panel-bar {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 6px 10px;
+  gap: 4px;
+  padding: 4px 6px;
   background: var(--surface-raised);
   border-bottom: 1px solid var(--border);
+  flex: none;
+}
+
+.mobile-panel-bar .topbar-right {
+  gap: 4px;
   flex: none;
 }
 
 .mobile-panel-select {
   flex: 1;
   min-width: 0;
+  padding: 4px 6px;
+  font-size: 0.8125rem;
+}
+
+.mobile-panel-bar .icon-btn {
+  padding: 3px 5px;
+  font-size: 0.8125rem;
+}
+
+.mobile-panel-bar .view-dropdown-toggle {
+  padding: 3px 7px;
+  font-size: 0.75rem;
 }
 
 .mobile-user {
+  max-width: 26vw;
+}
+
+.mobile-user .view-dropdown-toggle {
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 0.8125rem;
+  display: block;
+  max-width: 100%;
 }
 
 .mobile-content-scroll {
   flex: 1;
   overflow-y: auto;
   min-height: 0;
+}
+
+.mobile-content-pane .panel {
+  padding: 8px;
+}
+
+.mobile-chat-pane .chat-header {
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 6px;
+}
+
+.mobile-chat-pane .chat-header select {
+  font-size: 0.8125rem;
+}
+
+.mobile-chat-pane .icon-btn {
+  padding: 3px 5px;
 }
 
 /* --- Sync page --- */

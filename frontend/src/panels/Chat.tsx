@@ -238,7 +238,9 @@ export function Chat() {
   // open otherwise.
   const isMobile = useIsMobile();
   const [stats, setStats] = useState<SessionStats | null>(null);
-  const [statsOpen, setStatsOpen] = useState(true);
+  // Defaults closed on mobile (crowds the screen; toggle it back on with the
+  // ⋯ button) — irrelevant to desktop, where statsVisible ignores this flag.
+  const [statsOpen, setStatsOpen] = useState(false);
   const statsVisible = statsOpen || !isMobile;
   useEffect(() => {
     const refresh = () => {

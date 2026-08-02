@@ -95,14 +95,14 @@ export function MobileLayout({ me }: { me: Me | null }) {
             <option key={p.id} value={p.id}>{p.label}</option>
           ))}
         </select>
-        <button
-          className="icon-btn"
-          onClick={togglePosition}
-          title={chatBottom ? "Move chat to top" : "Move chat to bottom"}
-        >
-          {chatBottom ? "⬆" : "⬇"}
-        </button>
         <div className="topbar-right">
+          <button
+            className="icon-btn"
+            onClick={togglePosition}
+            title={chatBottom ? "Move chat to top" : "Move chat to bottom"}
+          >
+            {chatBottom ? "⬆" : "⬇"}
+          </button>
           <ThemeMenu />
           <UserMenu me={me} className="mobile-user" />
         </div>
