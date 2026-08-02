@@ -1134,6 +1134,7 @@ async def _add_to_keeper_list(args):
 
 
 async def _get_keeper_list(args):
+    own_nsid = flickr_api._load_credentials().get("user_nsid", "")
     with get_db() as conn:
         rows = conn.execute(
             """SELECT k.photo_id, p.title, p.url_photopage, k.note, k.added_at
@@ -1145,7 +1146,7 @@ async def _get_keeper_list(args):
         {
             "photo_id":    r[0],
             "title":       r[1] or "",
-            "url":         r[2] or f"https://www.flickr.com/photos/ejwettstein/{r[0]}/",
+            "url":         r[2] or f"https://www.flickr.com/photos/{own_nsid}/{r[0]}/",
             "note":        r[3] or "",
             "added_at":    r[4],
         }

@@ -971,3 +971,30 @@ class TestBackgroundRefreshThreshold:
             for last_sync in range(1748000000, 1748000020)
         }
         assert len(thresholds) > 1
+
+
+# ---------------------------------------------------------------------------
+# get_keeper_list
+# ---------------------------------------------------------------------------
+
+class TestKeeperList:
+    @pytest.mark.asyncio
+    async def test_fallback_url_uses_current_session_nsid_not_hardcoded_username(self, db, creds):
+        """A keeper_list entry whose photo isn't in the local photos table
+        (LEFT JOIN miss -> no url_photopage) must build its fallback URL from
+        the CURRENT session's own nsid, not a hardcoded operator username —
+        this server is multi-tenant, so every other user's fallback link
+        would otherwise point at the operator's own Flickr account."""
+        import mcp_tools
+
+        db.execute(
+            "INSERT INTO keeper_list (photo_id, note, added_at) VALUES (?, ?, ?)",
+            ("unknownphoto", "note", int(time.time())),
+        )
+        db.commit()
+
+        result = await mcp_tools._HANDLERS["get_keeper_list"]({})
+        items = _json(result)
+        entry = next(i for i in items if i["photo_id"] == "unknownphoto")
+        assert entry["url"] == f"https://www.flickr.com/photos/{FAKE_CREDS['user_nsid']}/unknownphoto/"
+        assert "ejwettstein" not in entry["url"]
