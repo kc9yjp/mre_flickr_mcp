@@ -154,6 +154,7 @@ sync_log          — type, mode, photos_fetched, synced_at
 
 ## Key Implementation Details
 
+- **Log liberally to the server log.** Any handler that catches an exception or hits an error path (failed API call, bad connection, save failure, etc.) should `logging.warning`/`logging.error` it with enough context (user nsid, connection/resource id, the exception) to debug from `docker compose logs -f flickr-mcp` alone — don't let errors surface only in a JSONResponse to the client. Follow the existing style, e.g. `logging.warning("llm_models: failed for connection %s (%s): %s", connection_id, user["nsid"], e)` in `routes.py`.
 - OAuth 1.0a signing is done manually (HMAC-SHA1) via `_sign()` — no third-party OAuth library
 - `_api_get()` / `_api_post()` handle OAuth signing for all Flickr API calls
 - Web UI routes live inside `main_sse()` alongside the MCP SSE endpoint

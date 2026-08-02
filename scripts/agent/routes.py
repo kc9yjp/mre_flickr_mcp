@@ -274,6 +274,7 @@ async def llm_models(request: Request):
     try:
         all_models = await llm.list_models(base_url, api_key)
     except llm.LLMError as e:
+        logging.warning("llm_models: failed for connection %s (%s): %s", connection_id, user["nsid"], e)
         return JSONResponse({"error": str(e)}, status_code=502)
 
     disabled = set(conn.get("disabled_models") or [])
