@@ -11,6 +11,7 @@ import {
   WireMessage,
   cancelChat,
   compactConversation,
+  contextUsage,
   getJSON,
   getSessionStats,
   injectChat,
@@ -229,23 +230,11 @@ export function Chat() {
     const timer = window.setInterval(refresh, 3000);
     return () => window.clearInterval(timer);
   }, [activeId]);
-  const contextUsedPercent =
-    stats && stats.turns > 0
-      ? Math.round((stats.last_prompt_tokens / (stats.context_window || 128_000)) * 100)
-      : null;
+  // Percent + severity of context-window usage, driving both the escalating
+  // Compact button and the at-risk banner above the input bar.
+  const contextUse = contextUsage(stats);
   const avgLatencyMs = stats && stats.turns > 0 ? Math.round(stats.total_latency_ms / stats.turns) : 0;
   const avgTokensPerTurn = stats && stats.turns > 0 ? Math.round(stats.total_tokens / stats.turns) : 0;
-  // Warn continuously rather than at one hard cutoff: the button's color
-  // creeps from the normal ink/border tone toward --danger in step with
-  // context usage, so it's already near-red by ~90% instead of jumping red
-  // all at once.
-  const compactWarnStyle =
-    contextUsedPercent === null
-      ? undefined
-      : {
-          color: `color-mix(in srgb, var(--ink) ${100 - contextUsedPercent}%, var(--danger) ${contextUsedPercent}%)`,
-          borderColor: `color-mix(in srgb, var(--border) ${100 - contextUsedPercent}%, var(--danger) ${contextUsedPercent}%)`,
-        };
 
   const fetchModelsForConnection = useCallback((connectionId: string) => {
     listModels(connectionId)
@@ -812,6 +801,26 @@ export function Chat() {
           ))}
         </div>
       )}
+      {contextUse && contextUse.level !== "ok" && (
+        <div className={`context-warning context-${contextUse.level}`} role="alert">
+          <span className="context-warning-text">
+            {contextUse.level === "critical" ? "⚠️ " : ""}
+            Context {contextUse.percent}% full
+            {contextUse.level === "critical"
+              ? " — this conversation is at risk of hitting its limit. Compact it to keep going."
+              : " — getting long. Consider compacting soon."}
+          </span>
+          <button
+            type="button"
+            className="btn-sm context-warning-btn"
+            onClick={compactNow}
+            disabled={streaming || !activeId}
+            title="Summarize this conversation and replace its history"
+          >
+            Compact now
+          </button>
+        </div>
+      )}
       <form
         className="chat-input"
         onSubmit={(e) => {
@@ -833,16 +842,15 @@ export function Chat() {
             }
           }}
         />
-        {contextUsedPercent !== null && (
+        {contextUse && (
           <button
             type="button"
-            className="btn-sm compact-btn"
-            style={compactWarnStyle}
+            className={`btn-sm compact-btn context-${contextUse.level}`}
             onClick={compactNow}
             disabled={streaming || !activeId}
             title="Summarize this conversation and replace its history"
           >
-            Compact <span className="context-used">({contextUsedPercent}%)</span>
+            Compact <span className="context-used">({contextUse.percent}%)</span>
           </button>
         )}
         {streaming ? (
@@ -899,9 +907,11 @@ export function Chat() {
                   <span className="stat-label">Avg Tokens/Turn</span>
                   <span className="stat-value">{compactNumber(avgTokensPerTurn)}</span>
                 </div>
-                <div className="stat-item">
-                  <span className="stat-label">Context Used</span>
-                  <span className="stat-value">{contextUsedPercent}%</span>
+                <div className={`stat-item${contextUse && contextUse.level !== "ok" ? ` context-${contextUse.level}` : ""}`}>
+                  <span className="stat-label">
+                    Context Used{contextUse?.level === "critical" ? " · at risk" : ""}
+                  </span>
+                  <span className="stat-value">{contextUse?.percent ?? 0}%</span>
                 </div>
                 <div className="stat-item">
                   <span className="stat-label">Total Latency</span>

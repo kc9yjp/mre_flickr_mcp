@@ -288,6 +288,28 @@ export interface SessionStats {
   context_window: number;
 }
 
+// How full the model's context window is, and how loudly the UI should say so.
+// "warn" = the conversation is getting long; "critical" = it's close enough to
+// the limit that the next turns risk overflowing (or triggering lossy
+// compaction), so the warning should be impossible to miss.
+export type ContextLevel = "ok" | "warn" | "critical";
+
+export const CONTEXT_WARN_PERCENT = 75;
+export const CONTEXT_CRITICAL_PERCENT = 90;
+
+/** Percent of the active model's context window the most recent turn used,
+ * plus a severity level. Returns null when there are no turns yet — there's
+ * nothing meaningful to show until the conversation has a real prompt size. */
+export function contextUsage(
+  stats: SessionStats | null,
+): { percent: number; level: ContextLevel } | null {
+  if (!stats || stats.turns <= 0) return null;
+  const percent = Math.round((stats.last_prompt_tokens / (stats.context_window || 128_000)) * 100);
+  const level: ContextLevel =
+    percent >= CONTEXT_CRITICAL_PERCENT ? "critical" : percent >= CONTEXT_WARN_PERCENT ? "warn" : "ok";
+  return { percent, level };
+}
+
 export interface Conversation {
   id: string;
   title: string;
