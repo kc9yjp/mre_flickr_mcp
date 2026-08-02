@@ -1393,14 +1393,15 @@ select:focus {
 
 .stats-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(84px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
   gap: 4px;
 }
 
 .stat-item {
   display: flex;
-  flex-direction: column;
-  gap: 1px;
+  flex-direction: row;
+  align-items: baseline;
+  gap: 4px;
   padding: 3px 6px;
   border-radius: 4px;
   background: var(--surface-subtle);
@@ -1410,6 +1411,10 @@ select:focus {
   color: var(--ink-muted);
   font-size: 0.625rem;
   white-space: nowrap;
+}
+
+.stat-label::after {
+  content: ":";
 }
 
 .stat-value {

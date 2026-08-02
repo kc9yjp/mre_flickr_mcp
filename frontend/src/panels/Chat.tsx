@@ -21,6 +21,7 @@ import {
 import * as bus from "../bus";
 import { compactNumber, formatLatency } from "../format";
 import { Markdown } from "../markdown";
+import { useIsMobile } from "../useIsMobile";
 
 interface ToolCard {
   id: string;
@@ -207,9 +208,13 @@ export function Chat() {
   useEffect(refreshConversations, [refreshConversations]);
 
   // Polled session stats, both for the context-used% shown next to the
-  // Compact button and for the collapsible stats strip at the bottom.
+  // Compact button and for the stats strip at the bottom. The strip is
+  // collapsible only on mobile, where screen space is scarce; it's always
+  // open otherwise.
+  const isMobile = useIsMobile();
   const [stats, setStats] = useState<SessionStats | null>(null);
   const [statsOpen, setStatsOpen] = useState(true);
+  const statsVisible = statsOpen || !isMobile;
   useEffect(() => {
     const refresh = () => {
       const id = activeIdRef.current;
@@ -856,16 +861,18 @@ export function Chat() {
         )}
        </form>
         <div className="chat-stats-bar">
-          <button
-            type="button"
-            className="icon-btn"
-            onClick={() => setStatsOpen((o) => !o)}
-            title={statsOpen ? "Hide session stats" : "Show session stats"}
-            aria-expanded={statsOpen}
-          >
-            ⋯
-          </button>
-          {statsOpen && (
+          {isMobile && (
+            <button
+              type="button"
+              className="icon-btn"
+              onClick={() => setStatsOpen((o) => !o)}
+              title={statsOpen ? "Hide session stats" : "Show session stats"}
+              aria-expanded={statsOpen}
+            >
+              ⋯
+            </button>
+          )}
+          {statsVisible && (
             stats && stats.turns > 0 ? (
               <div className="stats-grid">
                 <div className="stat-item">
