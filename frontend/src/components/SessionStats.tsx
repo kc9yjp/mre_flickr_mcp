@@ -5,7 +5,7 @@
 // transcript.
 
 import { useEffect, useRef, useState } from "react";
-import { SessionStats, getSessionStats } from "../api";
+import { SessionStats, contextUsage, getSessionStats } from "../api";
 import * as bus from "../bus";
 
 const POLL_MS = 3000;
@@ -54,8 +54,8 @@ export function SessionStatsPanel() {
 
   const avgLatencyMs = Math.round(stats.total_latency_ms / stats.turns);
   const avgTokensPerTurn = Math.round(stats.total_tokens / stats.turns);
-  const contextWindow = stats.context_window || 128_000;
-  const contextUsedPercent = Math.round((stats.last_prompt_tokens / contextWindow) * 100);
+  // Guaranteed non-null here: we already returned early when turns === 0.
+  const context = contextUsage(stats)!;
 
   return (
     <div className="panel session-stats">
@@ -84,9 +84,11 @@ export function SessionStatsPanel() {
           <span className="stat-label">Avg Tokens/Turn</span>
           <span className="stat-value">{avgTokensPerTurn}</span>
         </div>
-        <div className="stat-item">
-          <span className="stat-label">Context Used</span>
-          <span className="stat-value">{contextUsedPercent}%</span>
+        <div className={`stat-item${context.level !== "ok" ? ` context-${context.level}` : ""}`}>
+          <span className="stat-label">
+            Context Used{context.level === "critical" ? " · at risk" : ""}
+          </span>
+          <span className="stat-value">{context.percent}%</span>
         </div>
         <div className="stat-item">
           <span className="stat-label">Total Latency</span>

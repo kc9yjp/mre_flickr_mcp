@@ -10,6 +10,7 @@
   --ink-muted: #868b94;
   --accent: #6fb1f0;
   --good: #57c37f;
+  --warn: #e0a34e;
   --danger: #ef8a76;
   --user-bubble: #33507a;
   --surface-subtle: rgba(255, 255, 255, 0.04);
@@ -25,6 +26,7 @@
   --ink-muted: #8f92ab;
   --accent: #bd93f9;
   --good: #50fa7b;
+  --warn: #ffb86c;
   --danger: #ff6e6e;
   --user-bubble: #44475a;
   --surface-subtle: rgba(255, 255, 255, 0.04);
@@ -40,6 +42,7 @@
   --ink-muted: #6b7078;
   --accent: #1c6fd6;
   --good: #1f8a4c;
+  --warn: #b7791f;
   --danger: #c0392b;
   --user-bubble: #dbe9fc;
   --surface-subtle: rgba(0, 0, 0, 0.035);
@@ -55,6 +58,7 @@
   --ink-muted: #8a7b58;
   --accent: #a1580c;
   --good: #3f7a3a;
+  --warn: #a5761b;
   --danger: #a63a2b;
   --user-bubble: #e8d4a6;
   --surface-subtle: rgba(0, 0, 0, 0.045);
@@ -70,6 +74,7 @@
   --ink-muted: #707b86;
   --accent: #2f6fb0;
   --good: #207a4f;
+  --warn: #a06a1a;
   --danger: #b23a2e;
   --user-bubble: #cfe0f2;
   --surface-subtle: rgba(0, 0, 0, 0.04);
@@ -926,8 +931,72 @@ select:focus {
   color: var(--ink-muted);
 }
 
-.compact-btn.context-high .context-used {
+/* Escalate the whole Compact button as the context window fills, so the
+   at-risk state can't be missed the way a lone red "(99%)" was. */
+.compact-btn.context-warn {
+  border-color: var(--warn);
+  color: var(--warn);
+}
+
+.compact-btn.context-warn .context-used {
+  color: var(--warn);
+}
+
+.compact-btn.context-critical {
+  border-color: var(--danger);
+  background: var(--danger);
+  color: #fff;
+  animation: context-pulse 1.6s ease-in-out infinite;
+}
+
+.compact-btn.context-critical .context-used {
+  color: #fff;
+}
+
+/* Prominent banner above the input bar once the conversation is at risk. */
+.context-warning {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 8px 6px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  font-size: 0.8125rem;
+}
+
+.context-warning-text {
+  flex: 1;
+  font-weight: 600;
+}
+
+.context-warning-btn {
+  white-space: nowrap;
+}
+
+.context-warning.context-warn {
+  color: var(--warn);
+  background: color-mix(in srgb, var(--warn) 14%, transparent);
+  border: 1px solid var(--warn);
+}
+
+.context-warning.context-critical {
   color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 16%, transparent);
+  border: 1px solid var(--danger);
+  animation: context-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes context-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+
+/* Respect users who ask for less motion — keep the color, drop the pulse. */
+@media (prefers-reduced-motion: reduce) {
+  .compact-btn.context-critical,
+  .context-warning.context-critical {
+    animation: none;
+  }
 }
 
 .streaming-row {
@@ -1408,6 +1477,25 @@ select:focus {
   color: var(--accent);
   font-weight: 600;
   font-size: 0.8125rem;
+}
+
+/* Flag the Context Used stat when the window is filling up, matching the
+   Chat panel's at-risk cues. */
+.stat-item.context-warn {
+  background: color-mix(in srgb, var(--warn) 12%, transparent);
+}
+
+.stat-item.context-warn .stat-value {
+  color: var(--warn);
+}
+
+.stat-item.context-critical {
+  background: color-mix(in srgb, var(--danger) 14%, transparent);
+}
+
+.stat-item.context-critical .stat-value,
+.stat-item.context-critical .stat-label {
+  color: var(--danger);
 }
 
 /* --- Theme menu --- */

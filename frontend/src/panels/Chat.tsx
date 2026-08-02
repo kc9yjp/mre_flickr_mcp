@@ -11,6 +11,7 @@ import {
   WireMessage,
   cancelChat,
   compactConversation,
+  contextUsage,
   getJSON,
   getSessionStats,
   injectChat,
@@ -228,10 +229,9 @@ export function Chat() {
     const timer = window.setInterval(refresh, 3000);
     return () => window.clearInterval(timer);
   }, [activeId]);
-  const contextUsedPercent =
-    stats && stats.turns > 0
-      ? Math.round((stats.last_prompt_tokens / (stats.context_window || 128_000)) * 100)
-      : null;
+  // Percent + severity of context-window usage, driving both the escalating
+  // Compact button and the at-risk banner above the input bar.
+  const contextUse = contextUsage(stats);
 
   const fetchModelsForConnection = useCallback((connectionId: string) => {
     listModels(connectionId)
@@ -805,6 +805,26 @@ export function Chat() {
           ))}
         </div>
       )}
+      {contextUse && contextUse.level !== "ok" && (
+        <div className={`context-warning context-${contextUse.level}`} role="alert">
+          <span className="context-warning-text">
+            {contextUse.level === "critical" ? "⚠️ " : ""}
+            Context {contextUse.percent}% full
+            {contextUse.level === "critical"
+              ? " — this conversation is at risk of hitting its limit. Compact it to keep going."
+              : " — getting long. Consider compacting soon."}
+          </span>
+          <button
+            type="button"
+            className="btn-sm context-warning-btn"
+            onClick={compactNow}
+            disabled={streaming || !activeId}
+            title="Summarize this conversation and replace its history"
+          >
+            Compact now
+          </button>
+        </div>
+      )}
       <form
         className="chat-input"
         onSubmit={(e) => {
@@ -826,15 +846,15 @@ export function Chat() {
             }
           }}
         />
-        {contextUsedPercent !== null && (
+        {contextUse && (
           <button
             type="button"
-            className={`btn-sm compact-btn${contextUsedPercent >= 80 ? " context-high" : ""}`}
+            className={`btn-sm compact-btn context-${contextUse.level}`}
             onClick={compactNow}
             disabled={streaming || !activeId}
             title="Summarize this conversation and replace its history"
           >
-            Compact <span className="context-used">({contextUsedPercent}%)</span>
+            Compact <span className="context-used">({contextUse.percent}%)</span>
           </button>
         )}
         {streaming ? (
