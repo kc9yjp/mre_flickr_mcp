@@ -24,6 +24,7 @@ import {
 } from "../api";
 import * as bus from "../bus";
 import { compactNumber } from "../format";
+import { SafeHtml } from "../safeHtml";
 import { useWorkflowCommands } from "../useWorkflowCommands";
 
 const PAGE_SIZE = 60;
@@ -613,7 +614,7 @@ export function PhotoBrowser() {
             <div className="album-banner">
               <span>
                 Album: <strong>{selectedAlbum.title || selectedAlbum.id}</strong>
-                {selectedAlbum.description ? ` — ${selectedAlbum.description}` : ""}
+                {selectedAlbum.description ? <> — <SafeHtml html={selectedAlbum.description} /></> : ""}
               </span>
             </div>
           )}
@@ -646,7 +647,7 @@ export function PhotoBrowser() {
                   {" · "}
                   {compactNumber(userProfile.photo_count)} photos
                 </p>
-                {userProfile.description && <p className="hint">{userProfile.description}</p>}
+                {userProfile.description && <p className="hint"><SafeHtml html={userProfile.description} /></p>}
                 <p className="chip-row">
                   {userProfile.you_follow && <span className="chip">You follow them</span>}
                   {userProfile.follows_you && <span className="chip">Follows you</span>}
@@ -687,7 +688,7 @@ export function PhotoBrowser() {
                       ))}
                     </select>
                     {selectedUserAlbum?.description && (
-                      <p className="hint">{selectedUserAlbum.description}</p>
+                      <p className="hint"><SafeHtml html={selectedUserAlbum.description} /></p>
                     )}
                   </>
                 )}
@@ -732,8 +733,8 @@ export function PhotoBrowser() {
                 {" · "}
                 <span className="chip">{groupInfo.joined ? "Joined" : "Not joined"}</span>
               </p>
-              {groupInfo.description && <p className="hint">{groupInfo.description}</p>}
-              {groupInfo.rules && <p className="hint">Rules: {groupInfo.rules}</p>}
+              {groupInfo.description && <p className="hint"><SafeHtml html={groupInfo.description} /></p>}
+              {groupInfo.rules && <p className="hint">Rules: <SafeHtml html={groupInfo.rules} /></p>}
             </div>
           )}
         </>

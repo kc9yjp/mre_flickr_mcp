@@ -7,6 +7,7 @@ import { useEffect, useState } from "react";
 import { getJSON, PhotoDetail } from "../api";
 import * as bus from "../bus";
 import { compactNumber } from "../format";
+import { SafeHtml } from "../safeHtml";
 import { useWorkflowCommands } from "../useWorkflowCommands";
 
 function parseHashId(): string | null {
@@ -120,7 +121,9 @@ export function PhotoViewer() {
             </a>
           </p>
         )}
-        {detail.description && <p className="detail-description">{detail.description}</p>}
+        {detail.description && (
+          <p className="detail-description"><SafeHtml html={detail.description} /></p>
+        )}
         <div className="detail-stats">
           <span>{compactNumber(detail.views)} views</span>
           <span>{compactNumber(detail.favorites)} faves</span>
