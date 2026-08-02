@@ -570,6 +570,40 @@ async def test_run_turn_write_tool_denied_with_reason(user_db):
 
 
 @pytest.mark.asyncio
+async def test_resolve_confirm_rejects_wrong_owner(user_db):
+    """A confirm_id belongs to the user whose turn generated it — another
+    authenticated user who learned/guessed the id must not be able to
+    approve or deny it (confirm_id is an unguessable UUID, but that's not
+    the same as an authorization check)."""
+    from agent import loop, store
+
+    conv = store.create_conversation(USERNAME, "t")
+    scripted = _scripted_llm([
+        {"tool_calls": [_tool_call("c1", "add_comment",
+                                   {"photo_id": "photo1", "text": "nice"})]},
+        {"content": "Okay."},
+    ])
+    confirm_id = None
+
+    async def _drive():
+        nonlocal confirm_id
+        async for event in loop.run_turn(USER, conv, "comment on it", CFG):
+            if event["type"] == "confirm_request":
+                confirm_id = event["confirm_id"]
+                # Wrong owner: must be rejected without resolving the future.
+                assert loop.resolve_confirm(confirm_id, True, username="someone-else") is False
+                # Rightful owner: same confirm_id now succeeds.
+                assert loop.resolve_confirm(confirm_id, True, username=USERNAME) is True
+
+    with patch("agent.loop.llm.stream_chat", scripted):
+        await _drive()
+
+    assert confirm_id is not None
+    # Resolving twice must fail cleanly (future already done / popped).
+    assert loop.resolve_confirm(confirm_id, True, username=USERNAME) is False
+
+
+@pytest.mark.asyncio
 async def test_focused_photo_context_is_ephemeral_not_persisted(user_db):
     """The focused-photo note must reach the LLM call but never land in the
     stored conversation — otherwise it goes stale the moment the user looks

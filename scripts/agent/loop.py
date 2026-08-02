@@ -81,8 +81,8 @@ _active_tasks: dict[str, asyncio.Task] = {}
 # to waiting for the turn to finish and starting a new one).
 _injections: dict[str, list[str]] = {}
 
-# confirm_id -> Future resolved with True (approve) / False (deny)
-_pending_confirms: dict[str, asyncio.Future] = {}
+# confirm_id -> (owning username, Future resolved with True (approve) / False (deny))
+_pending_confirms: dict[str, tuple[str, asyncio.Future]] = {}
 
 # username -> conversation_id of that user's currently in-flight turn (there's
 # at most one, per the turn lock). Lets a conversation delete cancel the turn
@@ -128,24 +128,42 @@ def _pop_injections(conversation_id: str) -> list[str]:
     return _injections.pop(conversation_id, [])
 
 
-def resolve_confirm(confirm_id: str, approve: bool, reason: str | None = None) -> bool:
+def resolve_confirm(
+    confirm_id: str, approve: bool, reason: str | None = None, username: str | None = None,
+) -> bool:
     """Resolve a pending write-tool confirmation. Returns False if unknown.
 
     ``reason`` is the user's explanation for a denial (ignored on approval) so
     the model can adjust its next proposal instead of just seeing "declined".
+
+    ``username``, when given, must match the confirmation's owner (the user
+    whose turn generated it) — confirm_id is an unguessable UUID, but without
+    this check any authenticated user who learned/leaked another user's
+    confirm_id could approve or deny that user's pending write-tool
+    confirmation. Omit it only for trusted internal callers (e.g. tests
+    driving the loop directly) that already know they own the confirmation.
     """
-    future = _pending_confirms.get(confirm_id)
-    if future is None or future.done():
+    entry = _pending_confirms.get(confirm_id)
+    if entry is None:
+        return False
+    owner, future = entry
+    if future.done():
+        return False
+    if username is not None and username != owner:
+        logging.warning(
+            "chat_confirm: refusing confirm_id %s — owned by %s, requested by %s",
+            confirm_id, owner, username,
+        )
         return False
     future.set_result({"approve": bool(approve), "reason": (reason or "").strip() or None})
     return True
 
 
-def _register_confirm(confirm_id: str) -> asyncio.Future:
+def _register_confirm(confirm_id: str, username: str) -> asyncio.Future:
     """Create the pending future BEFORE the confirm_request event is emitted,
     so an immediate /api/chat/confirm can never race the generator."""
     future: asyncio.Future = asyncio.get_running_loop().create_future()
-    _pending_confirms[confirm_id] = future
+    _pending_confirms[confirm_id] = (username, future)
     return future
 
 
@@ -472,7 +490,7 @@ async def run_turn(
                         # "remember" instructions that steer all later sessions
                         # without the user ever seeing them.
                         confirm_id = uuid.uuid4().hex
-                        future = _register_confirm(confirm_id)
+                        future = _register_confirm(confirm_id, username)
                         yield {
                             "type": "confirm_request",
                             "confirm_id": confirm_id,
@@ -502,7 +520,7 @@ async def run_turn(
 
                 if args is not None and name in schema.WRITE_TOOLS:
                     confirm_id = uuid.uuid4().hex
-                    future = _register_confirm(confirm_id)
+                    future = _register_confirm(confirm_id, username)
                     target_id = _focus_photo_id(name, args)
                     photo = (
                         await asyncio.to_thread(_photo_preview_sync, user, target_id)

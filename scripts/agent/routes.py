@@ -164,6 +164,7 @@ async def chat_confirm(request: Request):
         str(body.get("confirm_id", "")),
         bool(body.get("approve")),
         body.get("reason"),
+        username=user["username"],
     )
     if not ok:
         return JSONResponse({"error": "unknown or expired confirmation"}, status_code=404)
