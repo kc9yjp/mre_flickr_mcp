@@ -140,8 +140,8 @@ def _all_known_users() -> list[dict]:
             username = creds.get("username")
             if nsid and username:
                 users.append({"nsid": nsid, "username": username})
-        except Exception:
-            pass
+        except Exception as e:
+            logging.warning("_all_known_users: failed to read %s: %s", cpath, e)
     return users
 
 
@@ -167,8 +167,8 @@ def _resolve_api_key(api_key: str) -> dict | None:
                 username = creds.get("username")
                 if nsid and username:
                     return {"nsid": nsid, "username": username}
-        except Exception:
-            pass
+        except Exception as e:
+            logging.warning("_resolve_api_key: failed to read %s: %s", cpath, e)
     return None
 
 

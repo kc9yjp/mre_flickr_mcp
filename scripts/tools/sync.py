@@ -182,8 +182,8 @@ async def _run_sync_script(
                     "SELECT id FROM sync_log WHERE type=? ORDER BY synced_at DESC LIMIT 1)",
                     (duration, sync_type),
                 )
-        except Exception:
-            pass
+        except Exception as e:
+            logging.warning("Sync duration update failed for %s: %s", label, e)
         return p.returncode
     finally:
         _active_syncs.pop(label, None)

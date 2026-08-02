@@ -480,7 +480,8 @@ def sync_group_descriptions(conn):
     for group_id, prev_description in rows:
         try:
             data = flickr_api._api_get("flickr.groups.getInfo", {"group_id": group_id})
-        except RuntimeError:
+        except RuntimeError as e:
+            print(f"  Warning: could not fetch description for group {group_id}: {e}", file=sys.stderr)
             continue
         group = data.get("group", {})
         description = ((group.get("description") or {}).get("_content", "") or "")[:2000]
