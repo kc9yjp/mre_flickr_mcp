@@ -142,6 +142,23 @@ TOOLS = [
         },
     ),
     Tool(
+        name="get_group_info",
+        description=(
+            "Fetch live info for any Flickr group by ID — name, description, rules, "
+            "member count, and pool (photo) count — whether or not you've joined it. "
+            "Also reports whether it's one of your joined groups. Use this for groups "
+            "encountered outside your own joined-groups list, e.g. a group a photo you "
+            "don't own belongs to."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "group_id": {"type": "string", "description": "Flickr group NSID"},
+            },
+            "required": ["group_id"],
+        },
+    ),
+    Tool(
         name="get_photo_contexts",
         description="Return all group pools and albums a photo currently belongs to. Use this before add_to_group to skip groups the photo is already in.",
         inputSchema={
@@ -541,14 +558,44 @@ async def _search_all_groups(args):
     } for g in groups], indent=2))]
 
 
+async def _get_group_info(args):
+    group_id = args["group_id"]
+    try:
+        data = flickr_api._api_get("flickr.groups.getInfo", {"group_id": group_id})
+    except FlickrAPIError as e:
+        return [TextContent(type="text", text=f"Group {group_id} not found ({e.flickr_message}).")]
+    group = data.get("group", {})
+    with get_db() as conn:
+        joined = conn.execute(
+            "SELECT user_note FROM groups WHERE id = ?", (group_id,)
+        ).fetchone()
+    return [TextContent(type="text", text=json.dumps({
+        "id":          group_id,
+        "name":        group.get("name", ""),
+        "description": (group.get("description") or {}).get("_content", ""),
+        "rules":       (group.get("rules") or {}).get("_content", ""),
+        "members":     int(group.get("members", 0) or 0),
+        "pool_count":  int(group.get("pool_count", 0) or 0),
+        "url":         f"https://www.flickr.com/groups/{group_id}/",
+        "joined":      joined is not None,
+        "your_note":   joined["user_note"] if joined else None,
+    }, indent=2))]
+
+
 async def _get_photo_contexts(args):
     photo_id = args["photo_id"]
     force_api = args.get("force_api", False)
     with get_db() as conn:
+        # photo_groups only ever maps the caller's OWN photo ids to group ids
+        # (see the schema comment on that table), so the local fast path must
+        # never be trusted for a photo that isn't in the caller's own library
+        # — otherwise every group pool/contact photo silently comes back with
+        # an empty group_pools list instead of falling back to the live API.
+        is_own = conn.execute("SELECT 1 FROM photos WHERE id = ?", (photo_id,)).fetchone() is not None
         synced = conn.execute(
             "SELECT COUNT(*) FROM sync_log WHERE type='groups'"
         ).fetchone()[0] > 0
-        if synced and not force_api:
+        if is_own and synced and not force_api:
             rows = conn.execute(
                 "SELECT g.id, g.name FROM photo_groups pg "
                 "JOIN groups g ON pg.group_id = g.id WHERE pg.photo_id = ?",
@@ -697,6 +744,7 @@ HANDLERS = {
     "leave_group":       _leave_group,
     "get_group_photos":  _get_group_photos,
     "search_all_groups":    _search_all_groups,
+    "get_group_info":       _get_group_info,
     "get_photo_contexts":   _get_photo_contexts,
     "get_group_stats":      _get_group_stats,
     "get_photo_group_count": _get_photo_group_count,

@@ -60,7 +60,9 @@ function Thumb({ photo, onClick }: { photo: Photo; onClick: () => void }) {
 
 function DetailView({ detail, onBack }: { detail: PhotoDetail; onBack: () => void }) {
   const [src, setSrc] = useState(detail.url_original || detail.url_medium);
-  const photoCommands = useWorkflowCommands("photo");
+  // "photo" context is shared with the other_photo category (Photo Browser
+  // only ever shows the caller's own photos) — filter so those don't leak in.
+  const photoCommands = useWorkflowCommands("photo").filter((c) => c.category_id === "own_photo");
   useEffect(() => {
     setSrc(detail.url_original || detail.url_medium);
   }, [detail.id, detail.url_original, detail.url_medium]);

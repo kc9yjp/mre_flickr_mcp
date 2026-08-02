@@ -999,6 +999,7 @@ def test_prompts_seed_once_and_are_idempotent():
     assert {p["code"] for p in data["prompts"]} == {
         "system-core", "user-memory", "compact-conversation", "group-summary",
         "improve-photo", "suggest-groups", "suggest-albums", "threshold-groups",
+        "suggest-comment-fave", "other-photo-owner", "other-photo-groups",
         "reply-comments", "weak-photos", "unearth-private",
     }
     assert {v["code"] for v in data["variables"]} == {

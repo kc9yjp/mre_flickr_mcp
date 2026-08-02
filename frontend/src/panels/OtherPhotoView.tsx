@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 import { getJSON, PhotoDetail } from "../api";
 import * as bus from "../bus";
 import { compactNumber } from "../format";
+import { useWorkflowCommands } from "../useWorkflowCommands";
 import { FaveAndCommentPrompt } from "./FaveAndCommentPrompt";
 
 function parseHashId(): string | null {
@@ -20,6 +21,9 @@ export function OtherPhotoView() {
   const [photoId, setPhotoId] = useState<string | null>(() => parseHashId());
   const [detail, setDetail] = useState<PhotoDetail | null>(null);
   const [error, setError] = useState("");
+  // "photo" context is shared with the own_photo category (used by the Photo
+  // Browser for your own photos) — filter to just this page's workflows.
+  const otherPhotoCommands = useWorkflowCommands("photo").filter((c) => c.category_id === "other_photo");
 
   useEffect(() => bus.on("focusOtherPhoto", setPhotoId), []);
 
@@ -94,6 +98,23 @@ export function OtherPhotoView() {
           <span>{compactNumber(detail.comments)} comments</span>
         </div>
         <FaveAndCommentPrompt photoId={detail.id} />
+        {otherPhotoCommands.length > 0 && (
+          <div className="detail-workflows">
+            {otherPhotoCommands.map((c) => (
+              <button
+                key={c.id}
+                title="Runs in the Chat panel"
+                onClick={() => bus.emit("runCommand", {
+                  title: c.label,
+                  text: c.prompt.replaceAll("{photo_id}", detail.id),
+                  promptId: c.prompt_id,
+                })}
+              >
+                ▶ {c.label}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );

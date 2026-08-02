@@ -400,6 +400,56 @@ class TestGroups:
 
 
 # ---------------------------------------------------------------------------
+# get_group_info
+# ---------------------------------------------------------------------------
+
+class TestGetGroupInfo:
+    @pytest.mark.asyncio
+    async def test_joined_group(self, db, api_get):
+        import mcp_tools
+        api_get.return_value = {
+            "group": {
+                "name": "Landscape Lovers",
+                "description": {"_content": "A group for landscape photography."},
+                "rules": {"_content": "Be nice."},
+                "members": "500",
+                "pool_count": "1000",
+            }
+        }
+        result = await mcp_tools._get_group_info({"group_id": "group1@N00"})
+        info = _json(result)
+        assert info["joined"] is True
+        assert info["members"] == 500
+        assert info["pool_count"] == 1000
+        assert info["name"] == "Landscape Lovers"
+
+    @pytest.mark.asyncio
+    async def test_unjoined_group(self, db, api_get):
+        import mcp_tools
+        api_get.return_value = {
+            "group": {
+                "name": "Someone Else's Group",
+                "description": {"_content": ""},
+                "rules": {"_content": ""},
+                "members": "42",
+                "pool_count": "17",
+            }
+        }
+        result = await mcp_tools._get_group_info({"group_id": "other_group@N00"})
+        info = _json(result)
+        assert info["joined"] is False
+        assert info["your_note"] is None
+
+    @pytest.mark.asyncio
+    async def test_not_found(self, db, api_get):
+        import mcp_tools
+        import flickr_api
+        api_get.side_effect = flickr_api.FlickrAPIError(1, "Group not found")
+        result = await mcp_tools._get_group_info({"group_id": "bad@N00"})
+        assert "not found" in _text(result)
+
+
+# ---------------------------------------------------------------------------
 # photo_groups: add/remove, get_photo_contexts, get_group_stats, get_photo_group_count
 # ---------------------------------------------------------------------------
 
@@ -440,6 +490,26 @@ class TestPhotoGroups:
         assert data["source"] == "local_db"
         assert any(g["id"] == "group1@N00" for g in data["group_pools"])
         assert any(a["id"] == "album1" for a in data["albums"])
+
+    @pytest.mark.asyncio
+    async def test_get_photo_contexts_ignores_local_db_for_other_users_photo(self, db, api_get):
+        """A photo that isn't in the caller's own library must always go via the
+        API, even once groups have been synced — the photo_groups table only
+        ever maps the caller's OWN photo ids, so trusting it for someone else's
+        photo id would silently report zero group memberships."""
+        import mcp_tools
+        import time as _time
+        db.execute("INSERT INTO sync_log (synced_at, mode, photos_fetched, type) VALUES (?,?,?,?)",
+                   (int(_time.time()), "full", 1, "groups"))
+        db.commit()
+        api_get.return_value = {
+            "pool": [{"id": "group1@N00", "title": "Landscape Lovers"}],
+            "set":  [],
+        }
+        result = await mcp_tools._get_photo_contexts({"photo_id": "not_my_photo"})
+        data = _json(result)
+        assert data["source"] == "flickr_api"
+        assert any(g["id"] == "group1@N00" for g in data["group_pools"])
 
     @pytest.mark.asyncio
     async def test_get_photo_contexts_api_fallback(self, db, api_get):

@@ -152,7 +152,8 @@ sync_log          — type, mode, photos_fetched, synced_at
 | `get_photo_group_count` | Photos ranked by how many groups they belong to |
 | `add_to_group` | Add photo to a group pool |
 | `remove_from_group` | Remove photo from a group pool |
-| `get_photo_contexts` | Return group pools and albums a photo belongs to (local DB after sync, API fallback) |
+| `get_photo_contexts` | Return group pools and albums a photo belongs to (local DB after sync, API fallback — only for the caller's own photos) |
+| `get_group_info` | Live lookup for any group by ID — name, description, rules, member/pool counts, and whether you've joined it |
 | `get_contacts_summary` | Total contacts, friends/family count, engagement stats, top engagers |
 | `find_unfollow_candidates` | Contacts ranked by lowest engagement (faves + comments) |
 | `protect_contact` | Add contact to do-not-unfollow whitelist |

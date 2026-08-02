@@ -277,6 +277,38 @@ _SEED_PROMPTS = [
              "Collection (778902@N24, 250+ faves). List qualifying groups as a "
              "numbered list and wait for my picks before add_to_group."
          )),
+    dict(code="suggest-comment-fave", name="Suggest a comment & like", category_id="other_photo",
+         context="photo", description="Suggest a comment for a photo you don't "
+         "own, then fave and post it once you confirm.",
+         text=(
+             "Look at photo {photo_id}, which isn't mine. Fetch it with "
+             "fetch_photo_image and get_photo if you don't already have its image "
+             "and metadata from earlier in this conversation. Suggest one short, "
+             "genuine-sounding comment (not generic praise — reference something "
+             "specific about the photo). Show it and wait for my go-ahead or edits "
+             "before calling fave_photo and add_comment."
+         )),
+    dict(code="other-photo-owner", name="User profile", category_id="other_photo",
+         context="photo", description="Look up the owner of a photo you don't "
+         "own, and your relationship to them.",
+         text=(
+             "Look up who owns photo {photo_id} (call get_photo if you don't "
+             "already have its owner from earlier in this conversation), then call "
+             "get_person_info on their NSID. Summarize: their name/location/bio, "
+             "how many photos they have, and — most importantly — our relationship: "
+             "do I follow them, do they follow me, and are they marked as a friend "
+             "or family contact."
+         )),
+    dict(code="other-photo-groups", name="Group status", category_id="other_photo",
+         context="photo", description="Check the groups a photo you don't own "
+         "belongs to: joined or not, popularity, description.",
+         text=(
+             "Find the group pools photo {photo_id} belongs to with "
+             "get_photo_contexts, then call get_group_info on each one. For every "
+             "group, report: its name, whether I've already joined it, its member "
+             "and pool-photo counts (popularity), and a short summary of its "
+             "description/rules."
+         )),
     dict(code="reply-comments", name="Reply to comments", category_id="collection",
          context="global", description="Draft replies to unanswered comments "
          "across your photos.",
