@@ -54,6 +54,15 @@ from starlette.middleware.sessions import SessionMiddleware
 
 MCP_PORT = int(os.environ.get("MCP_PORT", "8000"))
 
+# Defaults to False to match the documented default workflow (plain
+# http://localhost:8000, whether run directly or via `docker compose up`).
+# Set SESSION_COOKIE_SECURE=true when running behind something that
+# terminates TLS for the browser (a reverse proxy, or the tailscale sidecar
+# in docker-compose.yml) — the Secure flag is about the scheme the browser
+# connected with, not the scheme the app itself sees, so it's safe to
+# enable even though the app is reached over plain HTTP internally.
+SESSION_COOKIE_SECURE = os.environ.get("SESSION_COOKIE_SECURE", "false").strip().lower() in ("1", "true", "yes")
+
 _PROJECT_ROOT = pathlib.Path(__file__).parent.parent
 templates = Jinja2Templates(directory=str(_PROJECT_ROOT / "templates"))
 
@@ -658,7 +667,7 @@ async def main_sse():
             SessionMiddleware,
             secret_key=SESSION_SECRET_KEY,
             max_age=30 * 24 * 3600,
-            https_only=False,
+            https_only=SESSION_COOKIE_SECURE,
             same_site="lax",
         ),
         Middleware(CSRFMiddleware),

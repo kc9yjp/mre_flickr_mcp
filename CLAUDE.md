@@ -76,6 +76,7 @@ Logs go to stderr and are visible via `docker compose logs -f flickr-mcp`.
 - `MCP_API_KEY` env var is **no longer used** — each user gets a personal API key generated on first login
 - OAuth access tokens + personal API key: `~/.flickr_mcp/{nsid}/credentials.json` (in the `flickr-creds` Docker volume)
 - SQLite database: `data/{username}/flickr.db` (in the `flickr-data` volume)
+- `SESSION_COOKIE_SECURE` — set to `true` when running behind something that terminates TLS for the browser (a reverse proxy, or the tailscale sidecar in `docker-compose.yml`), so the session cookie is sent `Secure`. Defaults to `false` to match the documented default of plain `http://localhost:8000`.
 
 ## Multi-User Support
 
