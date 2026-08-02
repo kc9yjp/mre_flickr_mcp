@@ -131,7 +131,7 @@ async def api_photos(request: Request):
         ids = [i for i in qp["ids"].split(",") if i]
         rows = []
         if ids:
-            with get_db_for_user(user["username"]) as conn:
+            with get_db_for_user(user["username"], user["nsid"]) as conn:
                 rows = conn.execute(
                     f"SELECT {_PHOTO_COLUMNS} FROM photos WHERE id IN "
                     f"({','.join('?' * len(ids))})",
@@ -174,7 +174,7 @@ async def api_photos(request: Request):
     except ValueError:
         return JSONResponse({"error": "limit/offset must be integers"}, status_code=400)
 
-    with get_db_for_user(user["username"]) as conn:
+    with get_db_for_user(user["username"], user["nsid"]) as conn:
         total = conn.execute(
             f"SELECT COUNT(*) FROM photos {where}", params
         ).fetchone()[0]
@@ -206,12 +206,12 @@ def _photo_contexts(photo_id: str) -> tuple[list[dict], list[dict]]:
     return albums, groups
 
 
-def _in_keeper_list(username: str, photo_id: str) -> bool:
+def _in_keeper_list(username: str, photo_id: str, nsid: str | None = None) -> bool:
     """Keeper-list membership is a local-only annotation with no Flickr
     equivalent, so it is read from the per-user database."""
     if not os.path.exists(db_file(username)):
         return False
-    with get_db_for_user(username) as conn:
+    with get_db_for_user(username, nsid) as conn:
         return conn.execute(
             "SELECT 1 FROM keeper_list WHERE photo_id = ?", (photo_id,)
         ).fetchone() is not None
@@ -244,7 +244,7 @@ async def api_photo_detail(request: Request):
     finally:
         _ctx.reset(token)
 
-    payload["in_keeper_list"] = _in_keeper_list(user["username"], photo_id)
+    payload["in_keeper_list"] = _in_keeper_list(user["username"], photo_id, user["nsid"])
     return JSONResponse(payload)
 
 
@@ -380,7 +380,7 @@ async def api_albums(request: Request):
     if err := _no_db(user["username"]):
         return err
 
-    with get_db_for_user(user["username"]) as conn:
+    with get_db_for_user(user["username"], user["nsid"]) as conn:
         rows = conn.execute(
             "SELECT a.id, a.title, a.description, a.count_photos, a.count_views, "
             "       p.url_medium, p.url_original "
@@ -447,7 +447,7 @@ async def api_album_photos(request: Request):
     photos_by_id: dict = {}
     if ids:
         placeholders = ",".join("?" * len(ids))
-        with get_db_for_user(user["username"]) as conn:
+        with get_db_for_user(user["username"], user["nsid"]) as conn:
             rows = conn.execute(
                 f"SELECT {_PHOTO_COLUMNS} FROM photos WHERE id IN ({placeholders})",
                 ids,
@@ -676,7 +676,7 @@ async def api_group_info(request: Request):
         _ctx.reset(token)
 
     group = data.get("group", {})
-    with get_db_for_user(user["username"]) as conn:
+    with get_db_for_user(user["username"], user["nsid"]) as conn:
         joined = conn.execute(
             "SELECT user_note FROM groups WHERE id = ?", (group_id,)
         ).fetchone()
@@ -816,7 +816,7 @@ async def api_stats(request: Request):
     if err := _no_db(user["username"]):
         return err
 
-    with get_db_for_user(user["username"]) as conn:
+    with get_db_for_user(user["username"], user["nsid"]) as conn:
         stats = conn.execute("""
             SELECT COUNT(*) AS total_photos,
                    SUM(CASE WHEN is_public = 1 THEN 1 ELSE 0 END) AS public_photos,
@@ -864,7 +864,7 @@ async def api_sync_status(request: Request):
     username = user["username"]
     return JSONResponse({
         "running": _get_user_lock(username).locked(),
-        "rows": _web._build_sync_rows(username),
+        "rows": _web._build_sync_rows(username, user["nsid"]),
     })
 
 
@@ -925,7 +925,7 @@ async def api_queue(request: Request):
         action = body.get("action", "")
         token = _ctx.set(user)
         try:
-            with get_db_for_user(username) as conn:
+            with get_db_for_user(username, user["nsid"]) as conn:
                 if action == "delete_item":
                     item_id = body.get("item_id")
                     if not isinstance(item_id, int):
@@ -965,7 +965,7 @@ async def api_queue(request: Request):
         }
 
     try:
-        with get_db_for_user(username) as conn:
+        with get_db_for_user(username, user["nsid"]) as conn:
             counts = {row["status"]: row["n"] for row in conn.execute(
                 "SELECT status, COUNT(*) AS n FROM pending_group_adds GROUP BY status"
             ).fetchall()}
@@ -1183,7 +1183,7 @@ async def api_settings(request: Request):
         if err := _no_db(username):
             return err
         try:
-            with get_db_for_user(username) as conn:
+            with get_db_for_user(username, user["nsid"]) as conn:
                 for key, value in updates.items():
                     set_setting(conn, key, value)
         except Exception as e:
@@ -1191,7 +1191,7 @@ async def api_settings(request: Request):
             return JSONResponse({"error": str(e)}, status_code=500)
 
     try:
-        with get_db_for_user(username) as conn:
+        with get_db_for_user(username, user["nsid"]) as conn:
             settings = [
                 {
                     "key":         key,

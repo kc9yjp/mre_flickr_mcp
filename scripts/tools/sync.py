@@ -116,7 +116,7 @@ async def _sync(args):
                     extra.append("--backfill")
                 elif args.get("full"):
                     extra.append("--full")
-            rc = await _run_sync_script(path, label, extra_args=extra or None, username=username)
+            rc = await _run_sync_script(path, label, extra_args=extra or None, username=username, nsid=user["nsid"])
             status = "completed" if rc == 0 else "failed"
             results.append(f"{label}: {status}")
     return [TextContent(type="text", text="\n".join(results))]
@@ -127,6 +127,7 @@ async def _run_sync_script(
     label: str,
     extra_args: list[str] | None = None,
     username: str | None = None,
+    nsid: str | None = None,
 ) -> int:
     """Spawn a sync script subprocess, streaming and logging its output live.
 
@@ -174,7 +175,7 @@ async def _run_sync_script(
         # Record duration — use per-user DB if username is known.
         sync_type = label.split("/")[0]  # strip "/username" suffix used in background refresh
         try:
-            ctx = get_db_for_user(username) if username else get_db()
+            ctx = get_db_for_user(username, nsid) if username else get_db()
             with ctx as conn:
                 conn.execute(
                     "UPDATE sync_log SET duration_seconds=? WHERE id=("
@@ -226,7 +227,7 @@ def _flush_queue_for_user(user: dict) -> list[dict]:
     from tools.groups import _flush_group_queue
     token = db._current_user.set(user)
     try:
-        with get_db_for_user(user["username"]) as conn:
+        with get_db_for_user(user["username"], user["nsid"]) as conn:
             return _flush_group_queue(conn)
     finally:
         db._current_user.reset(token)
@@ -265,7 +266,7 @@ async def _background_refresh():
                     last_sync = 0
                 else:
                     try:
-                        with get_db_for_user(username) as conn:
+                        with get_db_for_user(username, nsid) as conn:
                             row = conn.execute(
                                 "SELECT MAX(synced_at) FROM sync_log WHERE type = 'photos'"
                             ).fetchone()
@@ -292,6 +293,7 @@ async def _background_refresh():
                             f"photos/{username}",
                             extra_args=user_args,
                             username=username,
+                            nsid=nsid,
                         )
                         await asyncio.gather(
                             _run_sync_script(
@@ -299,18 +301,21 @@ async def _background_refresh():
                                 f"contacts/{username}",
                                 extra_args=user_args,
                                 username=username,
+                                nsid=nsid,
                             ),
                             _run_sync_script(
                                 os.path.join(scripts_dir, "sync_groups.py"),
                                 f"groups/{username}",
                                 extra_args=user_args,
                                 username=username,
+                                nsid=nsid,
                             ),
                             _run_sync_script(
                                 os.path.join(scripts_dir, "sync_albums.py"),
                                 f"albums/{username}",
                                 extra_args=user_args,
                                 username=username,
+                                nsid=nsid,
                             ),
                         )
                         await _run_sync_script(
@@ -318,6 +323,7 @@ async def _background_refresh():
                             f"engagement/{username}",
                             extra_args=user_args,
                             username=username,
+                            nsid=nsid,
                         )
                 else:
                     remaining = user_threshold - age

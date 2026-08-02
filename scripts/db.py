@@ -16,8 +16,10 @@ directly, receiving the target username as a CLI argument.
 """
 
 import contextvars
+import logging
 import os
 import pathlib
+import re
 import sqlite3
 from contextlib import contextmanager
 
@@ -95,11 +97,84 @@ _DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file_
 DB_FILE = os.path.join(_DATA_DIR, "flickr.db")
 
 
+_USERNAME_RE = re.compile(r"^[^/\\\x00-\x1f]{1,128}$")
+
+
+def _validate_username(username: str) -> str:
+    """Reject usernames that aren't safe filesystem path segments.
+
+    ``username`` comes straight from Flickr's OAuth response with no format
+    guarantee from our side, and is joined directly into a data-directory
+    path. Flickr's "username" is a display name (can contain spaces/unicode
+    punctuation), not a strict slug, so this only blocks what would actually
+    be dangerous as a single path component: path separators, control
+    characters (including null bytes), and the special "." / ".." names —
+    not an alnum-only allowlist that could reject a legitimate account.
+    """
+    if not username or username in (".", "..") or not _USERNAME_RE.fullmatch(username):
+        raise ValueError(f"Invalid username for database path: {username!r}")
+    return username
+
+
+def _owner_marker_file(username: str) -> str:
+    return os.path.join(_DATA_DIR, username, ".owner_nsid")
+
+
+def check_dir_ownership(username: str, nsid: str | None) -> None:
+    """Guard against two different Flickr accounts colliding on the same
+    per-user data directory.
+
+    Flickr usernames are mutable (a user can rename) and can be reused
+    after being released, unlike the immutable NSID — so keying local
+    storage on username alone risks a renamed/reused username silently
+    reading or writing a *different* account's cached photos, contacts,
+    and comments. The first request for a given username records which
+    nsid owns it (see ``seed_dir_ownership``); any later request for the
+    same username under a *different* nsid is refused here instead of
+    silently served.
+
+    A no-op when *nsid* is unknown (call sites that haven't been wired up
+    to pass it yet) or when the directory doesn't exist yet / has no
+    marker (nothing to conflict with — ``seed_dir_ownership`` claims it).
+    """
+    if not nsid:
+        return
+    try:
+        with open(_owner_marker_file(username), "r", encoding="utf-8") as f:
+            owner = f.read().strip()
+    except FileNotFoundError:
+        return
+    if owner and owner != nsid:
+        logging.error(
+            "db: refusing data directory for username %r — owned by nsid %s, "
+            "requested by nsid %s (likely a reused/renamed Flickr username)",
+            username, owner, nsid,
+        )
+        raise RuntimeError(
+            f"Data directory for username {username!r} belongs to a different "
+            "Flickr account; refusing to open it."
+        )
+
+
+def seed_dir_ownership(username: str, nsid: str | None) -> None:
+    """Record *nsid* as the owner of *username*'s data directory, if not
+    already recorded. Call after the directory is known to exist, before
+    or after creating the database file — order doesn't matter since this
+    only ever writes the marker once per username."""
+    if not nsid:
+        return
+    marker = _owner_marker_file(username)
+    if not os.path.exists(marker):
+        with open(marker, "w", encoding="utf-8") as f:
+            f.write(nsid)
+
+
 def db_file(username: str) -> str:
     """Return the SQLite database path for *username*.
 
     Creates the per-user subdirectory: ``data/{username}/flickr.db``.
     """
+    _validate_username(username)
     return os.path.join(_DATA_DIR, username, "flickr.db")
 
 
@@ -160,6 +235,8 @@ def db():
     """
     user = _current_user.get()
     path = db_file(user["username"]) if user else DB_FILE
+    if user:
+        check_dir_ownership(user["username"], user.get("nsid"))
     if not os.path.exists(path):
         raise FileNotFoundError("Database not found. Visit http://localhost:8000/sync to run a sync.")
     return _connect(path)
@@ -175,6 +252,8 @@ def get_db():
     """
     user = _current_user.get()
     path = db_file(user["username"]) if user else DB_FILE
+    if user:
+        check_dir_ownership(user["username"], user.get("nsid"))
     if not os.path.exists(path):
         who = user["username"] if user else "unknown"
         raise FileNotFoundError(
@@ -192,16 +271,30 @@ def get_db():
 
 
 @contextmanager
-def get_db_for_user(username: str):
+def get_db_for_user(username: str, nsid: str | None = None):
     """Context manager that opens the database for an explicit *username*.
 
-    Used by sync scripts that receive ``--username`` as a CLI argument and
-    therefore know the target user without relying on the ContextVar.
-    Creates the per-user data directory if it does not yet exist.
+    Used by sync scripts and web/API handlers that know the target user
+    without relying on the ``_current_user`` ContextVar. Creates the
+    per-user data directory if it does not yet exist.
+
+    *nsid*, when given, is checked against (and seeded into) the
+    directory's ownership marker — see ``check_dir_ownership`` — so a
+    Flickr username that was renamed away and reclaimed by a different
+    account can't silently resolve to the previous owner's data. Falls
+    back to ``_current_user``'s nsid when not passed explicitly and that
+    context happens to be for the same username.
+
     Commits on clean exit and rolls back on exception.
     """
+    if nsid is None:
+        ctx_user = _current_user.get()
+        if ctx_user and ctx_user.get("username") == username:
+            nsid = ctx_user.get("nsid")
     path = db_file(username)
+    check_dir_ownership(username, nsid)
     os.makedirs(os.path.dirname(path), exist_ok=True)
+    seed_dir_ownership(username, nsid)
     conn = _connect(path)
     try:
         yield conn

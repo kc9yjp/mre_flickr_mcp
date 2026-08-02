@@ -19,7 +19,7 @@ from flickr_sync import (
     sync_groups, sync_group_descriptions, sync_group_summaries, sync_photo_groups,
     init_db, DB_FILE,
 )
-from db import db_file as _db_file
+from db import db_file as _db_file, check_dir_ownership, seed_dir_ownership
 import flickr_api
 
 
@@ -33,9 +33,19 @@ def main():
 
     target_db = _db_file(args.username) if args.username else DB_FILE
 
+    if args.username:
+        try:
+            check_dir_ownership(args.username, args.nsid)
+        except RuntimeError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            sys.exit(1)
+
     if not os.path.exists(target_db):
         print(f"Database not found: {target_db}\nVisit http://localhost:8000/sync to run a sync", file=sys.stderr)
         sys.exit(1)
+
+    if args.username:
+        seed_dir_ownership(args.username, args.nsid)
 
     if args.nsid:
         from db import _current_user

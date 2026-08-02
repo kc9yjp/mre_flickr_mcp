@@ -51,7 +51,7 @@ def _migrate_all_user_dbs() -> None:
         if not os.path.exists(path):
             continue
         try:
-            with get_db_for_user(user["username"]) as conn:
+            with get_db_for_user(user["username"], user["nsid"]) as conn:
                 _apply_migrations(conn)
             logging.debug("Migrations applied for %s", user["username"])
         except Exception:

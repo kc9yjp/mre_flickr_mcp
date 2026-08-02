@@ -281,6 +281,13 @@ async def route_oauth_callback(request: Request):
         logging.error("No access token in Flickr response")
         return RedirectResponse("/login?msg=err")
 
+    from db import _validate_username
+    try:
+        _validate_username(username)
+    except ValueError:
+        logging.error("OAuth callback: unsafe/invalid username %r for nsid %s", username, user_nsid)
+        return RedirectResponse("/login?msg=err")
+
     # Preserve an existing API key so MCP clients don't break on re-login.
     mcp_api_key = None
     try:
@@ -316,13 +323,13 @@ async def route_oauth_callback(request: Request):
         async with _get_user_lock(username):
             await _run_sync_script(SYNC_SCRIPT, "photos",
                                    extra_args=["--create"] + user_args,
-                                   username=username)
+                                   username=username, nsid=user_nsid)
             await _run_sync_script(os.path.join(scripts_dir, "sync_contacts.py"), "contacts",
-                                   extra_args=user_args, username=username)
+                                   extra_args=user_args, username=username, nsid=user_nsid)
             await _run_sync_script(os.path.join(scripts_dir, "sync_groups.py"),   "groups",
-                                   extra_args=user_args, username=username)
+                                   extra_args=user_args, username=username, nsid=user_nsid)
             await _run_sync_script(os.path.join(scripts_dir, "sync_albums.py"),   "albums",
-                                   extra_args=user_args, username=username)
+                                   extra_args=user_args, username=username, nsid=user_nsid)
 
     asyncio.create_task(_post_login_sync())
     return RedirectResponse("/?msg=ok", status_code=303)
@@ -340,13 +347,13 @@ async def _trigger_full_sync(username: str, user_nsid: str, user_args: list[str]
     if lock.locked():
         return
     async with lock:
-        await _run_sync_script(SYNC_SCRIPT, f"photos/{username}", extra_args=user_args, username=username)
+        await _run_sync_script(SYNC_SCRIPT, f"photos/{username}", extra_args=user_args, username=username, nsid=user_nsid)
         await asyncio.gather(
-            _run_sync_script(os.path.join(scripts_dir, "sync_contacts.py"), f"contacts/{username}", extra_args=user_args, username=username),
-            _run_sync_script(os.path.join(scripts_dir, "sync_groups.py"),   f"groups/{username}",   extra_args=user_args, username=username),
-            _run_sync_script(os.path.join(scripts_dir, "sync_albums.py"),   f"albums/{username}",   extra_args=user_args, username=username),
+            _run_sync_script(os.path.join(scripts_dir, "sync_contacts.py"), f"contacts/{username}", extra_args=user_args, username=username, nsid=user_nsid),
+            _run_sync_script(os.path.join(scripts_dir, "sync_groups.py"),   f"groups/{username}",   extra_args=user_args, username=username, nsid=user_nsid),
+            _run_sync_script(os.path.join(scripts_dir, "sync_albums.py"),   f"albums/{username}",   extra_args=user_args, username=username, nsid=user_nsid),
         )
-        await _run_sync_script(os.path.join(scripts_dir, "sync_engagement.py"), f"engagement/{username}", extra_args=user_args, username=username)
+        await _run_sync_script(os.path.join(scripts_dir, "sync_engagement.py"), f"engagement/{username}", extra_args=user_args, username=username, nsid=user_nsid)
 
 
 _SYNC_TABLE_MAP = {
@@ -358,7 +365,7 @@ _SYNC_TABLE_MAP = {
 }
 
 
-def _build_sync_rows(db_username: str) -> list[dict]:
+def _build_sync_rows(db_username: str, nsid: str | None = None) -> list[dict]:
     """Query sync_log and return rows enriched with active-sync status,
     total record counts, and pending group-summary counts."""
     import random
@@ -369,7 +376,7 @@ def _build_sync_rows(db_username: str) -> list[dict]:
     totals: dict[str, int] = {}
     pending_summaries = 0
     try:
-        with get_db_for_user(db_username) as conn:
+        with get_db_for_user(db_username, nsid) as conn:
             raw_rows = conn.execute(
                 "SELECT s.type, s.synced_at AS last, s.duration_seconds"
                 " FROM sync_log s"
@@ -464,13 +471,13 @@ def _start_sync(sync_type: str, username: str, user_nsid: str, *, full: bool = F
             if sync_type == "all":
                 for label, path in script_map.items():
                     extra = photo_args if label == "photos" else (user_args or None)
-                    await _run_sync_script(path, label, extra_args=extra or None, username=username or None)
+                    await _run_sync_script(path, label, extra_args=extra or None, username=username or None, nsid=user_nsid or None)
             elif is_backfill:
-                await _run_sync_script(SYNC_SCRIPT, "photos", extra_args=photo_args or None, username=username or None)
+                await _run_sync_script(SYNC_SCRIPT, "photos", extra_args=photo_args or None, username=username or None, nsid=user_nsid or None)
             else:
                 extra = photo_args if sync_type == "photos" else (user_args or None)
                 await _run_sync_script(script_map[sync_type], sync_type,
-                                       extra_args=extra or None, username=username or None)
+                                       extra_args=extra or None, username=username or None, nsid=user_nsid or None)
 
     asyncio.create_task(_run())
     return True

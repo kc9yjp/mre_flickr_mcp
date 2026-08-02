@@ -25,7 +25,7 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import flickr_api
-from db import DB_FILE, db_file as _db_file
+from db import DB_FILE, db_file as _db_file, check_dir_ownership, seed_dir_ownership
 API_URL = flickr_api.API_URL
 HTTP_TIMEOUT = flickr_api.HTTP_TIMEOUT
 PER_PAGE = 500
@@ -684,6 +684,13 @@ def cmd_sync(args):
         from db import _current_user
         _current_user.set({"nsid": nsid_arg, "username": args.username or ""})
 
+    if args.username:
+        try:
+            check_dir_ownership(args.username, nsid_arg)
+        except RuntimeError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            sys.exit(1)
+
     try:
         flickr_api._load_env()
         creds = flickr_api._load_credentials(nsid=nsid_arg)
@@ -697,6 +704,9 @@ def cmd_sync(args):
             sys.exit(1)
         os.makedirs(os.path.dirname(target_db), exist_ok=True)
         print(f"Creating database at {target_db}")
+
+    if args.username:
+        seed_dir_ownership(args.username, nsid_arg)
 
     with sqlite3.connect(target_db) as conn:
         init_db(conn)
