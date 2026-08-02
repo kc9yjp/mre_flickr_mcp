@@ -11,7 +11,7 @@ from db import get_db, like_pattern, table_empty
 TOOLS = [
     Tool(
         name="find_albums",
-        description="Search the user's Flickr albums by keyword from the local database.",
+        description="Search the user's Flickr albums by keyword from the local database. Matches any individual word of the query against title or description (recall over precision).",
         inputSchema={
             "type": "object",
             "properties": {
@@ -112,11 +112,28 @@ TOOLS = [
 async def _find_albums(args):
     query = args.get("query", "")
     limit = int(args.get("limit", 10))
+
+    # Recall over precision: split into individual words and OR them across
+    # both title and description, so any matching word surfaces the album.
+    words = [w.strip() for w in query.split() if w.strip()]
+    if not words:
+        words = [query]
+
+    columns = ("title", "description")
+    clauses = []
+    params = []
+    for word in words:
+        pat = like_pattern(word)
+        for col in columns:
+            clauses.append(f"{col} LIKE ? ESCAPE '\\'")
+            params.append(pat)
+
+    where_sql = " OR ".join(clauses)
     with get_db() as conn:
         rows = conn.execute(
-            "SELECT id, title, description, count_photos, count_views FROM albums "
-            "WHERE title LIKE ? ESCAPE '\\' ORDER BY title LIMIT ?",
-            (like_pattern(query), limit),
+            f"SELECT id, title, description, count_photos, count_views FROM albums "
+            f"WHERE {where_sql} ORDER BY title LIMIT ?",
+            (*params, limit),
         ).fetchall()
         if not rows:
             if table_empty(conn, "albums"):

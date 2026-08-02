@@ -1376,10 +1376,19 @@ select:focus {
   color: var(--ink-secondary);
 }
 
-/* --- Session Stats --- */
+/* --- Session Stats (collapsible strip at the bottom of the Chat panel) --- */
 
-.session-stats {
+.chat-stats-bar {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 4px 8px 8px;
   font-size: 0.75rem;
+  flex: none;
+}
+
+.chat-stats-bar .stats-grid {
+  flex: 1;
 }
 
 .stats-grid {

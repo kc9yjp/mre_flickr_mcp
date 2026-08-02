@@ -19,6 +19,7 @@ import {
   streamChat,
 } from "../api";
 import * as bus from "../bus";
+import { compactNumber, formatLatency } from "../format";
 import { Markdown } from "../markdown";
 
 interface ToolCard {
@@ -205,15 +206,10 @@ export function Chat() {
 
   useEffect(refreshConversations, [refreshConversations]);
 
-  // Let the (separately-mounted) Stats panel track which conversation is active.
-  useEffect(() => {
-    bus.emit("activeConversationChanged", activeId);
-  }, [activeId]);
-
-  // Polled session stats, just for the context-used% shown next to the
-  // Compact button below — the Stats panel does its own independent polling
-  // for its fuller readout.
+  // Polled session stats, both for the context-used% shown next to the
+  // Compact button and for the collapsible stats strip at the bottom.
   const [stats, setStats] = useState<SessionStats | null>(null);
+  const [statsOpen, setStatsOpen] = useState(true);
   useEffect(() => {
     const refresh = () => {
       const id = activeIdRef.current;
@@ -232,6 +228,8 @@ export function Chat() {
     stats && stats.turns > 0
       ? Math.round((stats.last_prompt_tokens / (stats.context_window || 128_000)) * 100)
       : null;
+  const avgLatencyMs = stats && stats.turns > 0 ? Math.round(stats.total_latency_ms / stats.turns) : 0;
+  const avgTokensPerTurn = stats && stats.turns > 0 ? Math.round(stats.total_tokens / stats.turns) : 0;
   // Warn continuously rather than at one hard cutoff: the button's color
   // creeps from the normal ink/border tone toward --danger in step with
   // context usage, so it's already near-red by ~90% instead of jumping red
@@ -678,13 +676,6 @@ export function Chat() {
           ⚡
         </button>
         <button
-          onClick={() => bus.emit("openPanel", "stats")}
-          title="Open session stats panel"
-          className="icon-btn"
-        >
-          📊
-        </button>
-        <button
           onClick={openModelsPanel}
           title="Open models &amp; providers panel"
           className="icon-btn"
@@ -864,6 +855,57 @@ export function Chat() {
           </button>
         )}
        </form>
+        <div className="chat-stats-bar">
+          <button
+            type="button"
+            className="icon-btn"
+            onClick={() => setStatsOpen((o) => !o)}
+            title={statsOpen ? "Hide session stats" : "Show session stats"}
+            aria-expanded={statsOpen}
+          >
+            ⋯
+          </button>
+          {statsOpen && (
+            stats && stats.turns > 0 ? (
+              <div className="stats-grid">
+                <div className="stat-item">
+                  <span className="stat-label">Turns</span>
+                  <span className="stat-value">{compactNumber(stats.turns)}</span>
+                </div>
+                <div className="stat-item">
+                  <span className="stat-label">Tokens</span>
+                  <span className="stat-value">{compactNumber(stats.total_tokens)}</span>
+                </div>
+                <div className="stat-item">
+                  <span className="stat-label">Prompt</span>
+                  <span className="stat-value">{compactNumber(stats.prompt_tokens)}</span>
+                </div>
+                <div className="stat-item">
+                  <span className="stat-label">Completion</span>
+                  <span className="stat-value">{compactNumber(stats.completion_tokens)}</span>
+                </div>
+                <div className="stat-item">
+                  <span className="stat-label">Avg Latency</span>
+                  <span className="stat-value">{formatLatency(avgLatencyMs)}</span>
+                </div>
+                <div className="stat-item">
+                  <span className="stat-label">Avg Tokens/Turn</span>
+                  <span className="stat-value">{compactNumber(avgTokensPerTurn)}</span>
+                </div>
+                <div className="stat-item">
+                  <span className="stat-label">Context Used</span>
+                  <span className="stat-value">{contextUsedPercent}%</span>
+                </div>
+                <div className="stat-item">
+                  <span className="stat-label">Total Latency</span>
+                  <span className="stat-value">{formatLatency(stats.total_latency_ms)}</span>
+                </div>
+              </div>
+            ) : (
+              <span className="hint">No turns yet in this conversation.</span>
+            )
+          )}
+        </div>
         </>
       )}
     </div>

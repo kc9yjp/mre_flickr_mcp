@@ -62,7 +62,7 @@ confirmation UI provides.
 
 | Tool | Write | Parameters | Description |
 |---|:---:|---|---|
-| `find_albums` | | *(optional keyword)* | Search your albums from the local database. |
+| `find_albums` | | *(optional keyword)* | Search your albums from the local database — matches any individual word of the query against title or description (recall over precision). |
 | `get_all_albums` | | `sort` (`title` default / `count_photos` / `count_views`), `limit` | List all your albums from the local database. |
 | `get_album_photos` | | `album_id`*, `limit` (default 50), `page` (default 1) | List photos in an album. |
 | `add_to_album` | ✍️ | `photo_id`*, `album_id`* | Add a photo to an album. |

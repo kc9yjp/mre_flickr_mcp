@@ -631,7 +631,7 @@ export function ModelsPage() {
         under Details above), automatically summarize it via the LLM and replace the history with
         that summary before the next turn. Off by default — compaction is a lossy, irreversible
         rewrite of that conversation's stored history. You can also compact a conversation manually
-        any time from the 📊 stats panel in Chat.
+        any time via the Compact button in Chat's message box.
       </p>
       <form onSubmit={saveActiveSelection} className="settings-item">
         <div className="settings-row">

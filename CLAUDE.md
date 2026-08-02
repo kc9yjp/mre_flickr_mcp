@@ -128,7 +128,7 @@ sync_log          — type, mode, photos_fetched, synced_at
 | `add_comment` | Post a comment on a photo |
 | `fave_photo` | Add a photo to the user's favorites |
 | `get_photo_faves` | List users who faved a photo, with `you_follow` flag cross-referenced from local contacts DB |
-| `find_albums` | Search albums by keyword |
+| `find_albums` | Search albums by keyword — matches any individual word against title or description |
 | `get_all_albums` | List all albums, optionally sorted by title/photo count/views |
 | `get_album_photos` | List photos in an album |
 | `add_to_album` | Add photo to an album |
@@ -161,6 +161,7 @@ sync_log          — type, mode, photos_fetched, synced_at
 - OAuth login uses a full browser redirect flow: `/login/start` → Flickr → `/oauth/callback`
 - Schema changes must be added to the migrations list in `init_db()` — never use `ALTER TABLE` directly
 - Groups sync sets `groups.needs_summary=1` whenever a group is new, renamed, has a changed description, or gets a `set_group_note` edit — the next `sync --type=groups` regenerates its AI summary (see ARCHITECTURE.md's "Group AI summary")
+- **Search tools should favor recall over precision.** Split the query into individual words/terms and OR them across all relevant text columns (e.g. title and description) rather than requiring the whole phrase to match one column — a missed match is worse than a few extra results the caller can filter mentally. See `_find_albums` in `scripts/tools/albums.py` and `_find_groups` in `scripts/tools/groups.py` for the pattern.
 
 ## Skills (Claude Code slash commands)
 

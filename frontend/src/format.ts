@@ -24,6 +24,18 @@ export function formatDuration(seconds: number | null): string {
   return `${m} min`;
 }
 
+// Distinct from formatDuration() above: latencies range from tens of
+// milliseconds to several minutes on slow local connections, so this needs
+// finer-grained scaling (ms/s/m) than that one's coarse "<1 min"/"Xh Ym".
+export function formatLatency(ms: number): string {
+  if (ms < 1000) return `${Math.round(ms)}ms`;
+  const totalSeconds = ms / 1000;
+  if (totalSeconds < 60) return `${totalSeconds.toFixed(1)}s`;
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = Math.round(totalSeconds % 60);
+  return `${minutes}m ${seconds}s`;
+}
+
 export function relativeTime(unixSeconds: number | null): string {
   if (!unixSeconds) return "never";
   const delta = Date.now() / 1000 - unixSeconds;
