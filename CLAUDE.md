@@ -10,6 +10,7 @@ A Flickr MCP (Model Context Protocol) server. The server always runs in SSE/web 
 - `scripts/flickr_mcp.py` — MCP server + web UI (Starlette/uvicorn, SSE transport)
 - `scripts/flickr_sync.py` and `scripts/sync_*.py` — sync scripts invoked by the server
 - `scripts/flickr.py` — standalone CLI (legacy, rarely used directly)
+- `frontend/` — the workbench's React/TypeScript UI (Chat, Photo Browser, Session Stats, etc.), built to `frontend/dist` and served by `flickr_mcp.py`
 
 ## Local Development
 
@@ -34,6 +35,19 @@ docker compose up -d
 ```
 
 The single `flickr-mcp` service starts in SSE/web mode on port 8000. No separate services needed.
+
+## Frontend (`frontend/`)
+
+**Node.js is not installed on this machine/dev environment.** There is no local `node`, `npm`, or `npx` — do not try to run them directly. The frontend is only ever built inside Docker, via the `frontend` stage of the multi-stage `Dockerfile` (`node:22-alpine`, `npm ci && npm run build` → `tsc -b && vite build`).
+
+To typecheck/build the frontend after editing `frontend/src/**` (without doing a full image build), build just that stage:
+
+```bash
+docker build --target frontend -t flickr-frontend-check .
+docker image rm flickr-frontend-check   # cleanup, it's just a verification build
+```
+
+A full `docker compose build` also rebuilds it (as the first stage) and copies `frontend/dist` into the final image — see `Dockerfile`.
 
 ## Web UI
 

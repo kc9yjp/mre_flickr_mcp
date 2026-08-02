@@ -1,9 +1,8 @@
 // Session Stats dockview panel: turns/tokens/latency for the active chat
-// conversation, polled frequently for a live-ish readout, plus a "Compact
-// now" trigger. This panel doesn't perform compaction itself — it just asks
-// Chat.tsx (via the "compactConversation" bus event) to run it, so the
-// compaction and its summary show up as part of the chat transcript instead
-// of vanishing silently into this popup. See Chat.tsx's compactNow.
+// conversation, polled frequently for a live-ish readout. The "Compact now"
+// trigger lives in Chat.tsx's input bar instead (next to its context-used
+// indicator), since compaction and its summary show up as part of the chat
+// transcript.
 
 import { useEffect, useRef, useState } from "react";
 import { SessionStats, getSessionStats } from "../api";
@@ -12,7 +11,10 @@ import * as bus from "../bus";
 const POLL_MS = 3000;
 
 export function SessionStatsPanel() {
-  const [conversationId, setConversationId] = useState<string | null>(null);
+  // Seed from the bus's cached value: dockview panels mount lazily on open,
+  // so this panel may mount well after Chat already set the active
+  // conversation and fired its one-shot "activeConversationChanged" event.
+  const [conversationId, setConversationId] = useState<string | null>(() => bus.getActiveConversationId());
   const [stats, setStats] = useState<SessionStats | null>(null);
   const conversationIdRef = useRef<string | null>(null);
   conversationIdRef.current = conversationId;
@@ -33,11 +35,6 @@ export function SessionStatsPanel() {
     const timer = window.setInterval(refresh, POLL_MS);
     return () => window.clearInterval(timer);
   }, [conversationId]);
-
-  const compact = () => {
-    if (!conversationId) return;
-    bus.emit("compactConversation", undefined);
-  };
 
   if (!conversationId) {
     return (
@@ -95,12 +92,6 @@ export function SessionStatsPanel() {
           <span className="stat-label">Total Latency</span>
           <span className="stat-value">{(stats.total_latency_ms / 1000).toFixed(1)}s</span>
         </div>
-      </div>
-      <div className="session-stats-actions">
-        <button type="button" className="btn-sm" onClick={compact}>
-          Compact now
-        </button>
-        <span className="hint">Sends the conversation to Chat to summarize and replace its history.</span>
       </div>
     </div>
   );

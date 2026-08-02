@@ -7,10 +7,12 @@ import {
   Conversation,
   LLMSettings,
   PromptsData,
+  SessionStats,
   WireMessage,
   cancelChat,
   compactConversation,
   getJSON,
+  getSessionStats,
   injectChat,
   listModels,
   postJSON,
@@ -207,6 +209,29 @@ export function Chat() {
   useEffect(() => {
     bus.emit("activeConversationChanged", activeId);
   }, [activeId]);
+
+  // Polled session stats, just for the context-used% shown next to the
+  // Compact button below — the Stats panel does its own independent polling
+  // for its fuller readout.
+  const [stats, setStats] = useState<SessionStats | null>(null);
+  useEffect(() => {
+    const refresh = () => {
+      const id = activeIdRef.current;
+      if (!id) {
+        setStats(null);
+        return;
+      }
+      getSessionStats(id).then(setStats).catch(() => setStats(null));
+    };
+    refresh();
+    if (!activeId) return;
+    const timer = window.setInterval(refresh, 3000);
+    return () => window.clearInterval(timer);
+  }, [activeId]);
+  const contextUsedPercent =
+    stats && stats.turns > 0
+      ? Math.round((stats.last_prompt_tokens / (stats.context_window || 128_000)) * 100)
+      : null;
 
   const fetchModelsForConnection = useCallback((connectionId: string) => {
     listModels(connectionId)
@@ -471,17 +496,16 @@ export function Chat() {
     [send],
   );
 
-  // Triggered by the Stats panel's "Compact now" button. Runs in the chat
-  // window rather than silently in that panel: shows the compact prompt
-  // (from the "compact-conversation" builtin prompt, editable in the Prompts
-  // panel via the same "Edit prompt →" link every workflow prompt gets) as a
-  // collapsed origin bubble, then the resulting summary — the same shape and
-  // the same in-progress (streaming-indicator) display as a normal send().
-  // This ephemeral bubble isn't a persisted message of its own — the actual
-  // stored history is replaced server-side by compactConversation(), so on
-  // success the whole visible transcript collapses to just the summary
-  // bubble, and on failure the ephemeral bubble is removed to leave the view
-  // exactly as it was.
+  // Triggered by the "Compact" button in the input bar below. Shows the
+  // compact prompt (from the "compact-conversation" builtin prompt, editable
+  // in the Prompts panel via the same "Edit prompt →" link every workflow
+  // prompt gets) as a collapsed origin bubble, then the resulting summary —
+  // the same shape and the same in-progress (streaming-indicator) display as
+  // a normal send(). This ephemeral bubble isn't a persisted message of its
+  // own — the actual stored history is replaced server-side by
+  // compactConversation(), so on success the whole visible transcript
+  // collapses to just the summary bubble, and on failure the ephemeral
+  // bubble is removed to leave the view exactly as it was.
   const compactNow = useCallback(async () => {
     const conversationId = activeIdRef.current;
     if (!conversationId || streamingRef.current) return;
@@ -516,8 +540,6 @@ export function Chat() {
       setStreaming(false);
     }
   }, [refreshConversations]);
-
-  useEffect(() => bus.on("compactConversation", compactNow), [compactNow]);
 
   const answerConfirm = async (approve: boolean, reason?: string) => {
     if (!confirm) return;
@@ -804,6 +826,17 @@ export function Chat() {
             }
           }}
         />
+        {contextUsedPercent !== null && (
+          <button
+            type="button"
+            className={`btn-sm compact-btn${contextUsedPercent >= 80 ? " context-high" : ""}`}
+            onClick={compactNow}
+            disabled={streaming || !activeId}
+            title="Summarize this conversation and replace its history"
+          >
+            Compact <span className="context-used">({contextUsedPercent}%)</span>
+          </button>
+        )}
         {streaming ? (
           <>
             <button type="submit" disabled={!input.trim()} title="Fold this into the running turn">

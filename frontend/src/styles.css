@@ -918,6 +918,18 @@ select:focus {
   padding: 6px 8px;
 }
 
+.compact-btn {
+  white-space: nowrap;
+}
+
+.compact-btn .context-used {
+  color: var(--ink-muted);
+}
+
+.compact-btn.context-high .context-used {
+  color: var(--danger);
+}
+
 .streaming-row {
   display: flex;
   align-items: center;
@@ -1396,13 +1408,6 @@ select:focus {
   color: var(--accent);
   font-weight: 600;
   font-size: 0.8125rem;
-}
-
-.session-stats-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-top: 8px;
 }
 
 /* --- Theme menu --- */

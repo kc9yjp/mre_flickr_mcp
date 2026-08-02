@@ -18,7 +18,6 @@ interface Events {
   switchPanel: string;  // mobile: switch to named panel
   openPanel: string;    // request desktop dockview to open/focus a panel by id
   activeConversationChanged: string | null; // Chat's active conversation id, for the Stats panel to track
-  compactConversation: void; // Stats panel requests Chat compact the active conversation
 }
 
 type Handler<K extends keyof Events> = (payload: Events[K]) => void;
@@ -35,8 +34,23 @@ export function on<K extends keyof Events>(event: K, handler: Handler<K>): () =>
   return () => set.delete(handler as Handler<keyof Events>);
 }
 
+// activeConversationChanged is stateful (there's always a "current" active
+// conversation once one has been set) unlike the other fire-and-forget events
+// here. Dockview panels mount lazily on open, so a panel that opens after
+// Chat already emitted the current id would otherwise never learn it. Cache
+// the last value so late subscribers can read it on mount instead of waiting
+// for the next change.
+let lastActiveConversationId: string | null = null;
+
 export function emit<K extends keyof Events>(event: K, payload: Events[K]): void {
+  if (event === "activeConversationChanged") {
+    lastActiveConversationId = payload as string | null;
+  }
   listeners.get(event)?.forEach((h) => h(payload));
+}
+
+export function getActiveConversationId(): string | null {
+  return lastActiveConversationId;
 }
 
 // A single "pending edit" slot alongside the editPrompt event: emit() alone
