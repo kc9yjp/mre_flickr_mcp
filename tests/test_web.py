@@ -50,6 +50,38 @@ def test_csrf_rejects_post_with_wrong_token(tmp_path):
     assert response.status_code == 403
 
 
+def test_csrf_form_path_with_real_session_token(tmp_path):
+    """Covers the form-based CSRF branch (not just the header-based /api/
+    branch) with an actual session token present: a matching token succeeds,
+    a mismatched token is rejected, and a form submitted with no csrf_token
+    field at all is rejected without raising (the str() coercion — form
+    values can be None/UploadFile — is what secrets.compare_digest needs)."""
+    from starlette.responses import PlainTextResponse
+
+    web = _load_web_with_log_dir(str(tmp_path))
+
+    async def seed_session(request):
+        request.session["csrf_token"] = "the-real-token"
+        return PlainTextResponse("ok")
+
+    app = _make_app(web, [
+        Route("/seed", endpoint=seed_session),
+        Route("/logout", endpoint=web.route_logout, methods=["POST"]),
+    ])
+
+    with TestClient(app, raise_server_exceptions=False) as client:
+        client.get("/seed")
+
+        wrong = client.post("/logout", data={"csrf_token": "not-the-right-token"})
+        assert wrong.status_code == 403
+
+        missing = client.post("/logout", data={})
+        assert missing.status_code == 403
+
+        ok = client.post("/logout", data={"csrf_token": "the-real-token"}, follow_redirects=False)
+        assert ok.status_code == 303
+
+
 def test_logout_clears_session_without_deleting_credentials(tmp_path):
     creds_file = tmp_path / "credentials.json"
     creds_file.write_text(json.dumps({"oauth_token": "tok", "oauth_token_secret": "sec"}))

@@ -613,10 +613,10 @@ class CSRFMiddleware(BaseHTTPMiddleware):
                 return await call_next(request)
 
             form_data = await request.form()
-            token_in_form = form_data.get("csrf_token")
-            token_in_session = request.session.get("csrf_token")
+            token_in_form = str(form_data.get("csrf_token") or "")
+            token_in_session = str(request.session.get("csrf_token") or "")
 
-            if not token_in_session or token_in_form != token_in_session:
+            if not token_in_session or not secrets.compare_digest(token_in_form, token_in_session):
                 logging.warning("CSRF validation failed for path %s", path)
                 return Response("CSRF validation failed", status_code=403)
 
