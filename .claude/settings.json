@@ -11,7 +11,11 @@
       "Bash(python -m pytest tests/test_sync.py -q)",
       "Bash(python \"D:/Temp/claude/f--Users-ejwet-mre-flickr-mcp/a415d4cf-4669-4ac4-a2dc-32d70b2d587a/scratchpad/verify_new_routes.py\")",
       "Bash(docker build *)",
-      "Bash(python -m pytest tests/ -q)"
+      "Bash(python -m pytest tests/ -q)",
+      "mcp__MCP_DOCKER__browser_navigate",
+      "mcp__MCP_DOCKER__browser_console_messages",
+      "mcp__MCP_DOCKER__browser_evaluate",
+      "Bash(python3 -c ' *)"
     ]
   },
   "enableAllProjectMcpServers": true
