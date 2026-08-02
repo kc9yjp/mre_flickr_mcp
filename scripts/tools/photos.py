@@ -823,25 +823,39 @@ async def _get_person_info(args):
     except RuntimeError:
         own_nsid = ""
 
+    # Flickr's API never exposes a user's follower count (for anyone,
+    # including yourself) — only how many people *they* follow, and only
+    # when their contact list is public.
+    following_count = None
+    try:
+        public_contacts = flickr_api._api_get("flickr.contacts.getPublicList", {
+            "user_id": nsid, "per_page": "1",
+        })
+        following_count = int(public_contacts.get("contacts", {}).get("total", 0))
+    except Exception:
+        pass
+
     return [TextContent(type="text", text=json.dumps({
-        "nsid":           nsid,
-        "username":       p.get("username", {}).get("_content", ""),
-        "path_alias":     p.get("path_alias", ""),
-        "realname":       p.get("realname", {}).get("_content", ""),
-        "location":       p.get("location", {}).get("_content", ""),
-        "description":    p.get("description", {}).get("_content", ""),
-        "photos":         p.get("photos", {}).get("count", {}).get("_content", 0),
-        "profile_url":    f"https://www.flickr.com/people/{nsid}/",
-        "ispro":          p.get("ispro", 0),
-        "you_follow":     bool(p.get("contact")),
-        "follows_you":    bool(p.get("revcontact")),
-        "is_friend":      bool(p.get("friend")),
-        "is_family":      bool(p.get("family")),
-        "last_upload":    last_upload,
+        "nsid":             nsid,
+        "username":         p.get("username", {}).get("_content", ""),
+        "path_alias":       p.get("path_alias", ""),
+        "realname":         p.get("realname", {}).get("_content", ""),
+        "location":         p.get("location", {}).get("_content", ""),
+        "description":      p.get("description", {}).get("_content", ""),
+        "photos":           p.get("photos", {}).get("count", {}).get("_content", 0),
+        "profile_url":      f"https://www.flickr.com/people/{nsid}/",
+        "ispro":            p.get("ispro", 0),
+        "you_follow":       bool(p.get("contact")),
+        "follows_you":      bool(p.get("revcontact")),
+        "is_friend":        bool(p.get("friend")),
+        "is_family":        bool(p.get("family")),
+        "following_count":  following_count,
+        "followers_count":  "unavailable — Flickr's API does not expose follower counts for any account",
+        "last_upload":      last_upload,
         # NSID is the only stable identifier — usernames/path aliases (what
         # shows up in flickr.com URLs) can be renamed at any time, so an old
         # link may show a username that no longer matches this same account.
-        "is_you":         bool(own_nsid) and nsid == own_nsid,
+        "is_you":           bool(own_nsid) and nsid == own_nsid,
     }, indent=2))]
 
 
