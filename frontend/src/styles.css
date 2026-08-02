@@ -920,14 +920,12 @@ select:focus {
 
 .compact-btn {
   white-space: nowrap;
+  transition: color 0.3s, border-color 0.3s;
 }
 
 .compact-btn .context-used {
-  color: var(--ink-muted);
-}
-
-.compact-btn.context-high .context-used {
-  color: var(--danger);
+  color: inherit;
+  opacity: 0.8;
 }
 
 .streaming-row {

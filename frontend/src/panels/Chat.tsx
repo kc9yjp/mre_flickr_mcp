@@ -232,6 +232,17 @@ export function Chat() {
     stats && stats.turns > 0
       ? Math.round((stats.last_prompt_tokens / (stats.context_window || 128_000)) * 100)
       : null;
+  // Warn continuously rather than at one hard cutoff: the button's color
+  // creeps from the normal ink/border tone toward --danger in step with
+  // context usage, so it's already near-red by ~90% instead of jumping red
+  // all at once.
+  const compactWarnStyle =
+    contextUsedPercent === null
+      ? undefined
+      : {
+          color: `color-mix(in srgb, var(--ink) ${100 - contextUsedPercent}%, var(--danger) ${contextUsedPercent}%)`,
+          borderColor: `color-mix(in srgb, var(--border) ${100 - contextUsedPercent}%, var(--danger) ${contextUsedPercent}%)`,
+        };
 
   const fetchModelsForConnection = useCallback((connectionId: string) => {
     listModels(connectionId)
@@ -829,7 +840,8 @@ export function Chat() {
         {contextUsedPercent !== null && (
           <button
             type="button"
-            className={`btn-sm compact-btn${contextUsedPercent >= 80 ? " context-high" : ""}`}
+            className="btn-sm compact-btn"
+            style={compactWarnStyle}
             onClick={compactNow}
             disabled={streaming || !activeId}
             title="Summarize this conversation and replace its history"
