@@ -1386,28 +1386,30 @@ select:focus {
 
 .stats-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
-  gap: 8px;
+  grid-template-columns: repeat(auto-fit, minmax(84px, 1fr));
+  gap: 4px;
 }
 
 .stat-item {
   display: flex;
   flex-direction: column;
-  gap: 3px;
-  padding: 6px;
+  gap: 1px;
+  padding: 3px 6px;
   border-radius: 4px;
   background: var(--surface-subtle);
 }
 
 .stat-label {
   color: var(--ink-muted);
-  font-size: 0.6875rem;
+  font-size: 0.625rem;
+  white-space: nowrap;
 }
 
 .stat-value {
   color: var(--accent);
   font-weight: 600;
-  font-size: 0.8125rem;
+  font-size: 0.75rem;
+  white-space: nowrap;
 }
 
 /* --- Theme menu --- */

@@ -10,6 +10,22 @@ import * as bus from "../bus";
 
 const POLL_MS = 3000;
 
+// Local connections can be slow (self-hosted models), so latencies commonly
+// run into the tens of seconds or minutes — a raw millisecond count is hard
+// to read at a glance, so scale to whichever unit keeps the number small.
+function formatDuration(ms: number): string {
+  if (ms < 1000) return `${Math.round(ms)}ms`;
+  const totalSeconds = ms / 1000;
+  if (totalSeconds < 60) return `${totalSeconds.toFixed(1)}s`;
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = Math.round(totalSeconds % 60);
+  return `${minutes}m ${seconds}s`;
+}
+
+function formatCount(n: number): string {
+  return n.toLocaleString();
+}
+
 export function SessionStatsPanel() {
   // Seed from the bus's cached value: dockview panels mount lazily on open,
   // so this panel may mount well after Chat already set the active
@@ -62,27 +78,27 @@ export function SessionStatsPanel() {
       <div className="stats-grid">
         <div className="stat-item">
           <span className="stat-label">Turns</span>
-          <span className="stat-value">{stats.turns}</span>
+          <span className="stat-value">{formatCount(stats.turns)}</span>
         </div>
         <div className="stat-item">
           <span className="stat-label">Tokens</span>
-          <span className="stat-value">{stats.total_tokens}</span>
+          <span className="stat-value">{formatCount(stats.total_tokens)}</span>
         </div>
         <div className="stat-item">
           <span className="stat-label">Prompt</span>
-          <span className="stat-value">{stats.prompt_tokens}</span>
+          <span className="stat-value">{formatCount(stats.prompt_tokens)}</span>
         </div>
         <div className="stat-item">
           <span className="stat-label">Completion</span>
-          <span className="stat-value">{stats.completion_tokens}</span>
+          <span className="stat-value">{formatCount(stats.completion_tokens)}</span>
         </div>
         <div className="stat-item">
           <span className="stat-label">Avg Latency</span>
-          <span className="stat-value">{avgLatencyMs}ms</span>
+          <span className="stat-value">{formatDuration(avgLatencyMs)}</span>
         </div>
         <div className="stat-item">
           <span className="stat-label">Avg Tokens/Turn</span>
-          <span className="stat-value">{avgTokensPerTurn}</span>
+          <span className="stat-value">{formatCount(avgTokensPerTurn)}</span>
         </div>
         <div className="stat-item">
           <span className="stat-label">Context Used</span>
@@ -90,7 +106,7 @@ export function SessionStatsPanel() {
         </div>
         <div className="stat-item">
           <span className="stat-label">Total Latency</span>
-          <span className="stat-value">{(stats.total_latency_ms / 1000).toFixed(1)}s</span>
+          <span className="stat-value">{formatDuration(stats.total_latency_ms)}</span>
         </div>
       </div>
     </div>
