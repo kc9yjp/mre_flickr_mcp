@@ -31,5 +31,12 @@ export function openOrFocusPanel(api: DockviewApi, id: string) {
     return;
   }
   const spec = PANEL_SPECS[id];
-  api.addPanel({ id, component: id, title: spec.title, position: spec.position });
+  const position = spec.position;
+  const refId = position && "referencePanel" in position ? (position.referencePanel as string) : undefined;
+  // The reference panel may not exist yet (e.g. opening Prompts before Models
+  // has ever been opened) — open it first so dockview has something to anchor to.
+  if (refId && !api.getPanel(refId)) {
+    openOrFocusPanel(api, refId);
+  }
+  api.addPanel({ id, component: id, title: spec.title, position });
 }
