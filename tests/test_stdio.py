@@ -138,9 +138,12 @@ class TestStdioToolCalls:
 
     @pytest.mark.asyncio
     async def test_get_photo_not_found_via_stdio(self, live_server):
-        """get_photo for a missing ID returns a not-found message."""
-        async with create_connected_server_and_client_session(live_server) as session:
-            result = await session.call_tool("get_photo", {"id": "missing"})
+        """get_photo for a missing ID falls back to the live API and reports not-found."""
+        import flickr_api
+
+        with patch("flickr_api._api_get", side_effect=flickr_api.FlickrAPIError(1, "Photo not found")):
+            async with create_connected_server_and_client_session(live_server) as session:
+                result = await session.call_tool("get_photo", {"id": "missing"})
 
         assert "not found" in result.content[0].text
 

@@ -37,7 +37,13 @@ TOOLS = [
     ),
     Tool(
         name="get_photo",
-        description="Return full metadata for a single photo by its Flickr ID.",
+        description=(
+            "Return full metadata for a single photo by its Flickr ID. Works for the "
+            "caller's own photos (from the local synced library) as well as other "
+            "users' public photos (e.g. from a group pool or contact) via a live "
+            "Flickr API lookup — a \"not found\" result means the photo ID is invalid "
+            "or was deleted, not that it's restricted for content reasons."
+        ),
         inputSchema={
             "type": "object",
             "properties": {
@@ -438,11 +444,49 @@ async def _search_photos(args):
 
 
 async def _get_photo(args):
+    photo_id = args["id"]
     with get_db() as conn:
-        row = conn.execute("SELECT * FROM photos WHERE id = ?", (args["id"],)).fetchone()
-    if not row:
-        return [TextContent(type="text", text=f"Photo {args['id']} not found.")]
-    return [TextContent(type="text", text=json.dumps(dict(row), indent=2))]
+        row = conn.execute("SELECT * FROM photos WHERE id = ?", (photo_id,)).fetchone()
+    if row:
+        return [TextContent(type="text", text=json.dumps(dict(row), indent=2))]
+
+    # Not one of the caller's own synced photos (e.g. someone else's photo in
+    # a group pool or from a contact) — the local DB only ever holds the
+    # caller's own library, so fall back to a live lookup instead of
+    # reporting "not found" for every photo that isn't theirs.
+    try:
+        info = flickr_api._api_get("flickr.photos.getInfo", {"photo_id": photo_id})
+    except flickr_api.FlickrAPIError as e:
+        return [TextContent(type="text", text=f"Photo {photo_id} not found ({e.flickr_message}).")]
+    photo = info["photo"]
+    owner = photo.get("owner", {})
+    owner_nsid = owner.get("nsid", "")
+    try:
+        faves_data = flickr_api._api_get(
+            "flickr.photos.getFavorites", {"photo_id": photo_id, "per_page": "1"}
+        )
+        favorites = int(faves_data.get("photo", {}).get("total", 0) or 0)
+    except Exception:
+        favorites = None
+    result = {
+        "id":            photo_id,
+        "title":         photo.get("title", {}).get("_content", ""),
+        "description":   photo.get("description", {}).get("_content", ""),
+        "tags":          " ".join(t["raw"] for t in photo.get("tags", {}).get("tag", [])),
+        "views":         int(photo.get("views", 0) or 0),
+        "favorites":     favorites,
+        "comments":      int(photo.get("comments", {}).get("_content", 0) or 0),
+        "date_taken":    photo.get("dates", {}).get("taken", ""),
+        "date_uploaded": int(photo.get("dates", {}).get("posted", 0) or 0),
+        "url_photopage": f"https://www.flickr.com/photos/{owner_nsid}/{photo_id}/",
+        "is_public":     1 if photo.get("visibility", {}).get("ispublic", 1) else 0,
+        "owner": {
+            "nsid":     owner_nsid,
+            "username": owner.get("username", ""),
+            "realname": owner.get("realname", ""),
+        },
+    }
+    return [TextContent(type="text", text=json.dumps(result, indent=2))]
 
 
 async def _get_summary():

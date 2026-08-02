@@ -83,6 +83,12 @@ _injections: dict[str, list[str]] = {}
 # confirm_id -> Future resolved with True (approve) / False (deny)
 _pending_confirms: dict[str, asyncio.Future] = {}
 
+# username -> conversation_id of that user's currently in-flight turn (there's
+# at most one, per the turn lock). Lets a conversation delete cancel the turn
+# only when it's actually the one running, instead of blindly killing
+# whatever the user's turn lock happens to be holding.
+_active_conversations: dict[str, str] = {}
+
 
 def get_turn_lock(username: str) -> asyncio.Lock:
     return _turn_locks.setdefault(username, asyncio.Lock())
@@ -97,10 +103,17 @@ def unregister_task(username: str, task: asyncio.Task) -> None:
         del _active_tasks[username]
 
 
-def cancel_turn(username: str) -> bool:
-    """Cancel the user's in-flight turn, if any. Returns False if nothing was running."""
+def cancel_turn(username: str, conversation_id: str | None = None) -> bool:
+    """Cancel the user's in-flight turn, if any. Returns False if nothing was running.
+
+    If ``conversation_id`` is given, only cancels when that conversation is
+    the one actually running — used by conversation delete, where the user's
+    turn lock may be held by a *different* conversation entirely.
+    """
     task = _active_tasks.get(username)
     if task is None or task.done():
+        return False
+    if conversation_id is not None and _active_conversations.get(username) != conversation_id:
         return False
     task.cancel()
     return True
@@ -327,6 +340,7 @@ async def run_turn(
     nsid = user["nsid"]
     vision = bool(cfg.get("vision", False))
     tools = schema.to_openai_tools() + [_REMEMBER_TOOL]
+    _active_conversations[username] = conversation_id
 
     # Auto-compact runs on the *prior* history, before this turn's message is
     # appended — compacting after would fold the user's brand-new question
@@ -516,5 +530,7 @@ async def run_turn(
         # `except Exception` above but not this) so a stray injection can
         # never bleed into an unrelated later turn on this conversation.
         _injections.pop(conversation_id, None)
+        if _active_conversations.get(username) == conversation_id:
+            del _active_conversations[username]
 
     yield {"type": "done"}

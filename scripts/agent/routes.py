@@ -195,7 +195,12 @@ async def chat_conversation_delete(request: Request):
     user = _session_user(request)
     if not user:
         return _unauthorized()
-    store.delete_conversation(user["username"], request.path_params["id"])
+    conversation_id = request.path_params["id"]
+    # If this conversation's turn is still in flight, stop it before deleting
+    # — otherwise the backend keeps calling the LLM/tools and writing message
+    # rows for a conversation that no longer exists.
+    loop.cancel_turn(user["username"], conversation_id)
+    store.delete_conversation(user["username"], conversation_id)
     return JSONResponse({"ok": True})
 
 

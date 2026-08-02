@@ -148,10 +148,43 @@ class TestGetPhoto:
         assert photo["title"] == "Test Photo"
 
     @pytest.mark.asyncio
-    async def test_not_found(self, db):
+    async def test_not_found(self, db, api_get):
         import mcp_tools
+        import flickr_api
+        api_get.side_effect = flickr_api.FlickrAPIError(1, "Photo not found")
         result = await mcp_tools._get_photo({"id": "missing"})
         assert "not found" in _text(result)
+
+    @pytest.mark.asyncio
+    async def test_falls_back_to_live_api_for_other_users_photo(self, db, api_get):
+        """A photo not in the local DB (e.g. someone else's) is fetched live."""
+        import mcp_tools
+
+        def _fake_api_get(method, params):
+            if method == "flickr.photos.getInfo":
+                return {
+                    "photo": {
+                        "owner": {"nsid": "other@N01", "username": "other", "realname": "Other User"},
+                        "title": {"_content": "Someone Else's Photo"},
+                        "description": {"_content": ""},
+                        "tags": {"tag": []},
+                        "views": "42",
+                        "comments": {"_content": "3"},
+                        "dates": {"taken": "2024-01-01 00:00:00", "posted": "1700000000"},
+                        "visibility": {"ispublic": 1},
+                    }
+                }
+            if method == "flickr.photos.getFavorites":
+                return {"photo": {"total": "5"}}
+            raise AssertionError(f"unexpected method {method}")
+
+        api_get.side_effect = _fake_api_get
+        result = await mcp_tools._get_photo({"id": "other_photo"})
+        photo = _json(result)
+        assert photo["title"] == "Someone Else's Photo"
+        assert photo["owner"]["nsid"] == "other@N01"
+        assert photo["favorites"] == 5
+        assert photo["views"] == 42
 
 
 # ---------------------------------------------------------------------------

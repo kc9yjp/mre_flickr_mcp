@@ -94,6 +94,16 @@ Existing deployments with credentials at `~/.flickr_mcp/credentials.json` (flat 
 
 ## Database Schema
 
+The local SQLite caches (`photos`, `groups`, `albums`, `contacts`, and their
+join tables) exist for fast, enriched retrieval — search, filtering, ranking,
+and listing across the caller's own library — not for looking up one
+specific item. They only ever hold the authenticated user's own data, so a
+lookup by ID for a photo/group/album that isn't theirs (e.g. another
+member's photo in a group pool) will never be in the cache. Tools that fetch
+a single known item by ID should call the Flickr API directly (or fall back
+to it when the cache misses) rather than treating a cache miss as
+"not found" — see `_get_photo` in `scripts/tools/photos.py` for the pattern.
+
 ```
 photos            — id, title, description, tags, views, favorites, comments,
                     date_taken, date_uploaded, url_photopage, url_original,
@@ -118,7 +128,7 @@ sync_log          — type, mode, photos_fetched, synced_at
 | `get_summary` | Total photos, views, top tags, date range |
 | `list_recent_syncs` | Recent sync log entries |
 | `search_photos` | Search local DB by keyword, incomplete metadata, sort by views/date |
-| `get_photo` | Fetch single photo details |
+| `get_photo` | Fetch single photo details — local DB for own photos, live API fallback for other users' |
 | `get_photo_stats` | Views, favorites, comments for a photo |
 | `get_photo_comments` | Fetch comments on a photo |
 | `fetch_photo_image` | Download photo and return as image for visual inspection |
