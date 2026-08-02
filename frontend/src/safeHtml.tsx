@@ -16,7 +16,7 @@ const ALLOWED_TAGS = new Set([
   "ul", "ol", "li", "span", "div",
 ]);
 
-function sanitizeHref(href: string | null): string | null {
+export function sanitizeHref(href: string | null): string | null {
   if (!href) return null;
   try {
     const url = new URL(href, window.location.href);

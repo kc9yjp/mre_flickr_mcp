@@ -5,6 +5,7 @@
 // bold/italic/code/links) without pulling in a markdown dependency.
 
 import { Fragment, type ReactNode } from "react";
+import { sanitizeHref } from "./safeHtml";
 
 function splitRow(line: string): string[] {
   let s = line.trim();
@@ -32,9 +33,16 @@ function parseInline(text: string, keyPrefix: string): ReactNode[] {
     else if (m[3] !== undefined) out.push(<strong key={key}>{m[3]}</strong>);
     else if (m[4] !== undefined) out.push(<em key={key}>{m[4]}</em>);
     else if (m[5] !== undefined) out.push(<em key={key}>{m[5]}</em>);
-    else if (m[6] !== undefined) out.push(
-      <a key={key} href={m[7]} target="_blank" rel="noopener noreferrer">{m[6]}</a>,
-    );
+    else if (m[6] !== undefined) {
+      const href = sanitizeHref(m[7]);
+      out.push(
+        href ? (
+          <a key={key} href={href} target="_blank" rel="noopener noreferrer">{m[6]}</a>
+        ) : (
+          <Fragment key={key}>{m[6]}</Fragment>
+        ),
+      );
+    }
     lastIndex = pattern.lastIndex;
   }
   if (lastIndex < text.length) out.push(text.slice(lastIndex));
