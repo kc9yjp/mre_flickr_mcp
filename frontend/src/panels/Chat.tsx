@@ -418,6 +418,11 @@ export function Chat() {
               bus.emit("openPanel", "photos");
               bus.emit("showPhotoList", event.photo_ids);
               break;
+            case "user_photos":
+              if (stale()) break;
+              bus.emit("openPanel", "photos");
+              bus.emit("showUserPhotos", event.nsid);
+              break;
             case "cancelled":
               if (stale()) break;
               patchLast((m) => ({ ...m, text: m.text + (m.text ? "\n\n" : "") + "*(cancelled)*" }));

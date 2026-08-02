@@ -71,7 +71,7 @@ from tools.photos import (  # noqa: E402, F401
     _fave_photo, _remove_fave, _get_photo_stats, _find_weak_photos,
     _set_visibility, _set_location, _remove_location, _set_safety_level,
     _set_content_type, _set_dates, _get_exif, _get_upload_status,
-    _get_person_info, _get_photostream_stats, _get_popular_photos,
+    _get_person_info, _get_user_photos, _get_photostream_stats, _get_popular_photos,
     _get_photo_faves, _get_faves, _get_recent_activity,
 )
 from tools.albums import (  # noqa: E402, F401

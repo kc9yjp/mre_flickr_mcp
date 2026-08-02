@@ -14,6 +14,7 @@ interface Events {
   llmConnectionsChanged: void; // a connection was added/edited/deleted, or its disabled_models changed — refetch /api/llm-settings + model lists
   photoOpened: string | null; // Photo Viewer's current photo, for chat context
   showPhotoList: string[]; // a tool found these photo ids — show them in the Photo Browser grid
+  showUserPhotos: string;  // a tool looked up this user's nsid — switch the Photo Browser to the User tab for them
   switchPanel: string;  // mobile: switch to named panel
   openPanel: string;    // request desktop dockview to open/focus a panel by id
 }

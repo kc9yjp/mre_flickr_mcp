@@ -305,6 +305,23 @@ TOOLS = [
         },
     ),
     Tool(
+        name="get_user_photos",
+        description=(
+            "List a Flickr user's public photostream, fetched live from the API — "
+            "works for any user, not just the caller's own library. Most recent "
+            "uploads first. Use this to show what someone else has been posting, "
+            "e.g. before deciding whether to follow them."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "user_id": {"type": "string", "description": "Flickr NSID, username, or profile/photo URL"},
+                "limit":   {"type": "integer", "description": "Max results (default 30, max 100)"},
+            },
+            "required": ["user_id"],
+        },
+    ),
+    Tool(
         name="get_photostream_stats",
         description="Get total view counts across all photos, sets, and galleries for a given date.",
         inputSchema={
@@ -859,6 +876,24 @@ async def _get_person_info(args):
     }, indent=2))]
 
 
+async def _get_user_photos(args):
+    user_id = flickr_api.resolve_user_id(args["user_id"])
+    limit = max(1, min(100, int(args.get("limit", 30))))
+    data = flickr_api._api_get("flickr.people.getPhotos", {
+        "user_id":  user_id,
+        "per_page": str(limit),
+        "extras":   "views,date_taken",
+    })
+    photos = data.get("photos", {}).get("photo", [])
+    return [TextContent(type="text", text=json.dumps([{
+        "id":        p["id"],
+        "title":     p.get("title", ""),
+        "date_taken": p.get("datetaken", ""),
+        "views":     int(p.get("views", 0) or 0),
+        "url":       f"https://www.flickr.com/photos/{user_id}/{p['id']}/",
+    } for p in photos], indent=2))]
+
+
 async def _get_photostream_stats(args):
     from datetime import date as date_type, timedelta
     query_date = args.get("date", (date_type.today() - timedelta(days=1)).isoformat())
@@ -1065,6 +1100,7 @@ HANDLERS = {
     "get_exif":             _get_exif,
     "get_upload_status":    lambda _: _get_upload_status(),
     "get_person_info":      _get_person_info,
+    "get_user_photos":      _get_user_photos,
     "get_photostream_stats": _get_photostream_stats,
     "get_popular_photos":   _get_popular_photos,
     "get_photo_faves":      _get_photo_faves,

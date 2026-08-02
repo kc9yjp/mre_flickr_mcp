@@ -359,6 +359,7 @@ export type StreamEvent =
   | { type: "tool_result"; id: string; name: string; text: string }
   | { type: "focus"; photo_id: string }
   | { type: "photo_list"; photo_ids: string[] }
+  | { type: "user_photos"; nsid: string }
   | { type: "compacted"; summary: string }
   | { type: "injected"; text: string }
   | { type: "cancelled" }

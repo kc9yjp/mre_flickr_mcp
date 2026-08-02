@@ -9,6 +9,7 @@
     {"type": "tool_result", "id", "name", "text"}
     {"type": "focus", "photo_id"}                        drive the photo viewer
     {"type": "photo_list", "photo_ids"}                  populate the grid
+    {"type": "user_photos", "nsid"}                      switch grid to another user's photostream
     {"type": "compacted", "summary"}                     auto-compact ran before this turn
     {"type": "injected", "text"}                         user's add_injection text was folded in
     {"type": "error", "message"}
@@ -265,6 +266,27 @@ def _focus_photo_id(name: str, args: dict) -> str | None:
 # Photo Browser grid in one shot instead of just being narrated in chat.
 _LIST_TOOLS = {"find_weak_photos", "search_photos"}
 
+# get_user_photos results are someone else's photostream, fetched live — they
+# were never synced to the local DB, so they can't go through _LIST_TOOLS
+# (the Photo Browser grid's ids= path only queries local photos). Instead,
+# point the UI at the Photo Browser's own live "User" tab fetch, keyed by
+# nsid pulled from the tool's own output rather than re-resolving user_id
+# (which could be a username/URL) and spending a second API call on it.
+_USER_PHOTOS_URL_RE = re.compile(r"flickr\.com/photos/([^/\s]+)/")
+
+
+def _user_photos_nsid(name: str, text: str) -> str | None:
+    if name != "get_user_photos":
+        return None
+    try:
+        parsed = json.loads(text)
+    except ValueError:
+        return None
+    if not isinstance(parsed, list) or not parsed:
+        return None
+    m = _USER_PHOTOS_URL_RE.search(parsed[0].get("url", ""))
+    return m.group(1) if m else None
+
 
 def _list_photo_ids(name: str, text: str) -> list[str] | None:
     """Best-effort extraction of photo ids from a list-tool's JSON result.
@@ -506,6 +528,8 @@ async def run_turn(
 
                 if args is not None and (photo_ids := _list_photo_ids(name, ui_text)):
                     yield {"type": "photo_list", "photo_ids": photo_ids}
+                elif args is not None and (nsid := _user_photos_nsid(name, ui_text)):
+                    yield {"type": "user_photos", "nsid": nsid}
                 elif args is not None and (photo_id := _focus_photo_id(name, args)):
                     yield {"type": "focus", "photo_id": photo_id}
         else:

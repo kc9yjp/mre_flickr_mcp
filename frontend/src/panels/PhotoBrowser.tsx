@@ -403,6 +403,29 @@ export function PhotoBrowser() {
     [loadPhotoList],
   );
 
+  useEffect(
+    () =>
+      bus.on("showUserPhotos", (nsid) => {
+        setError("");
+        setMode("user");
+        setSelectedAlbum(null);
+        setGroupInfo(null);
+        setGroupResults(null);
+        setActiveSearchQuery("");
+        setPhotoListLabel(null);
+        setUserQuery(nsid);
+        lookupUser(nsid)
+          .then((profile) => {
+            setUserProfile(profile);
+            setUserSubMode("photos");
+            setPage(1);
+            return loadUserPhotosPage(profile.nsid, 1);
+          })
+          .catch((e) => setError(e instanceof Error ? e.message : String(e)));
+      }),
+    [loadUserPhotosPage],
+  );
+
   const submitMine = (e: FormEvent) => {
     e.preventDefault();
     setPhotoListLabel(null);

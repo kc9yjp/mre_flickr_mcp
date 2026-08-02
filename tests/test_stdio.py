@@ -72,7 +72,7 @@ class TestStdioProtocol:
             "add_comment", "delete_comment", "fave_photo", "get_photo_stats",
             "find_weak_photos", "set_visibility", "set_location", "sync",
             "list_recent_syncs", "get_exif", "get_upload_status",
-            "get_person_info", "get_photostream_stats", "get_popular_photos",
+            "get_person_info", "get_user_photos", "get_photostream_stats", "get_popular_photos",
             "get_gallery_photos", "get_group_photos", "get_faves",
             "get_recent_activity", "remove_fave", "remove_location",
             "join_group", "leave_group", "set_safety_level", "set_content_type",
