@@ -113,7 +113,7 @@ def _load_api_key_registry() -> None:
     logging.debug("API key registry: %d user(s) loaded", len(_api_key_registry))
 
 
-_pending_oauth: dict[str, tuple[str, float]] = {}  # token -> (secret, created_at)
+_pending_oauth: dict[str, tuple[str, float, str]] = {}  # token -> (secret, created_at, nonce)
 _PENDING_OAUTH_TTL = 600   # seconds before an unused request token is discarded
 _PENDING_OAUTH_MAX = 100   # hard cap on concurrent in-flight OAuth flows
 
@@ -214,7 +214,7 @@ async def route_login_start(request: Request):
         return _login_error(request, "Flickr returned no token in the request token response.")
 
     cutoff = time.time() - _PENDING_OAUTH_TTL
-    stale = [t for t, (_, ts) in _pending_oauth.items() if ts < cutoff]
+    stale = [t for t, (_, ts, _n) in _pending_oauth.items() if ts < cutoff]
     for t in stale:
         del _pending_oauth[t]
 
@@ -222,7 +222,13 @@ async def route_login_start(request: Request):
         logging.warning("Rejected OAuth start: pending dict at capacity (%d)", _PENDING_OAUTH_MAX)
         return _login_error(request, "Too many login attempts in progress. Try again shortly.", status_code=429)
 
-    _pending_oauth[oauth_token] = (oauth_token_secret, time.time())
+    # Bind this pending request token to the browser that started the flow, so a
+    # crafted /oauth/callback link (built from an attacker's own oauth_token/verifier)
+    # can't be used to fixate a victim's session onto the attacker's Flickr account.
+    nonce = secrets.token_urlsafe(32)
+    request.session["oauth_nonce"] = nonce
+
+    _pending_oauth[oauth_token] = (oauth_token_secret, time.time(), nonce)
     authorize_url = f"{_FLICKR_AUTHORIZE_URL}?oauth_token={oauth_token}&perms=write"
     return RedirectResponse(authorize_url)
 
@@ -236,7 +242,13 @@ async def route_oauth_callback(request: Request):
 
     entry = _pending_oauth.pop(oauth_token, None)
     token_secret = entry[0] if entry is not None else None
+    expected_nonce = entry[2] if entry is not None else None
     if token_secret is None:
+        return RedirectResponse("/login?msg=err")
+
+    session_nonce = request.session.pop("oauth_nonce", None)
+    if not session_nonce or not expected_nonce or not secrets.compare_digest(session_nonce, expected_nonce):
+        logging.warning("OAuth callback: nonce mismatch (possible session-fixation attempt) for token %s", oauth_token)
         return RedirectResponse("/login?msg=err")
 
     try:
