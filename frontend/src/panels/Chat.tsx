@@ -20,6 +20,7 @@ import {
   streamChat,
 } from "../api";
 import * as bus from "../bus";
+import { classifyFlickrUrl, FlickrRoute } from "../flickrUrl";
 import { compactNumber, formatLatency } from "../format";
 import { Markdown } from "../markdown";
 import { useIsMobile } from "../useIsMobile";
@@ -63,6 +64,29 @@ function contentToText(content: WireMessage["content"]): string {
   return content
     .map((p) => (p.type === "text" ? p.text : "(image)"))
     .join("\n");
+}
+
+// Same idea as the bookmarklet/extension (see scripts/webapi.py's api_setup
+// and api_extension): a bare Flickr URL jumps straight to the matching
+// panel instead of going through the chat loop.
+function routeFlickrUrl(route: FlickrRoute) {
+  switch (route.kind) {
+    case "photo":
+      bus.emit("viewPhoto", route.id);
+      break;
+    case "user":
+      bus.emit("openPanel", "photos");
+      bus.emit("showUserPhotos", route.ref);
+      break;
+    case "group":
+      bus.emit("openPanel", "photos");
+      bus.emit("showGroupPhotos", route.url);
+      break;
+    case "album":
+      bus.emit("openPanel", "photos");
+      bus.emit("showUserAlbum", { owner: route.owner, albumId: route.albumId });
+      break;
+  }
 }
 
 function wireToRender(messages: WireMessage[]): ChatMsg[] {
@@ -309,6 +333,14 @@ export function Chat() {
   const send = useCallback(async (message: string, origin?: PromptOrigin) => {
     const text = message.trim();
     if (!text) return;
+
+    const route = classifyFlickrUrl(text);
+    if (route) {
+      setInput("");
+      routeFlickrUrl(route);
+      return;
+    }
+
     setError("");
     setInput("");
     setStreaming(true);

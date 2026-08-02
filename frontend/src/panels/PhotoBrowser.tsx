@@ -426,6 +426,58 @@ export function PhotoBrowser() {
     [loadUserPhotosPage],
   );
 
+  useEffect(
+    () =>
+      bus.on("showGroupPhotos", (ref) => {
+        setError("");
+        setMode("group");
+        setSelectedAlbum(null);
+        setUserProfile(null);
+        setActiveSearchQuery("");
+        setPhotoListLabel(null);
+        setGroupQuery(ref);
+        setGroupInfo(null);
+        setGroupResults(null);
+        getGroupInfo(ref)
+          .then((info) => {
+            setGroupInfo(info);
+            setPage(1);
+            return loadGroupPhotosPage(info.id, 1);
+          })
+          .catch((e) => setError(e instanceof Error ? e.message : String(e)));
+      }),
+    [loadGroupPhotosPage],
+  );
+
+  useEffect(
+    () =>
+      bus.on("showUserAlbum", ({ owner, albumId }) => {
+        setError("");
+        setMode("user");
+        setSelectedAlbum(null);
+        setGroupInfo(null);
+        setGroupResults(null);
+        setActiveSearchQuery("");
+        setPhotoListLabel(null);
+        setUserQuery(owner);
+        lookupUser(owner)
+          .then(async (profile) => {
+            setUserProfile(profile);
+            setUserSubMode("albums");
+            const { albums } = await getUserAlbums(profile.nsid);
+            setUserAlbums(albums);
+            const album = albums.find((a) => a.id === albumId) ?? {
+              id: albumId, title: "", description: "", count_photos: 0, count_views: 0, thumb_url: null,
+            };
+            setSelectedUserAlbum(album);
+            setPage(1);
+            return loadUserAlbumPhotosPage(profile.nsid, albumId, 1);
+          })
+          .catch((e) => setError(e instanceof Error ? e.message : String(e)));
+      }),
+    [loadUserAlbumPhotosPage],
+  );
+
   const submitMine = (e: FormEvent) => {
     e.preventDefault();
     setPhotoListLabel(null);

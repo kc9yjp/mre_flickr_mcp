@@ -15,6 +15,8 @@ interface Events {
   photoOpened: string | null; // Photo Viewer's current photo, for chat context
   showPhotoList: string[]; // a tool found these photo ids — show them in the Photo Browser grid
   showUserPhotos: string;  // a tool looked up this user's nsid — switch the Photo Browser to the User tab for them
+  showGroupPhotos: string; // a group id/URL was identified — switch the Photo Browser to the Group tab for it
+  showUserAlbum: { owner: string; albumId: string }; // a user's album URL was identified — switch to User > Albums and load it
   switchPanel: string;  // mobile: switch to named panel
   openPanel: string;    // request desktop dockview to open/focus a panel by id
 }
