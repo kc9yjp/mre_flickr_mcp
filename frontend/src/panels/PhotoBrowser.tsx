@@ -1,20 +1,42 @@
-// Photo Browser panel: search/filter/sort/paginate your own photo library
-// and open a photo's detail view with metadata, groups, and albums.
+// Photo Browser panel: search/browse your own photos and albums, another
+// user's photostream/albums, a group's photo pool, or a site-wide Flickr
+// search. Clicking a photo opens it in the separate Photo Viewer panel.
+// Clearing any non-default mode always returns to My Photos.
 
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import {
   Album,
-  AlbumPhotoPage,
   getJSON,
+  getGroupInfo,
+  getGroupPhotos,
+  getUserAlbumPhotos,
+  getUserAlbums,
+  getUserPhotos,
+  GroupInfo,
+  GroupSearchResult,
+  LivePhotoPage,
+  lookupUser,
   Photo,
-  PhotoDetail,
   PhotoPage,
+  searchFlickrPhotos,
+  searchGroups,
+  UserProfile,
 } from "../api";
 import * as bus from "../bus";
 import { compactNumber } from "../format";
 import { useWorkflowCommands } from "../useWorkflowCommands";
 
 const PAGE_SIZE = 60;
+
+type Mode = "mine" | "albums" | "user" | "group" | "search";
+
+const MODES: { id: Mode; label: string }[] = [
+  { id: "mine", label: "My Photos" },
+  { id: "albums", label: "My Albums" },
+  { id: "user", label: "User" },
+  { id: "group", label: "Group" },
+  { id: "search", label: "Search Flickr" },
+];
 
 interface Filters {
   query: string;
@@ -57,135 +79,54 @@ function Thumb({ photo, onClick }: { photo: Photo; onClick: () => void }) {
   );
 }
 
-
-function DetailView({ detail, onBack }: { detail: PhotoDetail; onBack: () => void }) {
-  const [src, setSrc] = useState(detail.url_original || detail.url_medium);
-  // "photo" context is shared with the other_photo category (Photo Browser
-  // only ever shows the caller's own photos) — filter so those don't leak in.
-  const photoCommands = useWorkflowCommands("photo").filter((c) => c.category_id === "own_photo");
-  useEffect(() => {
-    setSrc(detail.url_original || detail.url_medium);
-  }, [detail.id, detail.url_original, detail.url_medium]);
-  return (
-    <div className="photo-detail">
-      <div className="detail-toolbar">
-        <button onClick={onBack}>← Back to grid</button>
-        <a href={detail.url_photopage} target="flickr_photo" rel="noreferrer">
-          Open on Flickr ↗
-        </a>
-      </div>
-      {detail.is_own && (
-        <div className="detail-workflows">
-          {photoCommands.map((c) => (
-            <button
-              key={c.id}
-              title="Runs in the Chat panel"
-              onClick={() => bus.emit("runCommand", {
-                title: c.label,
-                text: c.prompt.replaceAll("{photo_id}", detail.id),
-                promptId: c.prompt_id,
-              })}
-            >
-              ▶ {c.label}
-            </button>
-          ))}
-        </div>
-      )}
-      {src && (
-        <img
-          className="detail-image"
-          src={src}
-          alt={detail.title}
-          onError={() => {
-            if (src === detail.url_original && detail.url_medium && detail.url_medium !== src) {
-              setSrc(detail.url_medium);
-            }
-          }}
-        />
-      )}
-      <h2>{detail.title || detail.id}</h2>
-      {!detail.is_own && detail.owner && (
-        <p className="hint other-photo-owner">
-          {detail.owner.avatar_url && <img className="owner-avatar" src={detail.owner.avatar_url} alt="" />}
-          by{" "}
-          <a href={detail.owner.profile_url} target="_blank" rel="noreferrer">
-            {detail.owner.realname || detail.owner.username || detail.owner.nsid}
-          </a>
-        </p>
-      )}
-      {detail.description && <p className="detail-description">{detail.description}</p>}
-      <div className="detail-stats">
-        <span>{compactNumber(detail.views)} views</span>
-        <span>{compactNumber(detail.favorites)} faves</span>
-        <span>{compactNumber(detail.comments)} comments</span>
-        <span>{detail.is_public ? "public" : "private"}</span>
-        {detail.in_keeper_list && <span>keeper</span>}
-      </div>
-
-      <dl className="detail-meta">
-        <dt>Taken</dt>
-        <dd>{detail.date_taken || "unknown"}</dd>
-        <dt>Tags</dt>
-        <dd>
-          {detail.tags
-            ? detail.tags.split(" ").map((t) => (
-                <span key={t} className="chip">
-                  {t}
-                </span>
-              ))
-            : "none"}
-        </dd>
-        {detail.is_own && (
-          <>
-            <dt>Groups</dt>
-            <dd>
-              {detail.groups.length
-                ? detail.groups.map((g) => (
-                    <span key={g.id} className="chip">
-                      {g.name}
-                    </span>
-                  ))
-                : "none"}
-            </dd>
-            <dt>Albums</dt>
-            <dd>
-              {detail.albums.length
-                ? detail.albums.map((a) => (
-                    <span key={a.id} className="chip">
-                      {a.title}
-                    </span>
-                  ))
-                : "none"}
-            </dd>
-          </>
-        )}
-      </dl>
-    </div>
-  );
-}
+const GROUP_ID_RE = /^\d+@N\d+$/;
 
 export function PhotoBrowser() {
   const collectionCommands = useWorkflowCommands("global").filter((c) => c.category_id === "collection");
-  const [filters, setFilters] = useState<Filters>(DEFAULT_FILTERS);
-  const [draft, setDraft] = useState<Filters>(DEFAULT_FILTERS);
+
+  const [mode, setMode] = useState<Mode>("mine");
   const [photos, setPhotos] = useState<Photo[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [detail, setDetail] = useState<PhotoDetail | null>(null);
+  const [photoListLabel, setPhotoListLabel] = useState<string | null>(null);
+
+  // My Photos
+  const [filters, setFilters] = useState<Filters>(DEFAULT_FILTERS);
+  const [draft, setDraft] = useState<Filters>(DEFAULT_FILTERS);
+
+  // My Albums
   const [albums, setAlbums] = useState<Album[]>([]);
   const [selectedAlbum, setSelectedAlbum] = useState<Album | null>(null);
-  const [albumPage, setAlbumPage] = useState(1);
-  const [albumPages, setAlbumPages] = useState(1);
-  const [photoListLabel, setPhotoListLabel] = useState<string | null>(null);
+
+  // Shared page/pages for every page-based mode (albums/user/group/search) —
+  // only one mode is ever active at a time.
+  const [page, setPage] = useState(1);
+  const [pages, setPages] = useState(1);
+
+  // User
+  const [userQuery, setUserQuery] = useState("");
+  const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
+  const [userSubMode, setUserSubMode] = useState<"photos" | "albums">("photos");
+  const [userAlbums, setUserAlbums] = useState<Album[]>([]);
+  const [selectedUserAlbum, setSelectedUserAlbum] = useState<Album | null>(null);
+
+  // Group
+  const [groupQuery, setGroupQuery] = useState("");
+  const [groupInfo, setGroupInfo] = useState<GroupInfo | null>(null);
+  const [groupResults, setGroupResults] = useState<GroupSearchResult[] | null>(null);
+
+  // Search
+  const [searchQuery, setSearchQuery] = useState("");
+  const [activeSearchQuery, setActiveSearchQuery] = useState("");
 
   const load = useCallback(async (f: Filters, offset: number) => {
     setLoading(true);
     setError("");
     try {
-      const page = await getJSON<PhotoPage>("/api/photos", filterParams(f, offset));
-      setTotal(page.total);
-      setPhotos((prev) => (offset === 0 ? page.photos : [...prev, ...page.photos]));
+      const p = await getJSON<PhotoPage>("/api/photos", filterParams(f, offset));
+      setTotal(p.total);
+      setPhotos((prev) => (offset === 0 ? p.photos : [...prev, ...p.photos]));
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -193,17 +134,67 @@ export function PhotoBrowser() {
     }
   }, []);
 
-  const loadAlbumPhotos = useCallback(async (album: Album, page: number) => {
+  const applyPage = (data: LivePhotoPage, p: number) => {
+    setTotal(data.total);
+    setPages(data.pages);
+    setPhotos((prev) => (p === 1 ? data.photos : [...prev, ...data.photos]));
+  };
+
+  const loadAlbumPhotos = useCallback(async (album: Album, p: number) => {
     setLoading(true);
     setError("");
     try {
-      const data = await getJSON<AlbumPhotoPage>(`/api/albums/${album.id}/photos`, {
-        page: String(page),
-        limit: String(PAGE_SIZE),
-      });
-      setTotal(data.total);
-      setAlbumPages(data.pages);
-      setPhotos((prev) => (page === 1 ? data.photos : [...prev, ...data.photos]));
+      applyPage(await getJSON<LivePhotoPage>(`/api/albums/${album.id}/photos`, {
+        page: String(p), limit: String(PAGE_SIZE),
+      }), p);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  const loadUserPhotosPage = useCallback(async (nsid: string, p: number) => {
+    setLoading(true);
+    setError("");
+    try {
+      applyPage(await getUserPhotos(nsid, p), p);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  const loadUserAlbumPhotosPage = useCallback(async (nsid: string, albumId: string, p: number) => {
+    setLoading(true);
+    setError("");
+    try {
+      applyPage(await getUserAlbumPhotos(nsid, albumId, p), p);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  const loadGroupPhotosPage = useCallback(async (id: string, p: number) => {
+    setLoading(true);
+    setError("");
+    try {
+      applyPage(await getGroupPhotos(id, p), p);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  const loadSearchPhotosPage = useCallback(async (q: string, p: number) => {
+    setLoading(true);
+    setError("");
+    try {
+      applyPage(await searchFlickrPhotos(q, p), p);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -215,9 +206,9 @@ export function PhotoBrowser() {
     setLoading(true);
     setError("");
     try {
-      const page = await getJSON<PhotoPage>("/api/photos", { ids: ids.join(",") });
-      setTotal(page.total);
-      setPhotos(page.photos);
+      const p = await getJSON<PhotoPage>("/api/photos", { ids: ids.join(",") });
+      setTotal(p.total);
+      setPhotos(p.photos);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -225,50 +216,185 @@ export function PhotoBrowser() {
     }
   }, []);
 
-  const selectAlbum = useCallback(
-    (album: Album) => {
-      setDetail(null);
-      setPhotoListLabel(null);
-      setSelectedAlbum(album);
-      setAlbumPage(1);
-      loadAlbumPhotos(album, 1);
-    },
-    [loadAlbumPhotos],
-  );
-
-  const clearAlbum = useCallback(() => {
-    setSelectedAlbum(null);
+  // The "✕ Clear" action, and what every mode switch away from a loaded
+  // browse eventually funnels back into: always lands on default My Photos.
+  const resetToMine = useCallback(() => {
+    setError("");
     setPhotoListLabel(null);
+    setMode("mine");
+    setSelectedAlbum(null);
+    setUserQuery("");
+    setUserProfile(null);
+    setUserSubMode("photos");
+    setUserAlbums([]);
+    setSelectedUserAlbum(null);
+    setGroupQuery("");
+    setGroupInfo(null);
+    setGroupResults(null);
+    setSearchQuery("");
+    setActiveSearchQuery("");
+    setPage(1);
+    setPages(1);
     setFilters(DEFAULT_FILTERS);
     setDraft(DEFAULT_FILTERS);
     load(DEFAULT_FILTERS, 0);
   }, [load]);
 
-  const openDetail = useCallback(async (id: string) => {
+  const switchMode = (next: Mode) => {
+    if (next === mode) return;
+    if (next === "mine") {
+      resetToMine();
+      return;
+    }
     setError("");
+    setPhotoListLabel(null);
+    setPhotos([]);
+    setTotal(0);
+    setPage(1);
+    setPages(1);
+    setMode(next);
+    if (next === "albums") setSelectedAlbum(null);
+    if (next === "user") {
+      setUserQuery("");
+      setUserProfile(null);
+      setUserSubMode("photos");
+      setUserAlbums([]);
+      setSelectedUserAlbum(null);
+    }
+    if (next === "group") {
+      setGroupQuery("");
+      setGroupInfo(null);
+      setGroupResults(null);
+    }
+    if (next === "search") {
+      setSearchQuery("");
+      setActiveSearchQuery("");
+    }
+  };
+
+  const selectAlbum = (album: Album) => {
+    setSelectedAlbum(album);
+    setPage(1);
+    loadAlbumPhotos(album, 1);
+  };
+
+  const goUser = async (e: FormEvent) => {
+    e.preventDefault();
+    const q = userQuery.trim();
+    if (!q) return;
+    setError("");
+    setLoading(true);
     try {
-      setDetail(await getJSON<PhotoDetail>(`/api/photos/${id}`));
-      bus.emit("photoOpened", id);
+      const profile = await lookupUser(q);
+      setUserProfile(profile);
+      setUserSubMode("photos");
+      setPage(1);
+      await loadUserPhotosPage(profile.nsid, 1);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
+      setLoading(false);
     }
-  }, []);
+  };
+
+  const openUserAlbums = async () => {
+    if (!userProfile) return;
+    setUserSubMode("albums");
+    setSelectedUserAlbum(null);
+    setPhotos([]);
+    setTotal(0);
+    setLoading(true);
+    setError("");
+    try {
+      const r = await getUserAlbums(userProfile.nsid);
+      setUserAlbums(r.albums);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const backToUserPhotos = () => {
+    setUserSubMode("photos");
+    setSelectedUserAlbum(null);
+    if (userProfile) {
+      setPage(1);
+      loadUserPhotosPage(userProfile.nsid, 1);
+    }
+  };
+
+  const selectUserAlbum = (album: Album) => {
+    if (!userProfile) return;
+    setSelectedUserAlbum(album);
+    setPage(1);
+    loadUserAlbumPhotosPage(userProfile.nsid, album.id, 1);
+  };
+
+  const goGroup = async (e: FormEvent) => {
+    e.preventDefault();
+    const q = groupQuery.trim();
+    if (!q) return;
+    setError("");
+    setGroupInfo(null);
+    setGroupResults(null);
+    setLoading(true);
+    try {
+      if (GROUP_ID_RE.test(q) || q.includes("flickr.com/groups/")) {
+        const info = await getGroupInfo(q);
+        setGroupInfo(info);
+        setPage(1);
+        await loadGroupPhotosPage(info.id, 1);
+      } else {
+        setGroupResults((await searchGroups(q)).groups);
+        setLoading(false);
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+      setLoading(false);
+    }
+  };
+
+  const pickGroup = async (g: GroupSearchResult) => {
+    setError("");
+    setLoading(true);
+    try {
+      const info = await getGroupInfo(g.id);
+      setGroupInfo(info);
+      setGroupResults(null);
+      setPage(1);
+      await loadGroupPhotosPage(info.id, 1);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+      setLoading(false);
+    }
+  };
+
+  const goSearch = async (e: FormEvent) => {
+    e.preventDefault();
+    const q = searchQuery.trim();
+    if (!q) return;
+    setActiveSearchQuery(q);
+    setPage(1);
+    await loadSearchPhotosPage(q, 1);
+  };
 
   useEffect(() => {
     load(DEFAULT_FILTERS, 0);
     getJSON<{ albums: Album[] }>("/api/albums")
       .then((r) => setAlbums(r.albums))
       .catch(() => {});
-    const match = window.location.hash.match(/photo=(\d+)/);
-    if (match) openDetail(match[1]);
-    return bus.on("focusPhoto", openDetail);
-  }, [load, openDetail]);
+  }, [load]);
 
   useEffect(
     () =>
       bus.on("showPhotoList", (ids) => {
-        setDetail(null);
+        setError("");
+        setMode("mine");
         setSelectedAlbum(null);
+        setUserProfile(null);
+        setGroupInfo(null);
+        setGroupResults(null);
+        setActiveSearchQuery("");
         setPhotoListLabel(
           ids.length ? `${ids.length.toLocaleString("en")} photo${ids.length === 1 ? "" : "s"} found` : "No photos found",
         );
@@ -277,37 +403,65 @@ export function PhotoBrowser() {
     [loadPhotoList],
   );
 
-  const closeDetail = useCallback(() => {
-    setDetail(null);
-    bus.emit("photoOpened", null);
-  }, []);
-
-  const submit = (e: FormEvent) => {
+  const submitMine = (e: FormEvent) => {
     e.preventDefault();
-    closeDetail();
     setPhotoListLabel(null);
     setFilters(draft);
     load(draft, 0);
   };
 
-  if (detail) {
-    return (
-      <div className="panel photo-browser">
-        <DetailView detail={detail} onBack={closeDetail} />
-      </div>
-    );
-  }
+  const showResults =
+    mode === "mine" ||
+    (mode === "albums" && !!selectedAlbum) ||
+    (mode === "user" && (userSubMode === "photos" ? !!userProfile : !!selectedUserAlbum)) ||
+    (mode === "group" && !!groupInfo) ||
+    (mode === "search" && !!activeSearchQuery);
 
-  const loadMoreAlbum = () => {
-    if (!selectedAlbum) return;
-    const next = albumPage + 1;
-    setAlbumPage(next);
-    loadAlbumPhotos(selectedAlbum, next);
+  const canLoadMore =
+    mode === "mine" ? !photoListLabel && photos.length < total : showResults && page < pages;
+
+  const loadMore = () => {
+    const next = page + 1;
+    if (mode === "mine") {
+      load(filters, photos.length);
+    } else if (mode === "albums" && selectedAlbum) {
+      setPage(next);
+      loadAlbumPhotos(selectedAlbum, next);
+    } else if (mode === "user" && userSubMode === "photos" && userProfile) {
+      setPage(next);
+      loadUserPhotosPage(userProfile.nsid, next);
+    } else if (mode === "user" && userSubMode === "albums" && selectedUserAlbum && userProfile) {
+      setPage(next);
+      loadUserAlbumPhotosPage(userProfile.nsid, selectedUserAlbum.id, next);
+    } else if (mode === "group" && groupInfo) {
+      setPage(next);
+      loadGroupPhotosPage(groupInfo.id, next);
+    } else if (mode === "search" && activeSearchQuery) {
+      setPage(next);
+      loadSearchPhotosPage(activeSearchQuery, next);
+    }
   };
 
   return (
     <div className="panel photo-browser">
-      {collectionCommands.length > 0 && (
+      <div className="browse-modes">
+        {MODES.map((m) => (
+          <button
+            key={m.id}
+            className={mode === m.id ? "browse-mode active" : "browse-mode"}
+            onClick={() => switchMode(m.id)}
+          >
+            {m.label}
+          </button>
+        ))}
+        {mode !== "mine" && (
+          <button className="browse-mode" onClick={resetToMine} title="Back to My Photos">
+            ✕ Clear
+          </button>
+        )}
+      </div>
+
+      {mode === "mine" && collectionCommands.length > 0 && (
         <div className="detail-workflows">
           {collectionCommands.map((c) => (
             <button
@@ -320,91 +474,228 @@ export function PhotoBrowser() {
           ))}
         </div>
       )}
-      {albums.length > 0 && (
-        <select
-          className="album-select"
-          value={selectedAlbum?.id ?? ""}
-          onChange={(e) => {
-            const album = albums.find((a) => a.id === e.target.value);
-            if (album) selectAlbum(album);
-            else clearAlbum();
-          }}
-        >
-          <option value="">All albums…</option>
-          {albums.map((a) => (
-            <option key={a.id} value={a.id}>
-              {(a.title || a.id) + ` (${a.count_photos})`}
-            </option>
-          ))}
-        </select>
-      )}
-      {photoListLabel ? (
-        <div className="album-banner">
-          <span>
-            <strong>{photoListLabel}</strong> — from a workflow, for review
-          </span>
-          <button onClick={clearAlbum}>✕ Clear</button>
-        </div>
-      ) : selectedAlbum ? (
-        <div className="album-banner">
-          <span>
-            Album: <strong>{selectedAlbum.title || selectedAlbum.id}</strong>
-          </span>
-          <button onClick={clearAlbum}>✕ Clear</button>
-        </div>
-      ) : (
-        <form className="toolbar" onSubmit={submit}>
-          <input
-            placeholder="Search title/description…"
-            value={draft.query}
-            onChange={(e) => setDraft({ ...draft, query: e.target.value })}
-          />
-          <input
-            placeholder="Tags…"
-            value={draft.tags}
-            onChange={(e) => setDraft({ ...draft, tags: e.target.value })}
-          />
-          <select value={draft.sort} onChange={(e) => setDraft({ ...draft, sort: e.target.value })}>
-            <option value="date_taken">Newest</option>
-            <option value="views">Most viewed</option>
-            <option value="favorites">Most faved</option>
-            <option value="comments">Most commented</option>
-            <option value="random">Random</option>
-          </select>
+
+      {mode === "mine" &&
+        (photoListLabel ? (
+          <div className="album-banner">
+            <span>
+              <strong>{photoListLabel}</strong> — from a workflow, for review
+            </span>
+          </div>
+        ) : (
+          <form className="toolbar" onSubmit={submitMine}>
+            <input
+              placeholder="Search title/description…"
+              value={draft.query}
+              onChange={(e) => setDraft({ ...draft, query: e.target.value })}
+            />
+            <input
+              placeholder="Tags…"
+              value={draft.tags}
+              onChange={(e) => setDraft({ ...draft, tags: e.target.value })}
+            />
+            <select value={draft.sort} onChange={(e) => setDraft({ ...draft, sort: e.target.value })}>
+              <option value="date_taken">Newest</option>
+              <option value="views">Most viewed</option>
+              <option value="favorites">Most faved</option>
+              <option value="comments">Most commented</option>
+              <option value="random">Random</option>
+            </select>
+            <select
+              value={draft.visibility}
+              onChange={(e) => setDraft({ ...draft, visibility: e.target.value })}
+            >
+              <option value="">All</option>
+              <option value="1">Public</option>
+              <option value="0">Private</option>
+            </select>
+            <button type="submit" disabled={loading}>
+              Search
+            </button>
+          </form>
+        ))}
+
+      {mode === "albums" && (
+        <>
           <select
-            value={draft.visibility}
-            onChange={(e) => setDraft({ ...draft, visibility: e.target.value })}
+            className="album-select"
+            value={selectedAlbum?.id ?? ""}
+            onChange={(e) => {
+              const album = albums.find((a) => a.id === e.target.value);
+              if (album) selectAlbum(album);
+            }}
           >
-            <option value="">All</option>
-            <option value="1">Public</option>
-            <option value="0">Private</option>
+            <option value="" disabled>
+              Choose an album…
+            </option>
+            {albums.map((a) => (
+              <option key={a.id} value={a.id}>
+                {(a.title || a.id) + ` (${a.count_photos})`}
+              </option>
+            ))}
           </select>
+          {selectedAlbum && (
+            <div className="album-banner">
+              <span>
+                Album: <strong>{selectedAlbum.title || selectedAlbum.id}</strong>
+                {selectedAlbum.description ? ` — ${selectedAlbum.description}` : ""}
+              </span>
+            </div>
+          )}
+        </>
+      )}
+
+      {mode === "user" && (
+        <>
+          {!userProfile && (
+            <form className="toolbar" onSubmit={goUser}>
+              <input
+                placeholder="Username, NSID, or profile URL…"
+                value={userQuery}
+                onChange={(e) => setUserQuery(e.target.value)}
+              />
+              <button type="submit" disabled={loading}>
+                Go
+              </button>
+            </form>
+          )}
+          {userProfile && (
+            <div className="browse-header">
+              {userProfile.avatar_url && <img className="owner-avatar" src={userProfile.avatar_url} alt="" />}
+              <div>
+                <p>
+                  <a href={userProfile.profile_url} target="_blank" rel="noreferrer">
+                    <strong>{userProfile.realname || userProfile.username || userProfile.nsid}</strong>
+                  </a>
+                  {userProfile.location ? ` · ${userProfile.location}` : ""}
+                  {" · "}
+                  {compactNumber(userProfile.photo_count)} photos
+                </p>
+                {userProfile.description && <p className="hint">{userProfile.description}</p>}
+                <p className="chip-row">
+                  {userProfile.you_follow && <span className="chip">You follow them</span>}
+                  {userProfile.follows_you && <span className="chip">Follows you</span>}
+                  {userProfile.is_friend && <span className="chip">Friend</span>}
+                  {userProfile.is_family && <span className="chip">Family</span>}
+                </p>
+                <div className="browse-modes">
+                  <button
+                    className={userSubMode === "photos" ? "browse-mode active" : "browse-mode"}
+                    onClick={backToUserPhotos}
+                  >
+                    Photos
+                  </button>
+                  <button
+                    className={userSubMode === "albums" ? "browse-mode active" : "browse-mode"}
+                    onClick={openUserAlbums}
+                  >
+                    Albums
+                  </button>
+                </div>
+                {userSubMode === "albums" && (
+                  <>
+                    <select
+                      className="album-select"
+                      value={selectedUserAlbum?.id ?? ""}
+                      onChange={(e) => {
+                        const album = userAlbums.find((a) => a.id === e.target.value);
+                        if (album) selectUserAlbum(album);
+                      }}
+                    >
+                      <option value="" disabled>
+                        Choose an album…
+                      </option>
+                      {userAlbums.map((a) => (
+                        <option key={a.id} value={a.id}>
+                          {(a.title || a.id) + ` (${a.count_photos})`}
+                        </option>
+                      ))}
+                    </select>
+                    {selectedUserAlbum?.description && (
+                      <p className="hint">{selectedUserAlbum.description}</p>
+                    )}
+                  </>
+                )}
+              </div>
+            </div>
+          )}
+        </>
+      )}
+
+      {mode === "group" && (
+        <>
+          {!groupInfo && (
+            <form className="toolbar" onSubmit={goGroup}>
+              <input
+                placeholder="Group name, ID, or URL…"
+                value={groupQuery}
+                onChange={(e) => setGroupQuery(e.target.value)}
+              />
+              <button type="submit" disabled={loading}>
+                Go
+              </button>
+            </form>
+          )}
+          {groupResults && (
+            <div className="browse-header">
+              <p className="hint">Pick a group:</p>
+              {groupResults.map((g) => (
+                <button key={g.id} className="browse-mode" onClick={() => pickGroup(g)}>
+                  {g.name} ({compactNumber(g.members)} members)
+                </button>
+              ))}
+            </div>
+          )}
+          {groupInfo && (
+            <div className="browse-header">
+              <p>
+                <a href={groupInfo.url} target="_blank" rel="noreferrer">
+                  <strong>{groupInfo.name}</strong>
+                </a>
+                {" · "}
+                {compactNumber(groupInfo.members)} members · {compactNumber(groupInfo.pool_count)} photos
+                {" · "}
+                <span className="chip">{groupInfo.joined ? "Joined" : "Not joined"}</span>
+              </p>
+              {groupInfo.description && <p className="hint">{groupInfo.description}</p>}
+              {groupInfo.rules && <p className="hint">Rules: {groupInfo.rules}</p>}
+            </div>
+          )}
+        </>
+      )}
+
+      {mode === "search" && (
+        <form className="toolbar" onSubmit={goSearch}>
+          <input
+            placeholder="Search all of Flickr…"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+          />
           <button type="submit" disabled={loading}>
-            Search
+            Go
           </button>
         </form>
       )}
+
       {error && <p className="error">{error}</p>}
-      <p className="result-count">
-        {total.toLocaleString("en")} photo{total === 1 ? "" : "s"}
-      </p>
-      <div className="thumb-grid">
-        {photos.map((p) => (
-          <Thumb key={p.id} photo={p} onClick={() => openDetail(p.id)} />
-        ))}
-      </div>
-      {selectedAlbum
-        ? albumPage < albumPages && (
-            <button className="load-more" disabled={loading} onClick={loadMoreAlbum}>
-              {loading ? "Loading…" : `Load more (${photos.length} of ${total.toLocaleString("en")})`}
-            </button>
-          )
-        : !photoListLabel &&
-          photos.length < total && (
-            <button className="load-more" disabled={loading} onClick={() => load(filters, photos.length)}>
+
+      {showResults && (
+        <>
+          <p className="result-count">
+            {total.toLocaleString("en")} photo{total === 1 ? "" : "s"}
+          </p>
+          <div className="thumb-grid">
+            {photos.map((p) => (
+              <Thumb key={p.id} photo={p} onClick={() => bus.emit("viewPhoto", p.id)} />
+            ))}
+          </div>
+          {canLoadMore && (
+            <button className="load-more" disabled={loading} onClick={loadMore}>
               {loading ? "Loading…" : `Load more (${photos.length} of ${total.toLocaleString("en")})`}
             </button>
           )}
+        </>
+      )}
     </div>
   );
 }

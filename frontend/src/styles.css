@@ -430,6 +430,31 @@ select:focus {
   margin-bottom: 8px;
 }
 
+.browse-modes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+
+.browse-mode {
+  font-size: 0.8125rem;
+  padding: 4px 10px;
+  border-color: var(--border);
+  color: var(--ink-muted);
+}
+
+.browse-mode.active {
+  border-color: var(--accent);
+  color: var(--ink);
+}
+
+.browse-header {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
 .photo-detail .detail-toolbar {
   display: flex;
   justify-content: space-between;

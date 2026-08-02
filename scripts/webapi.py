@@ -12,7 +12,9 @@ handlers, so responses are structured JSON instead of formatted text.
 
 import json
 import logging
+import math
 import os
+import re
 import secrets
 
 from starlette.requests import Request
@@ -35,6 +37,51 @@ _PHOTO_COLUMNS = (
 _SORTABLE = ("date_taken", "views", "favorites", "comments", "date_uploaded")
 
 SYNC_TYPES = ("photos", "contacts", "groups", "albums", "all", "backfill")
+
+# extras requested on every live "list of photos" call below, matched by
+# _photo_dict_from_api's field mapping.
+_LIVE_PHOTO_EXTRAS = "url_m,url_o,date_taken,views,count_faves,count_comments"
+
+_GROUP_URL_RE = re.compile(r"flickr\.com/groups/([^/\s]+)")
+
+
+def _photo_dict_from_api(p: dict, owner: str | None = None) -> dict:
+    """Map one raw Flickr photo dict (from a photos.search/getPhotos-style
+    response fetched with extras=_LIVE_PHOTO_EXTRAS) into the same shape as
+    _PHOTO_COLUMNS/the frontend Photo interface, for photos that were never
+    synced to the local DB (someone else's photostream, a group pool, search
+    results) — mirrors the field set api_photos/api_album_photos return.
+
+    ``owner`` overrides the response's own "owner" field — flickr.photosets.
+    getPhotos doesn't embed it (it's implied by the request's user_id), so
+    callers that already know the owner nsid should pass it explicitly."""
+    owner = owner or p.get("owner", "")
+    return {
+        "id":            p["id"],
+        "title":         p.get("title", ""),
+        "description":   "",
+        "date_taken":    p.get("datetaken", ""),
+        "date_uploaded": 0,
+        "last_updated":  0,
+        "url_photopage": f"https://www.flickr.com/photos/{owner}/{p['id']}/",
+        "url_original":  p.get("url_o"),
+        "url_medium":    p.get("url_m"),
+        "tags":          "",
+        "views":         int(p.get("views", 0) or 0),
+        "favorites":     int(p.get("count_faves", 0) or 0),
+        "comments":      int(p.get("count_comments", 0) or 0),
+        "is_public":     1,
+        "synced_at":     0,
+    }
+
+
+def _parse_page_limit(qp, default_limit: int = 60, max_limit: int = 200) -> tuple[int, int]:
+    """Shared page/limit parsing for the page-based live-listing routes
+    (raises ValueError, matching the pattern each caller already converts
+    into a 400 response)."""
+    limit = min(int(qp.get("limit", default_limit)), max_limit)
+    page = max(int(qp.get("page", 1)), 1)
+    return page, limit
 
 
 def _session_user(request: Request) -> dict | None:
@@ -412,6 +459,353 @@ async def api_album_photos(request: Request):
         "page": page,
         "pages": pages,
         "photos": [photos_by_id[i] for i in ids if i in photos_by_id],
+    })
+
+
+async def api_user_lookup(request: Request):
+    """GET /api/users/lookup?q=<username|nsid|profile-or-photo-URL> —
+    resolve any Flickr user reference to a full profile, for the Photo
+    Browser's "User" browse mode."""
+    user = _session_user(request)
+    if not user:
+        return _unauthorized()
+
+    q = request.query_params.get("q", "").strip()
+    if not q:
+        return JSONResponse({"error": "q is required"}, status_code=400)
+
+    from db import _current_user as _ctx
+
+    token = _ctx.set(user)
+    try:
+        nsid = flickr_api.resolve_user_id(q)
+        data = flickr_api._api_get("flickr.people.getInfo", {"user_id": nsid})
+    except RuntimeError as e:
+        return JSONResponse({"error": str(e)}, status_code=404)
+    except flickr_api.FlickrAPIError as e:
+        status = 404 if e.code == 1 else 502
+        return JSONResponse({"error": e.flickr_message}, status_code=status)
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=502)
+    finally:
+        _ctx.reset(token)
+
+    p = data.get("person", {})
+    resolved_nsid = p.get("nsid", nsid)
+    iconserver = str(p.get("iconserver", "0"))
+    iconfarm = p.get("iconfarm", 0)
+    if iconserver and iconserver != "0":
+        avatar_url = f"https://farm{iconfarm}.staticflickr.com/{iconserver}/buddyicons/{resolved_nsid}.jpg"
+    else:
+        avatar_url = "https://www.flickr.com/images/buddyicon.gif"
+
+    return JSONResponse({
+        "nsid":        resolved_nsid,
+        "username":    p.get("username", {}).get("_content", ""),
+        "realname":    p.get("realname", {}).get("_content", ""),
+        "location":    p.get("location", {}).get("_content", ""),
+        "description": p.get("description", {}).get("_content", ""),
+        "photo_count": int(p.get("photos", {}).get("count", {}).get("_content", 0) or 0),
+        "profile_url": f"https://www.flickr.com/people/{resolved_nsid}/",
+        "avatar_url":  avatar_url,
+        "is_own":      resolved_nsid == user["nsid"],
+        "you_follow":  bool(p.get("contact")),
+        "follows_you": bool(p.get("revcontact")),
+        "is_friend":   bool(p.get("friend")),
+        "is_family":   bool(p.get("family")),
+    })
+
+
+async def api_user_photos(request: Request):
+    """GET /api/users/{nsid}/photos?page=&limit= — any user's public
+    photostream, fetched live (never cached locally)."""
+    user = _session_user(request)
+    if not user:
+        return _unauthorized()
+
+    nsid = request.path_params["nsid"]
+    try:
+        page, limit = _parse_page_limit(request.query_params)
+    except ValueError:
+        return JSONResponse({"error": "page/limit must be integers"}, status_code=400)
+
+    from db import _current_user as _ctx
+
+    token = _ctx.set(user)
+    try:
+        data = flickr_api._api_get("flickr.people.getPhotos", {
+            "user_id": nsid, "per_page": str(limit), "page": str(page),
+            "extras": _LIVE_PHOTO_EXTRAS,
+        })
+    except flickr_api.FlickrAPIError as e:
+        status = 404 if e.code == 1 else 502
+        return JSONResponse({"error": e.flickr_message}, status_code=status)
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=502)
+    finally:
+        _ctx.reset(token)
+
+    container = data.get("photos", {})
+    photos = [_photo_dict_from_api(p, owner=nsid) for p in container.get("photo", [])]
+    return JSONResponse({
+        "total": int(container.get("total", 0) or 0),
+        "page":  page,
+        "pages": int(container.get("pages", 0) or 0),
+        "photos": photos,
+    })
+
+
+async def api_user_albums(request: Request):
+    """GET /api/users/{nsid}/albums — any user's public albums, fetched live."""
+    user = _session_user(request)
+    if not user:
+        return _unauthorized()
+
+    nsid = request.path_params["nsid"]
+
+    from db import _current_user as _ctx
+
+    token = _ctx.set(user)
+    try:
+        data = flickr_api._api_get("flickr.photosets.getList", {
+            "user_id": nsid, "primary_photo_extras": "url_q",
+        })
+    except flickr_api.FlickrAPIError as e:
+        status = 404 if e.code == 1 else 502
+        return JSONResponse({"error": e.flickr_message}, status_code=status)
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=502)
+    finally:
+        _ctx.reset(token)
+
+    albums = [
+        {
+            "id":           s["id"],
+            "title":        s.get("title", {}).get("_content", ""),
+            "description":  s.get("description", {}).get("_content", ""),
+            "count_photos": int(s.get("photos", 0) or 0) + int(s.get("videos", 0) or 0),
+            "count_views":  0,  # not exposed by flickr.photosets.getList
+            "thumb_url":    s.get("url_q"),
+        }
+        for s in data.get("photosets", {}).get("photoset", [])
+    ]
+    return JSONResponse({"albums": albums})
+
+
+async def api_user_album_photos(request: Request):
+    """GET /api/users/{nsid}/albums/{album_id}/photos?page=&limit= — any
+    user's album photos, fetched live. Never joined against the local DB
+    (unlike api_album_photos for your own albums) since another user's
+    photos are never synced there."""
+    user = _session_user(request)
+    if not user:
+        return _unauthorized()
+
+    nsid = request.path_params["nsid"]
+    album_id = request.path_params["album_id"]
+    try:
+        page, limit = _parse_page_limit(request.query_params)
+    except ValueError:
+        return JSONResponse({"error": "page/limit must be integers"}, status_code=400)
+
+    from db import _current_user as _ctx
+
+    token = _ctx.set(user)
+    try:
+        data = flickr_api._api_get("flickr.photosets.getPhotos", {
+            "photoset_id": album_id, "user_id": nsid,
+            "per_page": str(limit), "page": str(page),
+            "extras": _LIVE_PHOTO_EXTRAS,
+        })
+    except flickr_api.FlickrAPIError as e:
+        status = 404 if e.code == 1 else 502
+        return JSONResponse({"error": e.flickr_message}, status_code=status)
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=502)
+    finally:
+        _ctx.reset(token)
+
+    photoset = data.get("photoset", {})
+    photos = [_photo_dict_from_api(p, owner=nsid) for p in photoset.get("photo", [])]
+    return JSONResponse({
+        "total": int(photoset.get("total", 0) or 0),
+        "page":  page,
+        "pages": int(photoset.get("pages", 0) or 0),
+        "photos": photos,
+    })
+
+
+def _resolve_group_id(raw: str) -> str | None:
+    """Extract a group NSID from a raw group-id or flickr.com/groups/<x>/
+    URL. Returns None if the result isn't NSID-shaped (e.g. a path alias, or
+    plain keywords) — flickr.groups.getInfo requires the real NSID and
+    there's no lookup-by-name API, so callers should fall back to group
+    search in that case."""
+    m = _GROUP_URL_RE.search(raw)
+    candidate = m.group(1) if m else raw
+    return candidate if flickr_api._NSID_RE.match(candidate) else None
+
+
+async def api_group_info(request: Request):
+    """GET /api/groups/{id} — any group's info (name/description/rules/
+    popularity), plus whether the caller has joined it, for the Photo
+    Browser's "Group" browse mode header."""
+    user = _session_user(request)
+    if not user:
+        return _unauthorized()
+
+    raw_id = request.path_params["id"]
+    group_id = _resolve_group_id(raw_id)
+    if not group_id:
+        return JSONResponse(
+            {"error": "Not a group ID — try Search Flickr Groups instead."},
+            status_code=400,
+        )
+
+    from db import _current_user as _ctx
+
+    token = _ctx.set(user)
+    try:
+        data = flickr_api._api_get("flickr.groups.getInfo", {"group_id": group_id})
+    except flickr_api.FlickrAPIError as e:
+        status = 404 if e.code == 1 else 502
+        return JSONResponse({"error": e.flickr_message}, status_code=status)
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=502)
+    finally:
+        _ctx.reset(token)
+
+    group = data.get("group", {})
+    with get_db_for_user(user["username"]) as conn:
+        joined = conn.execute(
+            "SELECT user_note FROM groups WHERE id = ?", (group_id,)
+        ).fetchone()
+
+    return JSONResponse({
+        "id":          group_id,
+        "name":        group.get("name", ""),
+        "description": (group.get("description") or {}).get("_content", ""),
+        "rules":       (group.get("rules") or {}).get("_content", ""),
+        "members":     int(group.get("members", 0) or 0),
+        "pool_count":  int(group.get("pool_count", 0) or 0),
+        "url":         f"https://www.flickr.com/groups/{group_id}/",
+        "joined":      joined is not None,
+        "your_note":   joined["user_note"] if joined else None,
+    })
+
+
+async def api_group_search(request: Request):
+    """GET /api/groups/search?q= — keyword search across all Flickr groups,
+    for picking a group by name in the Photo Browser's "Group" mode."""
+    user = _session_user(request)
+    if not user:
+        return _unauthorized()
+
+    q = request.query_params.get("q", "").strip()
+    if not q:
+        return JSONResponse({"error": "q is required"}, status_code=400)
+
+    from db import _current_user as _ctx
+
+    token = _ctx.set(user)
+    try:
+        data = flickr_api._api_get("flickr.groups.search", {"text": q, "per_page": "20"})
+    except flickr_api.FlickrAPIError as e:
+        status = 404 if e.code == 1 else 502
+        return JSONResponse({"error": e.flickr_message}, status_code=status)
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=502)
+    finally:
+        _ctx.reset(token)
+
+    groups = [
+        {
+            "id":         g.get("nsid", ""),
+            "name":       g.get("name", ""),
+            "members":    int(g.get("members", 0) or 0),
+            "pool_count": int(g.get("pool_count", 0) or 0),
+            "url":        f"https://www.flickr.com/groups/{g.get('nsid', '')}/",
+        }
+        for g in data.get("groups", {}).get("group", [])
+    ]
+    return JSONResponse({"groups": groups})
+
+
+async def api_group_photos(request: Request):
+    """GET /api/groups/{id}/photos?page=&limit= — a group pool's photos,
+    fetched live."""
+    user = _session_user(request)
+    if not user:
+        return _unauthorized()
+
+    group_id = request.path_params["id"]
+    try:
+        page, limit = _parse_page_limit(request.query_params)
+    except ValueError:
+        return JSONResponse({"error": "page/limit must be integers"}, status_code=400)
+
+    from db import _current_user as _ctx
+
+    token = _ctx.set(user)
+    try:
+        data = flickr_api._api_get("flickr.groups.pools.getPhotos", {
+            "group_id": group_id, "per_page": str(limit), "page": str(page),
+            "extras": _LIVE_PHOTO_EXTRAS,
+        })
+    except flickr_api.FlickrAPIError as e:
+        status = 404 if e.code == 1 else 502
+        return JSONResponse({"error": e.flickr_message}, status_code=status)
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=502)
+    finally:
+        _ctx.reset(token)
+
+    container = data.get("photos", {})
+    total = int(container.get("total", 0) or 0)
+    pages = container.get("pages")
+    pages = int(pages) if pages else math.ceil(total / limit) if total else 0
+    photos = [_photo_dict_from_api(p) for p in container.get("photo", [])]
+    return JSONResponse({"total": total, "page": page, "pages": pages, "photos": photos})
+
+
+async def api_search_photos(request: Request):
+    """GET /api/search/photos?q=&page=&limit= — site-wide Flickr keyword
+    search, for the Photo Browser's "Search" browse mode."""
+    user = _session_user(request)
+    if not user:
+        return _unauthorized()
+
+    q = request.query_params.get("q", "").strip()
+    if not q:
+        return JSONResponse({"error": "q is required"}, status_code=400)
+    try:
+        page, limit = _parse_page_limit(request.query_params)
+    except ValueError:
+        return JSONResponse({"error": "page/limit must be integers"}, status_code=400)
+
+    from db import _current_user as _ctx
+
+    token = _ctx.set(user)
+    try:
+        data = flickr_api._api_get("flickr.photos.search", {
+            "text": q, "per_page": str(limit), "page": str(page),
+            "extras": _LIVE_PHOTO_EXTRAS,
+        })
+    except flickr_api.FlickrAPIError as e:
+        status = 404 if e.code == 1 else 502
+        return JSONResponse({"error": e.flickr_message}, status_code=status)
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=502)
+    finally:
+        _ctx.reset(token)
+
+    container = data.get("photos", {})
+    photos = [_photo_dict_from_api(p) for p in container.get("photo", [])]
+    return JSONResponse({
+        "total": int(container.get("total", 0) or 0),
+        "page":  page,
+        "pages": int(container.get("pages", 0) or 0),
+        "photos": photos,
     })
 
 
@@ -906,6 +1300,16 @@ def api_routes() -> list[Route]:
         Route("/api/photos/{id}/comment", endpoint=api_photo_comment, methods=["POST"]),
         Route("/api/albums",       endpoint=api_albums),
         Route("/api/albums/{id}/photos", endpoint=api_album_photos),
+        Route("/api/users/lookup",       endpoint=api_user_lookup),
+        Route("/api/users/{nsid}/photos", endpoint=api_user_photos),
+        Route("/api/users/{nsid}/albums", endpoint=api_user_albums),
+        Route("/api/users/{nsid}/albums/{album_id}/photos", endpoint=api_user_album_photos),
+        # /groups/search must precede /groups/{id} — otherwise {id} would
+        # greedily match the literal "search" segment first.
+        Route("/api/groups/search",      endpoint=api_group_search),
+        Route("/api/groups/{id}",        endpoint=api_group_info),
+        Route("/api/groups/{id}/photos", endpoint=api_group_photos),
+        Route("/api/search/photos", endpoint=api_search_photos),
         Route("/api/stats",        endpoint=api_stats),
         Route("/api/sync/status",  endpoint=api_sync_status),
         Route("/api/sync/{type}/cancel", endpoint=api_sync_cancel, methods=["POST"]),

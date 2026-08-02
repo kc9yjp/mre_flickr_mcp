@@ -331,7 +331,7 @@ async def run_turn(
     Caller must hold the user's turn lock and have verified cfg has a model.
 
     ``focused_photo_id`` — whichever photo is currently open in the caller's
-    Photo Browser panel, if any. It is injected as a system note for THIS
+    Photo Viewer panel, if any. It is injected as a system note for THIS
     turn's LLM call only and is never persisted to the stored conversation:
     the note would otherwise go stale the moment the user looks at a
     different photo, silently misdirecting later turns that replay history.

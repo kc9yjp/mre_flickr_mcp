@@ -56,6 +56,46 @@ export interface AlbumPhotoPage {
   photos: Photo[];
 }
 
+// Shape shared by every live (non-local-DB) paginated photo listing: another
+// user's photostream/album, a group pool, or a site-wide Flickr search.
+export type LivePhotoPage = AlbumPhotoPage;
+
+export interface UserProfile {
+  nsid: string;
+  username: string;
+  realname: string;
+  location: string;
+  description: string;
+  photo_count: number;
+  profile_url: string;
+  avatar_url: string;
+  is_own: boolean;
+  you_follow: boolean;
+  follows_you: boolean;
+  is_friend: boolean;
+  is_family: boolean;
+}
+
+export interface GroupInfo {
+  id: string;
+  name: string;
+  description: string;
+  rules: string;
+  members: number;
+  pool_count: number;
+  url: string;
+  joined: boolean;
+  your_note: string | null;
+}
+
+export interface GroupSearchResult {
+  id: string;
+  name: string;
+  members: number;
+  pool_count: number;
+  url: string;
+}
+
 export interface Stats {
   total_photos: number;
   public_photos: number;
@@ -347,6 +387,43 @@ export async function favePhoto(id: string): Promise<{ ok: true }> {
 
 export async function commentOnPhoto(id: string, commentText: string): Promise<{ ok: true; comment_id: string }> {
   return postJSON(`/api/photos/${id}/comment`, { comment_text: commentText });
+}
+
+// ── Live browsing: other users, groups, site-wide search ──────────────────
+
+export async function lookupUser(q: string): Promise<UserProfile> {
+  return getJSON<UserProfile>("/api/users/lookup", { q });
+}
+
+export async function getUserPhotos(nsid: string, page: number): Promise<LivePhotoPage> {
+  return getJSON<LivePhotoPage>(`/api/users/${encodeURIComponent(nsid)}/photos`, { page: String(page) });
+}
+
+export async function getUserAlbums(nsid: string): Promise<{ albums: Album[] }> {
+  return getJSON<{ albums: Album[] }>(`/api/users/${encodeURIComponent(nsid)}/albums`);
+}
+
+export async function getUserAlbumPhotos(nsid: string, albumId: string, page: number): Promise<LivePhotoPage> {
+  return getJSON<LivePhotoPage>(
+    `/api/users/${encodeURIComponent(nsid)}/albums/${encodeURIComponent(albumId)}/photos`,
+    { page: String(page) },
+  );
+}
+
+export async function getGroupInfo(id: string): Promise<GroupInfo> {
+  return getJSON<GroupInfo>(`/api/groups/${encodeURIComponent(id)}`);
+}
+
+export async function searchGroups(q: string): Promise<{ groups: GroupSearchResult[] }> {
+  return getJSON<{ groups: GroupSearchResult[] }>("/api/groups/search", { q });
+}
+
+export async function getGroupPhotos(id: string, page: number): Promise<LivePhotoPage> {
+  return getJSON<LivePhotoPage>(`/api/groups/${encodeURIComponent(id)}/photos`, { page: String(page) });
+}
+
+export async function searchFlickrPhotos(q: string, page: number): Promise<LivePhotoPage> {
+  return getJSON<LivePhotoPage>("/api/search/photos", { q, page: String(page) });
 }
 
 export async function postJSON<T>(url: string, body?: unknown): Promise<T> {

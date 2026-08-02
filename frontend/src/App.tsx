@@ -12,7 +12,7 @@ import {
 import { initSession, Me } from "./api";
 import * as bus from "./bus";
 import { PhotoBrowser } from "./panels/PhotoBrowser";
-import { OtherPhotoView } from "./panels/OtherPhotoView";
+import { PhotoViewer } from "./panels/PhotoViewer";
 import { Summary } from "./panels/Summary";
 import { Command } from "./panels/Command";
 import { Chat } from "./panels/Chat";
@@ -33,7 +33,7 @@ const LAYOUT_KEY = "workbench-layout-v1";
 
 const components: Record<string, React.FC<IDockviewPanelProps>> = {
   photos: PhotoBrowser,
-  "other-photo": OtherPhotoView,
+  "photo-viewer": PhotoViewer,
   summary: Summary,
   command: Command,
   chat: Chat,
@@ -68,13 +68,11 @@ function defaultLayout(api: DockviewApi) {
   api.getPanel("chat")?.api.setActive();
 }
 
-function parseHash(): { kind: "photo" | "other"; id: string } | null {
-  const hash = window.location.hash;
-  const photoMatch = hash.match(/photo=(\d+)/);
-  if (photoMatch) return { kind: "photo", id: photoMatch[1] };
-  const otherMatch = hash.match(/other=(\d+)/);
-  if (otherMatch) return { kind: "other", id: otherMatch[1] };
-  return null;
+// #photo=<id> (own) and #other=<id> (bookmarklet/extension, someone else's)
+// both just mean "view this photo" — the Viewer determines is_own itself.
+function parseHash(): string | null {
+  const m = window.location.hash.match(/(?:photo|other)=(\d+)/);
+  return m ? m[1] : null;
 }
 
 export default function App() {
@@ -102,15 +100,8 @@ export default function App() {
   }, []);
 
   const emitHashFocus = useCallback(() => {
-    const parsed = parseHash();
-    if (!parsed) return;
-    if (parsed.kind === "photo") {
-      bus.emit("focusPhoto", parsed.id);
-      return;
-    }
-    if (dockApi.current) openOrFocusPanel(dockApi.current, "other-photo");
-    bus.emit("switchPanel", "other-photo");
-    bus.emit("focusOtherPhoto", parsed.id);
+    const id = parseHash();
+    if (id) bus.emit("viewPhoto", id);
   }, []);
 
   useEffect(() => {
@@ -130,6 +121,14 @@ export default function App() {
   // foreground so the user sees the response instead of a background tab.
   useEffect(() => bus.on("runCommand", () => {
     if (dockApi.current) openOrFocusPanel(dockApi.current, "chat");
+  }), []);
+
+  // The single place that opens/focuses the Photo Viewer panel — reacts to
+  // both hash deep-links (emitHashFocus) and in-app grid clicks, on desktop
+  // (dockApi) and mobile (switchPanel) alike.
+  useEffect(() => bus.on("viewPhoto", () => {
+    if (dockApi.current) openOrFocusPanel(dockApi.current, "photo-viewer");
+    bus.emit("switchPanel", "photo-viewer");
   }), []);
 
   const onReady = (event: DockviewReadyEvent) => {

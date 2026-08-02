@@ -1,5 +1,5 @@
 // Chat panel: streams agent turns over SSE (deltas, tool calls/results,
-// confirm cards), manages conversations, and emits focusPhoto bus events.
+// confirm cards), manages conversations, and emits viewPhoto bus events.
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
@@ -397,7 +397,7 @@ export function Chat() {
               break;
             case "focus":
               if (stale()) break;
-              bus.emit("focusPhoto", event.photo_id);
+              bus.emit("viewPhoto", event.photo_id);
               break;
             case "compacted":
               if (stale()) break;

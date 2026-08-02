@@ -7,13 +7,12 @@ interface RunCommandPayload {
 }
 
 interface Events {
-  focusPhoto: string;
-  focusOtherPhoto: string; // deep link to someone else's photo (bookmarklet/extension)
+  viewPhoto: string; // open (or focus) the Photo Viewer panel and load this photo id — own or someone else's, the Viewer figures out which
   runCommand: RunCommandPayload; // a chat prompt to send immediately
   editPrompt: string;   // request the Prompts panel open a prompt (by id) for editing
   promptsChanged: void; // a prompt/category/variable was created, edited, deleted, or reset — refetch /api/commands
   llmConnectionsChanged: void; // a connection was added/edited/deleted, or its disabled_models changed — refetch /api/llm-settings + model lists
-  photoOpened: string | null; // Photo Browser's current detail view, for chat context
+  photoOpened: string | null; // Photo Viewer's current photo, for chat context
   showPhotoList: string[]; // a tool found these photo ids — show them in the Photo Browser grid
   switchPanel: string;  // mobile: switch to named panel
   openPanel: string;    // request desktop dockview to open/focus a panel by id

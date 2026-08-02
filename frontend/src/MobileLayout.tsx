@@ -7,7 +7,7 @@ import * as bus from "./bus";
 import { CommandPalette } from "./CommandPalette";
 import { Chat } from "./panels/Chat";
 import { PhotoBrowser } from "./panels/PhotoBrowser";
-import { OtherPhotoView } from "./panels/OtherPhotoView";
+import { PhotoViewer } from "./panels/PhotoViewer";
 import { Summary } from "./panels/Summary";
 import { Command } from "./panels/Command";
 import { SyncPage } from "./panels/SyncPage";
@@ -20,7 +20,7 @@ import { UserMenu } from "./UserMenu";
 const PANELS = [
   { id: "summary",  label: "Stats" },
   { id: "photos",   label: "Photos" },
-  { id: "other-photo", label: "Other Photo" },
+  { id: "photo-viewer", label: "Photo Viewer" },
   { id: "sync",     label: "Sync" },
   { id: "queue",    label: "Queue" },
   { id: "commands", label: "Commands" },
@@ -35,7 +35,7 @@ const POSITION_KEY = "mobile-chat-position-v1";
 
 const PANEL_COMPONENTS: Record<PanelId, React.FC> = {
   photos: PhotoBrowser,
-  "other-photo": OtherPhotoView,
+  "photo-viewer": PhotoViewer,
   summary: Summary,
   commands: Command,
   sync: SyncPage,
