@@ -595,11 +595,11 @@ async def _get_group_info(args):
         ).fetchone()
     return [TextContent(type="text", text=json.dumps({
         "id":          group_id,
-        "name":        group.get("name", ""),
-        "description": (group.get("description") or {}).get("_content", ""),
-        "rules":       (group.get("rules") or {}).get("_content", ""),
-        "members":     int(group.get("members", 0) or 0),
-        "pool_count":  int(group.get("pool_count", 0) or 0),
+        "name":        flickr_api.field(group.get("name"), ""),
+        "description": flickr_api.field(group.get("description"), ""),
+        "rules":       flickr_api.field(group.get("rules"), ""),
+        "members":     int(flickr_api.field(group.get("members"), 0) or 0),
+        "pool_count":  int(flickr_api.field(group.get("pool_count"), 0) or 0),
         "url":         f"https://www.flickr.com/groups/{group_id}/",
         "joined":      joined is not None,
         "your_note":   joined["user_note"] if joined else None,

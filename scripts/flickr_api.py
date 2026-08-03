@@ -33,6 +33,19 @@ class FlickrAPIError(RuntimeError):
         self.flickr_message = message
 
 
+def field(value, default=""):
+    """Unwrap Flickr's ``{"_content": ...}`` field wrapper.
+
+    Some fields (description, rules) are always wrapped this way; others
+    (e.g. a group's name/members/pool_count from flickr.groups.getInfo) are
+    only wrapped on some endpoints and plain scalars on others. Handles both
+    shapes uniformly instead of assuming one.
+    """
+    if isinstance(value, dict):
+        return value.get("_content", default)
+    return value if value is not None else default
+
+
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
