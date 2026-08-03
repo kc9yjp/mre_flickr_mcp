@@ -588,6 +588,7 @@ async def run_turn(
             store.append_message(username, conversation_id, {"role": "user", "content": extra})
             yield {"type": "injected", "text": extra}
     except llm.LLMError as e:
+        logging.warning("agent: LLM call failed for %s conversation %s: %s", username, conversation_id, e)
         yield {"type": "error", "message": str(e)}
     except Exception as e:
         logging.exception("agent: turn failed")
