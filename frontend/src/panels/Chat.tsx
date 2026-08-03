@@ -477,6 +477,15 @@ export function Chat() {
       );
     } catch (e) {
       if (!stale()) setError(e instanceof Error ? e.message : String(e));
+      // The stream died on the client (network change, tab lost connectivity,
+      // 409 because a previous attempt died this same way, etc.) without a
+      // clean close, so the server has no signal that its side is orphaned —
+      // it keeps holding this user's turn lock, sometimes for a long time,
+      // since it's just waiting on a dead half-open socket rather than
+      // seeing an error. Proactively cancel so that stuck turn (if any) gets
+      // torn down and the lock is freed for the next send. No-op if nothing
+      // was actually running server-side.
+      cancelChat().catch(() => {});
     } finally {
       setStreaming(false);
       if (!stale()) {
