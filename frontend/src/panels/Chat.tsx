@@ -249,7 +249,12 @@ export function Chat() {
         setStats(null);
         return;
       }
-      getSessionStats(id).then(setStats).catch(() => setStats(null));
+      // A single transient poll failure (flaky connection, brief server
+      // hiccup) must not blank out stats we already know are correct — that
+      // flashes the Compact button and stats grid away mid-conversation. It
+      // self-heals on the next successful poll, so just leave the last
+      // known-good value in place and try again in 3s.
+      getSessionStats(id).then(setStats).catch(() => {});
     };
     refresh();
     if (!activeId) return;
