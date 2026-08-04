@@ -7,3 +7,4 @@ itsdangerous
 jinja2
 httpx
 tzdata
+Pillow

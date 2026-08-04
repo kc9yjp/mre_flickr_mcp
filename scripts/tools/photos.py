@@ -1,6 +1,7 @@
 """Photo tool definitions and handlers."""
 
 import base64
+import io
 import json
 import logging
 import time
@@ -8,6 +9,7 @@ from datetime import datetime
 
 import requests
 from mcp.types import ImageContent, TextContent, Tool
+from PIL import Image
 
 import flickr_api
 from db import get_db
@@ -607,6 +609,34 @@ async def _update_photo(args):
     return [TextContent(type="text", text=f"Updated {', '.join(updated)} for photo {photo_id}.")]
 
 
+# Claude's vision pipeline downscales anything larger than this anyway (long edge,
+# per Anthropic's vision guidance) -- resizing client-side avoids shipping multi-MB
+# originals for no visual benefit.
+MAX_IMAGE_DIMENSION = 1568
+
+
+def _downsample_image(content: bytes, mime: str) -> tuple[bytes, str]:
+    """Resize image bytes to fit within MAX_IMAGE_DIMENSION, re-encoding as JPEG.
+
+    Returns the (possibly unchanged) bytes and mime type. Falls back to the
+    original bytes/mime on any decode error rather than failing the tool call.
+    """
+    try:
+        img = Image.open(io.BytesIO(content))
+        img.load()
+    except Exception as e:
+        logging.warning("fetch_photo_image: failed to decode image for downsampling (%s): %s", mime, e)
+        return content, mime
+    if max(img.size) <= MAX_IMAGE_DIMENSION:
+        return content, mime
+    img.thumbnail((MAX_IMAGE_DIMENSION, MAX_IMAGE_DIMENSION), Image.LANCZOS)
+    if img.mode not in ("RGB", "L"):
+        img = img.convert("RGB")
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG", quality=85)
+    return buf.getvalue(), "image/jpeg"
+
+
 async def _fetch_photo_image(args):
     photo_id = args["id"]
     with get_db() as conn:
@@ -630,7 +660,8 @@ async def _fetch_photo_image(args):
     resp = requests.get(url, timeout=flickr_api.HTTP_TIMEOUT)
     resp.raise_for_status()
     mime = resp.headers.get("content-type", "image/jpeg").split(";")[0]
-    data = base64.standard_b64encode(resp.content).decode()
+    content, mime = _downsample_image(resp.content, mime)
+    data = base64.standard_b64encode(content).decode()
     return [
         TextContent(type="text", text=f"Photo ID: {photo_id}\n{photopage}"),
         ImageContent(type="image", data=data, mimeType=mime),
