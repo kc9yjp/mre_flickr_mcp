@@ -592,6 +592,8 @@ export function Chat() {
     } catch (e) {
       setMsgs((prev) => prev.slice(0, -1));
       setError(e instanceof Error ? e.message : String(e));
+      // Same orphaned-lock risk as send()'s catch — see the comment there.
+      cancelChat().catch(() => {});
     } finally {
       setStreaming(false);
     }

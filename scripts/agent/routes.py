@@ -232,8 +232,22 @@ async def chat_conversation_compact(request: Request):
             status_code=400,
         )
 
-    async with lock:
-        summary = await compact.compact(username, nsid, conversation_id, cfg)
+    # Registered as the user's active task (like a streamed turn) purely so
+    # that a stuck compact — e.g. the client's connection dies mid-call with
+    # no clean close — can still be torn down by a later /api/chat/cancel
+    # instead of holding the lock with no way to release it.
+    async def _do_compact():
+        async with lock:
+            return await compact.compact(username, nsid, conversation_id, cfg)
+
+    task = asyncio.create_task(_do_compact())
+    loop.register_task(username, task)
+    try:
+        summary = await task
+    except asyncio.CancelledError:
+        return JSONResponse({"error": "cancelled"}, status_code=409)
+    finally:
+        loop.unregister_task(username, task)
     if not summary:
         return JSONResponse({"error": "Nothing to compact, or the LLM call failed."}, status_code=400)
     store.reset_context_stats(username, conversation_id)
