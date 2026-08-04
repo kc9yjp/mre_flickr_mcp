@@ -25,6 +25,7 @@ import json
 import logging
 import re
 import uuid
+from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
 from mcp.types import TextContent, ImageContent
@@ -102,6 +103,24 @@ def register_task(username: str, task: asyncio.Task) -> None:
 def unregister_task(username: str, task: asyncio.Task) -> None:
     if _active_tasks.get(username) is task:
         del _active_tasks[username]
+
+
+@asynccontextmanager
+async def tracked(username: str, coro) -> "AsyncIterator[asyncio.Task]":
+    """Run ``coro`` as ``username``'s cancellable active task for the ``with`` block.
+
+    Anything that holds the turn lock — a streamed turn or a single plain
+    await like a manual compact — needs to register itself this way so a
+    later /api/chat/cancel has a real task to cancel. Without it, a client
+    that vanishes mid-request with no clean disconnect (a network change,
+    not a closed tab) leaves the lock held with nothing able to release it.
+    """
+    task = asyncio.create_task(coro)
+    register_task(username, task)
+    try:
+        yield task
+    finally:
+        unregister_task(username, task)
 
 
 def cancel_turn(username: str, conversation_id: str | None = None) -> bool:
