@@ -315,6 +315,20 @@ body {
   color: var(--danger);
 }
 
+.error-banner {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.error-banner .cancel-turn-btn {
+  color: var(--danger);
+  border-color: var(--danger);
+  margin-left: 0;
+  font-size: 0.8125rem;
+}
+
 button {
   font: inherit;
   color: var(--ink);

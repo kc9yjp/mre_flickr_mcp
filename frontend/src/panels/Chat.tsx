@@ -141,6 +141,27 @@ function makeSelector(connectionId: string, model: string): string {
   return `${connectionId}::${model}`;
 }
 
+// The 409 the server sends when a previous turn's lock is still held (e.g.
+// the client dropped a connection without a clean close — see send()'s catch
+// below) is the one error case with a concrete recovery action: cancel the
+// stuck turn so the lock frees up and the next send isn't blocked too.
+function isTurnLockedError(message: string): boolean {
+  return /turn is already running/i.test(message);
+}
+
+function ErrorBanner({ message, onCancelTurn }: { message: string; onCancelTurn: () => void }) {
+  return (
+    <p className="error error-banner">
+      <span>{message}</span>
+      {isTurnLockedError(message) && (
+        <button type="button" className="btn-sm cancel-turn-btn" onClick={onCancelTurn}>
+          Cancel stuck turn
+        </button>
+      )}
+    </p>
+  );
+}
+
 function prettyArgs(raw: string): string {
   try {
     return JSON.stringify(JSON.parse(raw), null, 2);
@@ -506,7 +527,13 @@ export function Chat() {
 
   const cancelTurn = useCallback(async () => {
     try {
-      await cancelChat();
+      const res = await cancelChat();
+      // Clear the error on success so the banner (and this button) disappear
+      // as visible confirmation the stuck turn is gone; ok:false just means
+      // nothing was running server-side any more (e.g. it finished or was
+      // already cancelled), which is worth saying rather than leaving the
+      // original "already running" text sitting there looking unresolved.
+      setError(res.ok ? "" : "No turn was running server-side — try sending again.");
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
@@ -746,7 +773,9 @@ export function Chat() {
       </div>
       <div className="chat-messages" ref={scrollRef}>
         {error && (
-          <p className="error" style={{ marginBottom: 12 }}>{error}</p>
+          <div style={{ marginBottom: 12 }}>
+            <ErrorBanner message={error} onCancelTurn={cancelTurn} />
+          </div>
         )}
         {msgs.length === 0 && !error && (
           <p className="hint">
@@ -842,7 +871,7 @@ export function Chat() {
             </button>
           </div>
         )}
-        {error && <p className="error">{error}</p>}
+        {error && <ErrorBanner message={error} onCancelTurn={cancelTurn} />}
       </div>
       {queued.length > 0 && (
         <div className="queued-messages">
