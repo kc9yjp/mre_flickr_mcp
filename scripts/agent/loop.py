@@ -528,7 +528,7 @@ async def run_turn(
             "role": "system",
             "content": (
                 f"The user currently has photo {focused_photo_id} open in "
-                "the Photo Browser panel."
+                "the Photo Viewer panel."
             ),
         })
 
