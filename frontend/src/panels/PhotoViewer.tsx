@@ -16,7 +16,11 @@ function parseHashId(): string | null {
 }
 
 export function PhotoViewer() {
-  const [photoId, setPhotoId] = useState<string | null>(() => parseHashId());
+  // The most recently emitted viewPhoto id (if any) takes priority over the
+  // URL hash on mount — see bus.ts's getLastViewPhoto for why: a fresh mount
+  // (first open, or reopening a closed tab) must not fall back to a stale
+  // deep-link hash when a more recent in-app selection already happened.
+  const [photoId, setPhotoId] = useState<string | null>(() => bus.getLastViewPhoto() ?? parseHashId());
   const [detail, setDetail] = useState<PhotoDetail | null>(null);
   const [error, setError] = useState("");
   const [src, setSrc] = useState<string | null>(null);

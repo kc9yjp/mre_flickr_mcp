@@ -72,7 +72,7 @@ function contentToText(content: WireMessage["content"]): string {
 function routeFlickrUrl(route: FlickrRoute) {
   switch (route.kind) {
     case "photo":
-      bus.emit("viewPhoto", route.id);
+      bus.emitViewPhoto(route.id);
       break;
     case "user":
       bus.emit("openPanel", "photos");
@@ -446,7 +446,7 @@ export function Chat() {
               break;
             case "focus":
               if (stale()) break;
-              bus.emit("viewPhoto", event.photo_id);
+              bus.emitViewPhoto(event.photo_id);
               break;
             case "compacted":
               if (stale()) break;

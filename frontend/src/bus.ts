@@ -55,3 +55,23 @@ export function consumePendingEditPrompt(): string | null {
   pendingEditPromptId = null;
   return id;
 }
+
+// Same problem, same fix, for viewPhoto: the Photo Viewer panel is created
+// on demand (dockview addPanel) by App's own viewPhoto listener the first
+// time it's opened, or any time after the user closes that tab. The new
+// PhotoViewer's bus.on("viewPhoto", ...) subscription only registers after
+// mount — i.e. after the very emit() that triggered its creation has already
+// finished dispatching — so that id would otherwise be silently dropped and
+// the freshly-mounted panel would fall back to whatever stale #photo=... (if
+// any) happens to still be in the URL hash. Track the last-emitted id here so
+// a just-mounted panel can pick it up regardless of subscription timing.
+let lastViewPhoto: string | null = null;
+
+export function emitViewPhoto(photoId: string): void {
+  lastViewPhoto = photoId;
+  emit("viewPhoto", photoId);
+}
+
+export function getLastViewPhoto(): string | null {
+  return lastViewPhoto;
+}

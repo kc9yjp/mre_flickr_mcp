@@ -762,7 +762,7 @@ export function PhotoBrowser() {
           </p>
           <div className="thumb-grid">
             {photos.map((p) => (
-              <Thumb key={p.id} photo={p} onClick={() => bus.emit("viewPhoto", p.id)} />
+              <Thumb key={p.id} photo={p} onClick={() => bus.emitViewPhoto(p.id)} />
             ))}
           </div>
           {canLoadMore && (

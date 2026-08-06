@@ -101,7 +101,7 @@ export default function App() {
 
   const emitHashFocus = useCallback(() => {
     const id = parseHash();
-    if (id) bus.emit("viewPhoto", id);
+    if (id) bus.emitViewPhoto(id);
   }, []);
 
   useEffect(() => {
