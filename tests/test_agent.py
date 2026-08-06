@@ -472,6 +472,72 @@ def _tool_call(call_id: str, name: str, args: dict) -> dict:
 
 
 @pytest.mark.asyncio
+async def test_injection_folded_into_next_iteration_is_answered(user_db):
+    """An add-info that lands before an iteration's LLM call is folded in and
+    answered — yielded as `injected` (not `inject_missed`) and stored."""
+    from agent import loop, store
+
+    conv = store.create_conversation(USERNAME, "t")
+
+    async def fake_stream_chat(cfg, messages, tools=None, client=None):
+        # First call asks for a tool; the injection is added *before* the
+        # second iteration, so its top-of-loop pop folds it in.
+        if not any(m.get("role") == "tool" for m in messages):
+            loop.add_injection(conv, "also mention the weather")
+            yield {"type": "message", "content": "",
+                   "tool_calls": [_tool_call("c1", "get_summary", {})],
+                   "finish_reason": "tool_calls"}
+        else:
+            yield {"type": "message", "content": "done", "tool_calls": [],
+                   "finish_reason": "stop"}
+
+    with patch("agent.loop.llm.stream_chat", fake_stream_chat):
+        events = [e async for e in loop.run_turn(USER, conv, "hi", CFG)]
+
+    types = [e["type"] for e in events]
+    assert "injected" in types
+    assert "inject_missed" not in types
+    injected = next(e for e in events if e["type"] == "injected")
+    assert injected["text"] == "also mention the weather"
+    # Folded in => stored as a user message in the history.
+    contents = [m.get("content") for m in store.get_messages(USERNAME, conv)]
+    assert "also mention the weather" in contents
+
+
+@pytest.mark.asyncio
+async def test_injection_arriving_too_late_is_missed_not_stored(user_db):
+    """An add-info that lands during the FINAL LLM call (after that
+    iteration's pop, with no further iteration) can't be answered: it's
+    reported as `inject_missed` so the client re-queues it, and is NOT stored
+    as an unanswered user message."""
+    from agent import loop, store
+
+    conv = store.create_conversation(USERNAME, "t")
+
+    async def fake_stream_chat(cfg, messages, tools=None, client=None):
+        # No tool calls -> the loop breaks after this one iteration. The
+        # injection arrives *during* this final call, so it's only seen by the
+        # post-loop "too late" drain.
+        loop.add_injection(conv, "one more thing")
+        yield {"type": "message", "content": "all done", "tool_calls": [],
+               "finish_reason": "stop"}
+
+    with patch("agent.loop.llm.stream_chat", fake_stream_chat):
+        events = [e async for e in loop.run_turn(USER, conv, "hi", CFG)]
+
+    types = [e["type"] for e in events]
+    assert "inject_missed" in types
+    missed = next(e for e in events if e["type"] == "inject_missed")
+    assert missed["text"] == "one more thing"
+    # Must NOT be stored — the client re-sends it as its own turn, and storing
+    # here too would duplicate it.
+    contents = [m.get("content") for m in store.get_messages(USERNAME, conv)]
+    assert "one more thing" not in contents
+    # And it's drained from the pending map so it can't bleed into a later turn.
+    assert not loop._injections.get(conv)
+
+
+@pytest.mark.asyncio
 async def test_run_turn_executes_read_tool_without_confirm(user_db):
     from agent import loop, store
 

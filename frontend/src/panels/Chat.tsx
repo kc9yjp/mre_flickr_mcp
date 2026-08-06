@@ -473,6 +473,17 @@ export function Chat() {
                 { role: "assistant", text: "", tools: [] },
               ]);
               break;
+            case "inject_missed":
+              // The "add info" text was accepted while the turn was running
+              // but landed too late to be folded into any LLM call (it arrived
+              // during the final response), so this turn never answered it.
+              // Re-queue it — the queued-message effect sends it as its own
+              // follow-up turn once this one finishes ("send it last"). Queued
+              // even if the view is stale so the user's text is never dropped;
+              // the backend didn't store it, so this re-send is what delivers
+              // it. No user/assistant bubbles here — send() adds them on re-send.
+              setQueued((prev) => [...prev, event.text]);
+              break;
             case "photo_list":
               if (stale()) break;
               bus.emit("openPanel", "photos");

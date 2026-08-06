@@ -12,6 +12,7 @@
     {"type": "user_photos", "nsid"}                      switch grid to another user's photostream
     {"type": "compacted", "summary"}                     auto-compact ran before this turn
     {"type": "injected", "text"}                         user's add_injection text was folded in
+    {"type": "inject_missed", "text"}                    add_injection arrived too late; client re-queues it
     {"type": "error", "message"}
     {"type": "done"}
 
@@ -648,12 +649,15 @@ async def run_turn(
                 "message": f"Stopped after {MAX_ITERATIONS} tool iterations.",
             }
 
-        # Anything submitted too late to be picked up by the loop above (the
-        # turn already finished its last iteration) still gets stored so it's
-        # not silently lost — just not addressed by this turn's LLM calls.
+        # Anything submitted too late to be folded into the loop above — it
+        # arrived during the final LLM call, after that iteration already
+        # popped its injections, so this turn can't answer it. Don't store it
+        # as an unanswered user message (that's the "missed add-info" bug:
+        # text sitting in the history with no reply). Instead tell the client
+        # so it re-queues the text as its own follow-up turn — "send it last".
+        # Not stored here; the re-send stores it, so storing now would dup it.
         for extra in _pop_injections(conversation_id):
-            store.append_message(username, conversation_id, {"role": "user", "content": extra})
-            yield {"type": "injected", "text": extra}
+            yield {"type": "inject_missed", "text": extra}
     except llm.LLMError as e:
         logging.warning("agent: LLM call failed for %s conversation %s: %s", username, conversation_id, e)
         yield {"type": "error", "message": str(e)}

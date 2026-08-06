@@ -362,6 +362,7 @@ export type StreamEvent =
   | { type: "user_photos"; nsid: string }
   | { type: "compacted"; summary: string }
   | { type: "injected"; text: string }
+  | { type: "inject_missed"; text: string }
   | { type: "cancelled" }
   | { type: "error"; message: string }
   | { type: "done" };
