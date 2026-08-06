@@ -90,10 +90,8 @@ async def chat_stream(request: Request):
             status_code=400,
         )
 
-    lock = loop.get_turn_lock(username, session_id)
-    if lock.locked():
-        return JSONResponse({"error": "A chat turn is already running."}, status_code=409)
-
+    # Resolve (or create) the conversation before taking the lock — the turn
+    # lock is keyed by conversation_id, so we need it first.
     conversation_id = body.get("conversation_id") or ""
     if conversation_id:
         if not store.conversation_exists(username, conversation_id):
@@ -113,6 +111,15 @@ async def chat_stream(request: Request):
             username, message, conv_connection, conv_model
         )
         store.prune_conversations(username)
+
+    # Keyed by conversation, not by browser session: this is what serializes
+    # two windows that happen to have the SAME conversation open, so they
+    # can't interleave writes into its history. A brand-new conversation's
+    # lock is always free, so this only ever 409s an existing conversation
+    # that already has a turn in flight (from this or another window).
+    lock = loop.get_turn_lock(username, conversation_id)
+    if lock.locked():
+        return JSONResponse({"error": "A chat turn is already running."}, status_code=409)
 
     focused_photo_id = (body.get("focused_photo_id") or "").strip() or None
 
@@ -160,7 +167,9 @@ async def chat_inject(request: Request):
         return JSONResponse({"error": "message and conversation_id are required"}, status_code=400)
     if not store.conversation_exists(user["username"], conversation_id):
         return JSONResponse({"error": "conversation not found"}, status_code=404)
-    if not loop.get_turn_lock(user["username"], _request_session_id(request)).locked():
+    # Inject into the turn running THIS conversation — the lock is keyed by
+    # conversation, so this is a direct "is a turn in flight here?" check.
+    if not loop.get_turn_lock(user["username"], conversation_id).locked():
         return JSONResponse({"error": "no turn is currently running"}, status_code=409)
     loop.add_injection(conversation_id, message)
     return JSONResponse({"ok": True})
@@ -236,7 +245,10 @@ async def chat_conversation_compact(request: Request):
     if not store.conversation_exists(username, conversation_id):
         return JSONResponse({"error": "conversation not found"}, status_code=404)
 
-    lock = loop.get_turn_lock(username, session_id)
+    # Lock keyed by conversation (see chat_stream) — a compaction rewrites the
+    # conversation's whole history, so it must not run while a turn on the
+    # same conversation is mid-flight, no matter which window started either.
+    lock = loop.get_turn_lock(username, conversation_id)
     if lock.locked():
         return JSONResponse({"error": "A chat turn is already running."}, status_code=409)
 

@@ -161,6 +161,42 @@ def test_chat_cancel_is_scoped_to_the_requesting_session(client):
         loop.unregister_task(USERNAME, "sess-b", task_b)
 
 
+def test_chat_stream_lock_is_keyed_by_conversation(client, chat_data_dir, monkeypatch):
+    """A second turn on the SAME conversation — even from a different window —
+    is refused (409) while one is in flight, and the lock is looked up by the
+    conversation id, not the session id."""
+    from agent import loop, settings, store
+
+    conv = store.create_conversation(USERNAME, "hello", "", "")
+    _login(client)
+
+    monkeypatch.setattr(
+        settings, "resolve_cfg",
+        lambda *a, **k: {"model": "m", "base_url": "http://x/v1"},
+    )
+
+    calls = []
+
+    class _LockedLock:
+        def locked(self):
+            return True
+
+    def fake_get_turn_lock(username, conversation_id=""):
+        calls.append((username, conversation_id))
+        return _LockedLock()
+
+    monkeypatch.setattr(loop, "get_turn_lock", fake_get_turn_lock)
+
+    resp = client.post(
+        "/api/chat/stream",
+        headers={**HEADERS, "X-Session-Id": "some-other-window"},
+        json={"message": "hi", "conversation_id": conv},
+    )
+    assert resp.status_code == 409
+    # Keyed by the conversation, not by the window's session id.
+    assert calls == [(USERNAME, conv)]
+
+
 # --- presets ---
 
 def test_llm_connection_presets(client):

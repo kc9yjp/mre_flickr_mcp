@@ -66,17 +66,28 @@ _REMEMBER_TOOL: dict = {
     },
 }
 
-# One agent turn at a time per browser session, NOT per user: each browser
-# window/device generates its own session id (sent as the X-Session-Id header,
-# see routes.py) so two windows for the same Flickr account run independent
-# turns instead of blocking or cancelling each other. All the maps below are
-# therefore keyed by (username, session_id). A missing/empty session_id
-# collapses to (username, "") — the old per-user behavior — so pre-session
-# clients still work. Conversation *history* stays keyed by username alone
-# (see agent.store): every session shares the same past-conversation list.
+# Two levels of keying, on purpose:
+#
+#   * The turn LOCK is keyed by (username, conversation_id). Its job is to
+#     protect one conversation's stored history from two turns interleaving
+#     their message writes, so it must serialize per conversation — including
+#     two different browser windows that happen to have the SAME conversation
+#     open. It deliberately does NOT include the session id (that would give
+#     each window its own lock and reopen the very race).
+#
+#   * The active TASK, active-conversation map, and cancellation are keyed by
+#     (username, session_id) — each browser window/device generates its own
+#     session id (the X-Session-Id header, see routes.py) so a window cancels
+#     only its OWN in-flight turn, never a sibling window's. A missing/empty
+#     session id collapses to (username, "") — the old per-user behavior — so
+#     pre-session clients still work.
+#
+# Conversation *history* stays keyed by username alone (see agent.store):
+# every window shares the same past-conversation list.
 _SessionKey = tuple[str, str]  # (username, session_id)
+_ConvKey = tuple[str, str]     # (username, conversation_id)
 
-_turn_locks: dict[_SessionKey, asyncio.Lock] = {}
+_turn_locks: dict[_ConvKey, asyncio.Lock] = {}
 
 # session key -> the task actually driving that session's in-flight SSE stream,
 # so a cancel request has something concrete to call .cancel() on. Cancelling
@@ -101,8 +112,16 @@ _pending_confirms: dict[str, tuple[str, asyncio.Future]] = {}
 _active_conversations: dict[_SessionKey, str] = {}
 
 
-def get_turn_lock(username: str, session_id: str = "") -> asyncio.Lock:
-    return _turn_locks.setdefault((username, session_id), asyncio.Lock())
+def get_turn_lock(username: str, conversation_id: str = "") -> asyncio.Lock:
+    """One turn at a time per conversation (scoped to the user).
+
+    Keyed by conversation, NOT by browser session — this is what keeps two
+    windows with the same conversation open from running concurrent turns and
+    corrupting its history. Windows on *different* conversations get different
+    locks and run in parallel; cancellation is tracked separately, per session
+    (see ``_active_tasks``), so a window can still cancel its own turn.
+    """
+    return _turn_locks.setdefault((username, conversation_id), asyncio.Lock())
 
 
 def register_task(username: str, session_id: str, task: asyncio.Task) -> None:

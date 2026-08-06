@@ -1152,16 +1152,18 @@ def test_builtin_prompt_cannot_be_deleted_but_can_be_reset():
 
 # --- per-browser-window session isolation of turn state ---
 
-def test_get_turn_lock_is_per_session():
-    """Two browser windows (distinct session ids) for the same user get
-    distinct turn locks, so one running a turn doesn't lock out the other.
-    The same (user, session) always resolves to the same lock object."""
+def test_get_turn_lock_is_per_conversation():
+    """The turn lock is keyed by conversation, not by browser session: two
+    windows on DIFFERENT conversations get distinct locks (run in parallel),
+    while any two callers on the SAME conversation share one lock (serialize),
+    which is what stops them corrupting that conversation's history."""
     from agent import loop
 
-    lock_a = loop.get_turn_lock(USERNAME, "sess-a")
-    lock_b = loop.get_turn_lock(USERNAME, "sess-b")
-    assert lock_a is not lock_b
-    assert loop.get_turn_lock(USERNAME, "sess-a") is lock_a
+    lock_x = loop.get_turn_lock(USERNAME, "conv-x")
+    lock_y = loop.get_turn_lock(USERNAME, "conv-y")
+    assert lock_x is not lock_y
+    # Same conversation -> same lock, regardless of which window asked.
+    assert loop.get_turn_lock(USERNAME, "conv-x") is lock_x
 
 
 @pytest.mark.asyncio
