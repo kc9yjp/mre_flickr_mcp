@@ -478,10 +478,13 @@ export function Chat() {
               // but landed too late to be folded into any LLM call (it arrived
               // during the final response), so this turn never answered it.
               // Re-queue it — the queued-message effect sends it as its own
-              // follow-up turn once this one finishes ("send it last"). Queued
-              // even if the view is stale so the user's text is never dropped;
-              // the backend didn't store it, so this re-send is what delivers
-              // it. No user/assistant bubbles here — send() adds them on re-send.
+              // follow-up turn once this one finishes ("send it last"). The
+              // queued send targets whatever conversation is active when it
+              // fires, so only re-queue while still viewing this one; if the
+              // user has since switched away (stale), skip it rather than
+              // misroute their text into a different conversation. No bubbles
+              // here — send() adds the user/assistant pair on re-send.
+              if (stale()) break;
               setQueued((prev) => [...prev, event.text]);
               break;
             case "photo_list":

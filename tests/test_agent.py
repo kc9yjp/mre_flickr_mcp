@@ -1218,18 +1218,57 @@ def test_builtin_prompt_cannot_be_deleted_but_can_be_reset():
 
 # --- per-browser-window session isolation of turn state ---
 
-def test_get_turn_lock_is_per_conversation():
-    """The turn lock is keyed by conversation, not by browser session: two
-    windows on DIFFERENT conversations get distinct locks (run in parallel),
-    while any two callers on the SAME conversation share one lock (serialize),
-    which is what stops them corrupting that conversation's history."""
+@pytest.mark.asyncio
+async def test_conversation_turn_lock_serializes_and_cleans_up():
+    """The turn lock is keyed by conversation, not by browser session: holding
+    it marks that conversation (and only that one) as running, and once
+    released the map entry is dropped so _turn_locks doesn't grow forever."""
     from agent import loop
 
-    lock_x = loop.get_turn_lock(USERNAME, "conv-x")
-    lock_y = loop.get_turn_lock(USERNAME, "conv-y")
-    assert lock_x is not lock_y
-    # Same conversation -> same lock, regardless of which window asked.
-    assert loop.get_turn_lock(USERNAME, "conv-x") is lock_x
+    assert loop.is_turn_running(USERNAME, "conv-x") is False
+    async with loop.conversation_turn_lock(USERNAME, "conv-x"):
+        assert loop.is_turn_running(USERNAME, "conv-x") is True
+        # A different conversation is independent (own lock, runs in parallel).
+        assert loop.is_turn_running(USERNAME, "conv-y") is False
+    # Released and reclaimed — no lingering entry.
+    assert loop.is_turn_running(USERNAME, "conv-x") is False
+    assert (USERNAME, "conv-x") not in loop._turn_locks
+    assert (USERNAME, "conv-x") not in loop._turn_lock_refs
+
+
+@pytest.mark.asyncio
+async def test_conversation_turn_lock_kept_while_a_waiter_is_pending():
+    """A second caller on the same conversation waits on the same lock, and
+    the lock is only reclaimed once BOTH holders+waiters have left — so the
+    refcount cleanup can never yank a lock out from under a pending waiter."""
+    from agent import loop
+
+    key = (USERNAME, "conv-z")
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def holder():
+        async with loop.conversation_turn_lock(USERNAME, "conv-z"):
+            started.set()
+            await release.wait()
+
+    async def waiter():
+        async with loop.conversation_turn_lock(USERNAME, "conv-z"):
+            pass
+
+    h = asyncio.ensure_future(holder())
+    await started.wait()
+    w = asyncio.ensure_future(waiter())
+    await asyncio.sleep(0)  # let the waiter enter the CM and block on acquire
+    # One holds, one waits -> refcount 2, lock retained.
+    assert loop._turn_lock_refs.get(key) == 2
+    assert loop.is_turn_running(USERNAME, "conv-z") is True
+
+    release.set()
+    await asyncio.gather(h, w)
+    # Both gone -> reclaimed.
+    assert key not in loop._turn_locks
+    assert key not in loop._turn_lock_refs
 
 
 @pytest.mark.asyncio

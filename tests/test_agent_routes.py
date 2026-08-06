@@ -163,8 +163,8 @@ def test_chat_cancel_is_scoped_to_the_requesting_session(client):
 
 def test_chat_stream_lock_is_keyed_by_conversation(client, chat_data_dir, monkeypatch):
     """A second turn on the SAME conversation — even from a different window —
-    is refused (409) while one is in flight, and the lock is looked up by the
-    conversation id, not the session id."""
+    is refused (409) while one is in flight, and the running check is keyed by
+    the conversation id, not the session id."""
     from agent import loop, settings, store
 
     conv = store.create_conversation(USERNAME, "hello", "", "")
@@ -177,15 +177,11 @@ def test_chat_stream_lock_is_keyed_by_conversation(client, chat_data_dir, monkey
 
     calls = []
 
-    class _LockedLock:
-        def locked(self):
-            return True
-
-    def fake_get_turn_lock(username, conversation_id=""):
+    def fake_is_turn_running(username, conversation_id=""):
         calls.append((username, conversation_id))
-        return _LockedLock()
+        return True
 
-    monkeypatch.setattr(loop, "get_turn_lock", fake_get_turn_lock)
+    monkeypatch.setattr(loop, "is_turn_running", fake_is_turn_running)
 
     resp = client.post(
         "/api/chat/stream",

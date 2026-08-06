@@ -88,7 +88,13 @@ _REMEMBER_TOOL: dict = {
 _SessionKey = tuple[str, str]  # (username, session_id)
 _ConvKey = tuple[str, str]     # (username, conversation_id)
 
+# The per-conversation lock, plus a refcount of how many coroutines currently
+# hold OR wait on each one. The count lets an idle lock be dropped from the map
+# instead of lingering forever — keyed by conversation_id, one entry would
+# otherwise accumulate per conversation ever touched and never be reclaimed.
+# Only ``conversation_turn_lock`` touches these; peek with ``is_turn_running``.
 _turn_locks: dict[_ConvKey, asyncio.Lock] = {}
+_turn_lock_refs: dict[_ConvKey, int] = {}
 
 # session key -> the task actually driving that session's in-flight SSE stream,
 # so a cancel request has something concrete to call .cancel() on. Cancelling
@@ -113,16 +119,49 @@ _pending_confirms: dict[str, tuple[str, asyncio.Future]] = {}
 _active_conversations: dict[_SessionKey, str] = {}
 
 
-def get_turn_lock(username: str, conversation_id: str = "") -> asyncio.Lock:
-    """One turn at a time per conversation (scoped to the user).
+def is_turn_running(username: str, conversation_id: str = "") -> bool:
+    """Whether a turn currently holds this conversation's lock.
+
+    A read-only peek, used by the 409 pre-checks and by inject. Unlike
+    acquiring the lock it never creates an entry, so idle probes don't
+    accumulate locks in ``_turn_locks`` that are never actually used.
+    """
+    lock = _turn_locks.get((username, conversation_id))
+    return lock is not None and lock.locked()
+
+
+@asynccontextmanager
+async def conversation_turn_lock(
+    username: str, conversation_id: str = ""
+) -> "AsyncIterator[None]":
+    """Hold the per-conversation turn lock for the ``with`` block.
 
     Keyed by conversation, NOT by browser session — this is what keeps two
     windows with the same conversation open from running concurrent turns and
     corrupting its history. Windows on *different* conversations get different
     locks and run in parallel; cancellation is tracked separately, per session
     (see ``_active_tasks``), so a window can still cancel its own turn.
+
+    A refcount of current holders+waiters rides alongside each lock; when it
+    falls back to zero the lock is dropped from the map, so ``_turn_locks``
+    doesn't grow one entry per conversation forever. Removing an idle lock is
+    safe: every coroutine currently using it has already bumped the count and
+    holds its own reference to the object, so a zero count proves nobody else
+    is about to touch this exact lock — a later caller just makes a fresh one.
+    The refcount bookkeeping runs with no ``await`` between check and pop, so
+    it stays atomic against other coroutines on the single event loop.
     """
-    return _turn_locks.setdefault((username, conversation_id), asyncio.Lock())
+    key = (username, conversation_id)
+    lock = _turn_locks.setdefault(key, asyncio.Lock())
+    _turn_lock_refs[key] = _turn_lock_refs.get(key, 0) + 1
+    try:
+        async with lock:
+            yield
+    finally:
+        _turn_lock_refs[key] -= 1
+        if _turn_lock_refs[key] <= 0:
+            _turn_lock_refs.pop(key, None)
+            _turn_locks.pop(key, None)
 
 
 def register_task(username: str, session_id: str, task: asyncio.Task) -> None:
