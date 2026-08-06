@@ -66,16 +66,25 @@ _REMEMBER_TOOL: dict = {
     },
 }
 
-# One agent turn at a time per user.
-_turn_locks: dict[str, asyncio.Lock] = {}
+# One agent turn at a time per browser session, NOT per user: each browser
+# window/device generates its own session id (sent as the X-Session-Id header,
+# see routes.py) so two windows for the same Flickr account run independent
+# turns instead of blocking or cancelling each other. All the maps below are
+# therefore keyed by (username, session_id). A missing/empty session_id
+# collapses to (username, "") — the old per-user behavior — so pre-session
+# clients still work. Conversation *history* stays keyed by username alone
+# (see agent.store): every session shares the same past-conversation list.
+_SessionKey = tuple[str, str]  # (username, session_id)
 
-# username -> the task actually driving that user's in-flight SSE stream, so
-# a cancel request has something concrete to call .cancel() on. Cancelling
+_turn_locks: dict[_SessionKey, asyncio.Lock] = {}
+
+# session key -> the task actually driving that session's in-flight SSE stream,
+# so a cancel request has something concrete to call .cancel() on. Cancelling
 # this task (rather than e.g. just clearing _turn_locks) is what makes the
 # cancellation real: it throws CancelledError at whatever await point the
 # turn is suspended on, which unwinds through run_turn's "async with lock"
 # and actually releases the lock instead of leaving it stuck.
-_active_tasks: dict[str, asyncio.Task] = {}
+_active_tasks: dict[_SessionKey, asyncio.Task] = {}
 
 # conversation_id -> queued text the user submitted while a turn was still
 # running, to be folded into the next LLM call of THAT SAME turn (as opposed
@@ -85,29 +94,29 @@ _injections: dict[str, list[str]] = {}
 # confirm_id -> (owning username, Future resolved with True (approve) / False (deny))
 _pending_confirms: dict[str, tuple[str, asyncio.Future]] = {}
 
-# username -> conversation_id of that user's currently in-flight turn (there's
-# at most one, per the turn lock). Lets a conversation delete cancel the turn
-# only when it's actually the one running, instead of blindly killing
-# whatever the user's turn lock happens to be holding.
-_active_conversations: dict[str, str] = {}
+# session key -> conversation_id of that session's currently in-flight turn
+# (at most one, per the turn lock). Lets a conversation delete find and cancel
+# whichever session is actually running that conversation, instead of blindly
+# killing whatever turn a given session happens to be holding.
+_active_conversations: dict[_SessionKey, str] = {}
 
 
-def get_turn_lock(username: str) -> asyncio.Lock:
-    return _turn_locks.setdefault(username, asyncio.Lock())
+def get_turn_lock(username: str, session_id: str = "") -> asyncio.Lock:
+    return _turn_locks.setdefault((username, session_id), asyncio.Lock())
 
 
-def register_task(username: str, task: asyncio.Task) -> None:
-    _active_tasks[username] = task
+def register_task(username: str, session_id: str, task: asyncio.Task) -> None:
+    _active_tasks[(username, session_id)] = task
 
 
-def unregister_task(username: str, task: asyncio.Task) -> None:
-    if _active_tasks.get(username) is task:
-        del _active_tasks[username]
+def unregister_task(username: str, session_id: str, task: asyncio.Task) -> None:
+    if _active_tasks.get((username, session_id)) is task:
+        del _active_tasks[(username, session_id)]
 
 
 @asynccontextmanager
-async def tracked(username: str, coro) -> "AsyncIterator[asyncio.Task]":
-    """Run ``coro`` as ``username``'s cancellable active task for the ``with`` block.
+async def tracked(username: str, session_id: str, coro) -> "AsyncIterator[asyncio.Task]":
+    """Run ``coro`` as this session's cancellable active task for the ``with`` block.
 
     Anything that holds the turn lock — a streamed turn or a single plain
     await like a manual compact — needs to register itself this way so a
@@ -116,27 +125,45 @@ async def tracked(username: str, coro) -> "AsyncIterator[asyncio.Task]":
     not a closed tab) leaves the lock held with nothing able to release it.
     """
     task = asyncio.create_task(coro)
-    register_task(username, task)
+    register_task(username, session_id, task)
     try:
         yield task
     finally:
-        unregister_task(username, task)
+        unregister_task(username, session_id, task)
 
 
-def cancel_turn(username: str, conversation_id: str | None = None) -> bool:
-    """Cancel the user's in-flight turn, if any. Returns False if nothing was running.
+def cancel_turn(
+    username: str,
+    session_id: str | None = None,
+    conversation_id: str | None = None,
+) -> bool:
+    """Cancel an in-flight turn for this user. Returns False if nothing matched.
 
-    If ``conversation_id`` is given, only cancels when that conversation is
-    the one actually running — used by conversation delete, where the user's
-    turn lock may be held by a *different* conversation entirely.
+    Pass ``session_id`` to cancel that one browser session's own turn — the
+    generic cancel button and the orphaned-lock cleanup on a dead stream, so a
+    window only ever tears down its *own* turn, never a sibling window's.
+
+    Pass ``conversation_id`` (conversation delete) to cancel whichever session
+    is currently running that conversation, regardless of which window started
+    it. With neither, cancels every in-flight turn the user has.
     """
-    task = _active_tasks.get(username)
-    if task is None or task.done():
-        return False
-    if conversation_id is not None and _active_conversations.get(username) != conversation_id:
-        return False
-    task.cancel()
-    return True
+    if session_id is not None:
+        keys: list[_SessionKey] = [(username, session_id)]
+    elif conversation_id is not None:
+        keys = [
+            key for key, cid in _active_conversations.items()
+            if key[0] == username and cid == conversation_id
+        ]
+    else:
+        keys = [key for key in _active_tasks if key[0] == username]
+
+    cancelled = False
+    for key in keys:
+        task = _active_tasks.get(key)
+        if task is not None and not task.done():
+            task.cancel()
+            cancelled = True
+    return cancelled
 
 
 def add_injection(conversation_id: str, text: str) -> None:
@@ -384,6 +411,7 @@ async def run_turn(
     user_message: str,
     cfg: dict,
     focused_photo_id: str | None = None,
+    session_id: str = "",
 ) -> AsyncIterator[dict]:
     """Run one user turn: LLM ↔ tools until the model stops calling tools.
 
@@ -399,7 +427,8 @@ async def run_turn(
     nsid = user["nsid"]
     vision = bool(cfg.get("vision", False))
     tools = schema.to_openai_tools() + [_REMEMBER_TOOL]
-    _active_conversations[username] = conversation_id
+    session_key = (username, session_id)
+    _active_conversations[session_key] = conversation_id
 
     # Auto-compact runs on the *prior* history, before this turn's message is
     # appended — compacting after would fold the user's brand-new question
@@ -617,7 +646,7 @@ async def run_turn(
         # `except Exception` above but not this) so a stray injection can
         # never bleed into an unrelated later turn on this conversation.
         _injections.pop(conversation_id, None)
-        if _active_conversations.get(username) == conversation_id:
-            del _active_conversations[username]
+        if _active_conversations.get(session_key) == conversation_id:
+            del _active_conversations[session_key]
 
     yield {"type": "done"}

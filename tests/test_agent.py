@@ -1,5 +1,6 @@
 """Tests for the chat agent: schema conversion, stream parsing, and the loop."""
 
+import asyncio
 import json
 import shutil
 import sqlite3
@@ -1147,6 +1148,78 @@ def test_builtin_prompt_cannot_be_deleted_but_can_be_reset():
 
     reset = prompts_store.reset_prompt(NSID, system_prompt["id"])
     assert reset["text"] == system_prompt["text"]
+
+
+# --- per-browser-window session isolation of turn state ---
+
+def test_get_turn_lock_is_per_session():
+    """Two browser windows (distinct session ids) for the same user get
+    distinct turn locks, so one running a turn doesn't lock out the other.
+    The same (user, session) always resolves to the same lock object."""
+    from agent import loop
+
+    lock_a = loop.get_turn_lock(USERNAME, "sess-a")
+    lock_b = loop.get_turn_lock(USERNAME, "sess-b")
+    assert lock_a is not lock_b
+    assert loop.get_turn_lock(USERNAME, "sess-a") is lock_a
+
+
+@pytest.mark.asyncio
+async def test_cancel_turn_by_session_only_cancels_that_session():
+    """A cancel scoped to one window's session cancels only that window's
+    in-flight turn, leaving a sibling window's turn untouched."""
+    from agent import loop
+
+    async def _never():
+        await asyncio.Event().wait()
+
+    task_a = asyncio.ensure_future(_never())
+    task_b = asyncio.ensure_future(_never())
+    loop.register_task(USERNAME, "sess-a", task_a)
+    loop.register_task(USERNAME, "sess-b", task_b)
+    try:
+        assert loop.cancel_turn(USERNAME, session_id="sess-a") is True
+        await asyncio.sleep(0)
+        assert task_a.cancelled()
+        assert not task_b.done()
+        # Nothing running under an unknown session -> False, no side effects.
+        assert loop.cancel_turn(USERNAME, session_id="sess-unknown") is False
+        assert not task_b.done()
+    finally:
+        task_b.cancel()
+        loop.unregister_task(USERNAME, "sess-a", task_a)
+        loop.unregister_task(USERNAME, "sess-b", task_b)
+
+
+@pytest.mark.asyncio
+async def test_cancel_turn_by_conversation_targets_running_session():
+    """Deleting a conversation cancels whichever window's session is actually
+    running it, regardless of which window that is — and leaves a session
+    running a different conversation alone."""
+    from agent import loop
+
+    async def _never():
+        await asyncio.Event().wait()
+
+    running = asyncio.ensure_future(_never())
+    other = asyncio.ensure_future(_never())
+    loop.register_task(USERNAME, "sess-a", running)
+    loop.register_task(USERNAME, "sess-b", other)
+    loop._active_conversations[(USERNAME, "sess-a")] = "conv-X"
+    loop._active_conversations[(USERNAME, "sess-b")] = "conv-Y"
+    try:
+        assert loop.cancel_turn(USERNAME, conversation_id="conv-X") is True
+        await asyncio.sleep(0)
+        assert running.cancelled()
+        assert not other.done()
+        # A conversation nobody is running -> nothing to cancel.
+        assert loop.cancel_turn(USERNAME, conversation_id="conv-none") is False
+    finally:
+        other.cancel()
+        loop._active_conversations.pop((USERNAME, "sess-a"), None)
+        loop._active_conversations.pop((USERNAME, "sess-b"), None)
+        loop.unregister_task(USERNAME, "sess-a", running)
+        loop.unregister_task(USERNAME, "sess-b", other)
 
 
 def test_category_in_use_cannot_be_deleted():

@@ -368,6 +368,42 @@ export type StreamEvent =
 
 let csrfToken = "";
 
+// A per-browser-window session id, sent as the X-Session-Id header on every
+// request. The server keys its ephemeral chat turn state (turn lock, active
+// task, cancel) by (user, session id), so two windows/tabs on the same Flickr
+// account run independent conversations instead of blocking or cancelling
+// each other — while still sharing the same past-conversation history.
+// sessionStorage is per-tab and survives a reload of that tab, so a window
+// keeps its identity across refreshes but never shares it with another window.
+function randomId(): string {
+  // crypto.randomUUID needs a secure context (https or localhost); fall back
+  // to a plain-random id so a plain-http deployment still gets a unique id.
+  try {
+    if (typeof crypto !== "undefined" && crypto.randomUUID) return crypto.randomUUID();
+  } catch {
+    // fall through to the Math.random path
+  }
+  return `sid-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+}
+
+let cachedSessionId = "";
+export function sessionId(): string {
+  if (cachedSessionId) return cachedSessionId;
+  try {
+    let sid = sessionStorage.getItem("chat_session_id");
+    if (!sid) {
+      sid = randomId();
+      sessionStorage.setItem("chat_session_id", sid);
+    }
+    cachedSessionId = sid;
+  } catch {
+    // sessionStorage unavailable (private mode / quota) — fall back to an
+    // in-memory id, still unique to this page/window for its lifetime.
+    cachedSessionId = randomId();
+  }
+  return cachedSessionId;
+}
+
 export class ApiError extends Error {
   status: number;
   constructor(status: number, message: string) {
@@ -401,7 +437,7 @@ export async function logout(): Promise<void> {
 
 export async function getJSON<T>(url: string, params?: Record<string, string>): Promise<T> {
   const qs = params ? "?" + new URLSearchParams(params).toString() : "";
-  return handle<T>(await fetch(url + qs));
+  return handle<T>(await fetch(url + qs, { headers: { "X-Session-Id": sessionId() } }));
 }
 
 // ── Live browsing: other users, groups, site-wide search ──────────────────
@@ -448,6 +484,7 @@ export async function postJSON<T>(url: string, body?: unknown): Promise<T> {
       headers: {
         "Content-Type": "application/json",
         "X-CSRF-Token": csrfToken,
+        "X-Session-Id": sessionId(),
       },
       body: body === undefined ? undefined : JSON.stringify(body),
     }),
@@ -558,6 +595,7 @@ export async function streamChat(
     headers: {
       "Content-Type": "application/json",
       "X-CSRF-Token": csrfToken,
+      "X-Session-Id": sessionId(),
     },
     body: JSON.stringify(body),
   });

@@ -125,6 +125,42 @@ def test_chat_inject_known_conversation_no_running_turn_returns_409(client, chat
     assert resp.status_code == 409
 
 
+# --- per-browser-window session isolation ---
+
+def test_chat_cancel_is_scoped_to_the_requesting_session(client):
+    """/api/chat/cancel only tears down the turn belonging to the window that
+    sent the request (matched by its X-Session-Id), never a sibling window's."""
+    from agent import loop
+
+    _login(client)
+
+    class _FakeTask:
+        def __init__(self):
+            self.cancelled = False
+
+        def done(self):
+            return False
+
+        def cancel(self):
+            self.cancelled = True
+
+    task_a, task_b = _FakeTask(), _FakeTask()
+    loop.register_task(USERNAME, "sess-a", task_a)
+    loop.register_task(USERNAME, "sess-b", task_b)
+    try:
+        resp = client.post(
+            "/api/chat/cancel",
+            headers={**HEADERS, "X-Session-Id": "sess-a"},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["ok"] is True
+        assert task_a.cancelled is True
+        assert task_b.cancelled is False
+    finally:
+        loop.unregister_task(USERNAME, "sess-a", task_a)
+        loop.unregister_task(USERNAME, "sess-b", task_b)
+
+
 # --- presets ---
 
 def test_llm_connection_presets(client):
