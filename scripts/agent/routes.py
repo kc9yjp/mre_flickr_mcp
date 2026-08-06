@@ -16,13 +16,24 @@ from agent import commands, compact, llm, loop, prompts_store, settings, store
 _PING_INTERVAL = 15  # seconds between SSE keepalive comments
 
 
-async def _sse_events(inner, username: str) -> "asyncio.AsyncIterator[str]":
+def _request_session_id(request: Request) -> str:
+    """Per-browser-window session id (the X-Session-Id header the SPA sends).
+
+    Scopes the ephemeral chat turn state — turn lock, active task, cancel —
+    to one window, so two windows/devices on the same Flickr account run
+    independent turns instead of blocking or cancelling each other. Empty
+    when the header is absent, which collapses to the old per-user behavior.
+    """
+    return request.headers.get("x-session-id", "") or ""
+
+
+async def _sse_events(inner, username: str, session_id: str) -> "asyncio.AsyncIterator[str]":
     """Wrap an event generator as SSE lines with keepalive pings.
 
     A producer task feeds a queue so pings flow even while the LLM or a
     pending confirmation keeps the inner generator silent. That task is
-    registered under ``username`` for the duration so /api/chat/cancel has
-    something to actually cancel — cancelling it unwinds ``inner`` (which
+    registered under this browser session for the duration so /api/chat/cancel
+    has something to actually cancel — cancelling it unwinds ``inner`` (which
     holds the turn lock) via CancelledError, releasing the lock instead of
     leaving it stuck.
     """
@@ -38,7 +49,7 @@ async def _sse_events(inner, username: str) -> "asyncio.AsyncIterator[str]":
         finally:
             await queue.put(None)
 
-    async with loop.tracked(username, produce()) as task:
+    async with loop.tracked(username, session_id, produce()) as task:
         try:
             while True:
                 try:
@@ -68,6 +79,7 @@ async def chat_stream(request: Request):
 
     nsid = user["nsid"]
     username = user["username"]
+    session_id = _request_session_id(request)
     connection_override = (body.get("connection") or body.get("provider") or "").strip() or None
     model_override = (body.get("model") or "").strip() or None
 
@@ -78,10 +90,8 @@ async def chat_stream(request: Request):
             status_code=400,
         )
 
-    lock = loop.get_turn_lock(username)
-    if lock.locked():
-        return JSONResponse({"error": "A chat turn is already running."}, status_code=409)
-
+    # Resolve (or create) the conversation before taking the lock — the turn
+    # lock is keyed by conversation_id, so we need it first.
     conversation_id = body.get("conversation_id") or ""
     if conversation_id:
         if not store.conversation_exists(username, conversation_id):
@@ -102,16 +112,26 @@ async def chat_stream(request: Request):
         )
         store.prune_conversations(username)
 
+    # Keyed by conversation, not by browser session: this is what serializes
+    # two windows that happen to have the SAME conversation open, so they
+    # can't interleave writes into its history. A brand-new conversation is
+    # never running, so this only ever 409s an existing conversation that
+    # already has a turn in flight (from this or another window).
+    if loop.is_turn_running(username, conversation_id):
+        return JSONResponse({"error": "A chat turn is already running."}, status_code=409)
+
     focused_photo_id = (body.get("focused_photo_id") or "").strip() or None
 
     async def events():
-        async with lock:
+        async with loop.conversation_turn_lock(username, conversation_id):
             yield {"type": "start", "conversation_id": conversation_id}
-            async for event in loop.run_turn(user, conversation_id, message, cfg, focused_photo_id):
+            async for event in loop.run_turn(
+                user, conversation_id, message, cfg, focused_photo_id, session_id=session_id
+            ):
                 yield event
 
     return StreamingResponse(
-        _sse_events(events(), username),
+        _sse_events(events(), username, session_id),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
@@ -121,7 +141,9 @@ async def chat_cancel(request: Request):
     user = _session_user(request)
     if not user:
         return _unauthorized()
-    cancelled = loop.cancel_turn(user["username"])
+    # Scope to this window's session so cancelling a stuck/orphaned turn only
+    # tears down THIS window's turn, never a sibling window's in-flight one.
+    cancelled = loop.cancel_turn(user["username"], session_id=_request_session_id(request))
     return JSONResponse({"ok": cancelled})
 
 
@@ -144,7 +166,9 @@ async def chat_inject(request: Request):
         return JSONResponse({"error": "message and conversation_id are required"}, status_code=400)
     if not store.conversation_exists(user["username"], conversation_id):
         return JSONResponse({"error": "conversation not found"}, status_code=404)
-    if not loop.get_turn_lock(user["username"]).locked():
+    # Inject into the turn running THIS conversation — a direct "is a turn in
+    # flight here?" check, keyed by conversation.
+    if not loop.is_turn_running(user["username"], conversation_id):
         return JSONResponse({"error": "no turn is currently running"}, status_code=409)
     loop.add_injection(conversation_id, message)
     return JSONResponse({"ok": True})
@@ -199,8 +223,9 @@ async def chat_conversation_delete(request: Request):
     conversation_id = request.path_params["id"]
     # If this conversation's turn is still in flight, stop it before deleting
     # — otherwise the backend keeps calling the LLM/tools and writing message
-    # rows for a conversation that no longer exists.
-    loop.cancel_turn(user["username"], conversation_id)
+    # rows for a conversation that no longer exists. Cancel by conversation
+    # id, not session: another window may be the one running it.
+    loop.cancel_turn(user["username"], conversation_id=conversation_id)
     store.delete_conversation(user["username"], conversation_id)
     return JSONResponse({"ok": True})
 
@@ -214,12 +239,15 @@ async def chat_conversation_compact(request: Request):
         return _unauthorized()
     nsid = user["nsid"]
     username = user["username"]
+    session_id = _request_session_id(request)
     conversation_id = request.path_params["id"]
     if not store.conversation_exists(username, conversation_id):
         return JSONResponse({"error": "conversation not found"}, status_code=404)
 
-    lock = loop.get_turn_lock(username)
-    if lock.locked():
+    # Keyed by conversation (see chat_stream) — a compaction rewrites the
+    # conversation's whole history, so it must not run while a turn on the
+    # same conversation is mid-flight, no matter which window started either.
+    if loop.is_turn_running(username, conversation_id):
         return JSONResponse({"error": "A chat turn is already running."}, status_code=409)
 
     meta = store.get_conversation_meta(username, conversation_id) or {}
@@ -231,11 +259,11 @@ async def chat_conversation_compact(request: Request):
         )
 
     async def _do_compact():
-        async with lock:
+        async with loop.conversation_turn_lock(username, conversation_id):
             return await compact.compact(username, nsid, conversation_id, cfg)
 
     try:
-        async with loop.tracked(username, _do_compact()) as task:
+        async with loop.tracked(username, session_id, _do_compact()) as task:
             summary = await task
     except asyncio.CancelledError:
         return JSONResponse({"error": "cancelled"}, status_code=409)

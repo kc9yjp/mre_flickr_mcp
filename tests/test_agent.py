@@ -1,5 +1,6 @@
 """Tests for the chat agent: schema conversion, stream parsing, and the loop."""
 
+import asyncio
 import json
 import shutil
 import sqlite3
@@ -468,6 +469,72 @@ def _scripted_llm(turns: list[dict]):
 def _tool_call(call_id: str, name: str, args: dict) -> dict:
     return {"id": call_id, "type": "function",
             "function": {"name": name, "arguments": json.dumps(args)}}
+
+
+@pytest.mark.asyncio
+async def test_injection_folded_into_next_iteration_is_answered(user_db):
+    """An add-info that lands before an iteration's LLM call is folded in and
+    answered — yielded as `injected` (not `inject_missed`) and stored."""
+    from agent import loop, store
+
+    conv = store.create_conversation(USERNAME, "t")
+
+    async def fake_stream_chat(cfg, messages, tools=None, client=None):
+        # First call asks for a tool; the injection is added *before* the
+        # second iteration, so its top-of-loop pop folds it in.
+        if not any(m.get("role") == "tool" for m in messages):
+            loop.add_injection(conv, "also mention the weather")
+            yield {"type": "message", "content": "",
+                   "tool_calls": [_tool_call("c1", "get_summary", {})],
+                   "finish_reason": "tool_calls"}
+        else:
+            yield {"type": "message", "content": "done", "tool_calls": [],
+                   "finish_reason": "stop"}
+
+    with patch("agent.loop.llm.stream_chat", fake_stream_chat):
+        events = [e async for e in loop.run_turn(USER, conv, "hi", CFG)]
+
+    types = [e["type"] for e in events]
+    assert "injected" in types
+    assert "inject_missed" not in types
+    injected = next(e for e in events if e["type"] == "injected")
+    assert injected["text"] == "also mention the weather"
+    # Folded in => stored as a user message in the history.
+    contents = [m.get("content") for m in store.get_messages(USERNAME, conv)]
+    assert "also mention the weather" in contents
+
+
+@pytest.mark.asyncio
+async def test_injection_arriving_too_late_is_missed_not_stored(user_db):
+    """An add-info that lands during the FINAL LLM call (after that
+    iteration's pop, with no further iteration) can't be answered: it's
+    reported as `inject_missed` so the client re-queues it, and is NOT stored
+    as an unanswered user message."""
+    from agent import loop, store
+
+    conv = store.create_conversation(USERNAME, "t")
+
+    async def fake_stream_chat(cfg, messages, tools=None, client=None):
+        # No tool calls -> the loop breaks after this one iteration. The
+        # injection arrives *during* this final call, so it's only seen by the
+        # post-loop "too late" drain.
+        loop.add_injection(conv, "one more thing")
+        yield {"type": "message", "content": "all done", "tool_calls": [],
+               "finish_reason": "stop"}
+
+    with patch("agent.loop.llm.stream_chat", fake_stream_chat):
+        events = [e async for e in loop.run_turn(USER, conv, "hi", CFG)]
+
+    types = [e["type"] for e in events]
+    assert "inject_missed" in types
+    missed = next(e for e in events if e["type"] == "inject_missed")
+    assert missed["text"] == "one more thing"
+    # Must NOT be stored — the client re-sends it as its own turn, and storing
+    # here too would duplicate it.
+    contents = [m.get("content") for m in store.get_messages(USERNAME, conv)]
+    assert "one more thing" not in contents
+    # And it's drained from the pending map so it can't bleed into a later turn.
+    assert not loop._injections.get(conv)
 
 
 @pytest.mark.asyncio
@@ -1147,6 +1214,119 @@ def test_builtin_prompt_cannot_be_deleted_but_can_be_reset():
 
     reset = prompts_store.reset_prompt(NSID, system_prompt["id"])
     assert reset["text"] == system_prompt["text"]
+
+
+# --- per-browser-window session isolation of turn state ---
+
+@pytest.mark.asyncio
+async def test_conversation_turn_lock_serializes_and_cleans_up():
+    """The turn lock is keyed by conversation, not by browser session: holding
+    it marks that conversation (and only that one) as running, and once
+    released the map entry is dropped so _turn_locks doesn't grow forever."""
+    from agent import loop
+
+    assert loop.is_turn_running(USERNAME, "conv-x") is False
+    async with loop.conversation_turn_lock(USERNAME, "conv-x"):
+        assert loop.is_turn_running(USERNAME, "conv-x") is True
+        # A different conversation is independent (own lock, runs in parallel).
+        assert loop.is_turn_running(USERNAME, "conv-y") is False
+    # Released and reclaimed — no lingering entry.
+    assert loop.is_turn_running(USERNAME, "conv-x") is False
+    assert (USERNAME, "conv-x") not in loop._turn_locks
+    assert (USERNAME, "conv-x") not in loop._turn_lock_refs
+
+
+@pytest.mark.asyncio
+async def test_conversation_turn_lock_kept_while_a_waiter_is_pending():
+    """A second caller on the same conversation waits on the same lock, and
+    the lock is only reclaimed once BOTH holders+waiters have left — so the
+    refcount cleanup can never yank a lock out from under a pending waiter."""
+    from agent import loop
+
+    key = (USERNAME, "conv-z")
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def holder():
+        async with loop.conversation_turn_lock(USERNAME, "conv-z"):
+            started.set()
+            await release.wait()
+
+    async def waiter():
+        async with loop.conversation_turn_lock(USERNAME, "conv-z"):
+            pass
+
+    h = asyncio.ensure_future(holder())
+    await started.wait()
+    w = asyncio.ensure_future(waiter())
+    await asyncio.sleep(0)  # let the waiter enter the CM and block on acquire
+    # One holds, one waits -> refcount 2, lock retained.
+    assert loop._turn_lock_refs.get(key) == 2
+    assert loop.is_turn_running(USERNAME, "conv-z") is True
+
+    release.set()
+    await asyncio.gather(h, w)
+    # Both gone -> reclaimed.
+    assert key not in loop._turn_locks
+    assert key not in loop._turn_lock_refs
+
+
+@pytest.mark.asyncio
+async def test_cancel_turn_by_session_only_cancels_that_session():
+    """A cancel scoped to one window's session cancels only that window's
+    in-flight turn, leaving a sibling window's turn untouched."""
+    from agent import loop
+
+    async def _never():
+        await asyncio.Event().wait()
+
+    task_a = asyncio.ensure_future(_never())
+    task_b = asyncio.ensure_future(_never())
+    loop.register_task(USERNAME, "sess-a", task_a)
+    loop.register_task(USERNAME, "sess-b", task_b)
+    try:
+        assert loop.cancel_turn(USERNAME, session_id="sess-a") is True
+        await asyncio.sleep(0)
+        assert task_a.cancelled()
+        assert not task_b.done()
+        # Nothing running under an unknown session -> False, no side effects.
+        assert loop.cancel_turn(USERNAME, session_id="sess-unknown") is False
+        assert not task_b.done()
+    finally:
+        task_b.cancel()
+        loop.unregister_task(USERNAME, "sess-a", task_a)
+        loop.unregister_task(USERNAME, "sess-b", task_b)
+
+
+@pytest.mark.asyncio
+async def test_cancel_turn_by_conversation_targets_running_session():
+    """Deleting a conversation cancels whichever window's session is actually
+    running it, regardless of which window that is — and leaves a session
+    running a different conversation alone."""
+    from agent import loop
+
+    async def _never():
+        await asyncio.Event().wait()
+
+    running = asyncio.ensure_future(_never())
+    other = asyncio.ensure_future(_never())
+    loop.register_task(USERNAME, "sess-a", running)
+    loop.register_task(USERNAME, "sess-b", other)
+    loop._active_conversations[(USERNAME, "sess-a")] = "conv-X"
+    loop._active_conversations[(USERNAME, "sess-b")] = "conv-Y"
+    try:
+        assert loop.cancel_turn(USERNAME, conversation_id="conv-X") is True
+        await asyncio.sleep(0)
+        assert running.cancelled()
+        assert not other.done()
+        # A conversation nobody is running -> nothing to cancel.
+        assert loop.cancel_turn(USERNAME, conversation_id="conv-none") is False
+    finally:
+        other.cancel()
+        loop._active_conversations.pop((USERNAME, "sess-a"), None)
+        loop._active_conversations.pop((USERNAME, "sess-b"), None)
+        loop.unregister_task(USERNAME, "sess-a", running)
+        loop.unregister_task(USERNAME, "sess-b", other)
 
 
 def test_category_in_use_cannot_be_deleted():
