@@ -182,6 +182,43 @@ function ToolCardView({ card }: { card: ToolCard }) {
   );
 }
 
+// Runs of consecutive same-name tool calls (the "get_person_info ×15" case
+// an agent produces when it loops a lookup over a list) collapse into one
+// group card with a count badge, rather than one <details> per call — still
+// individually expandable inside the group.
+interface ToolGroup {
+  name: string;
+  cards: ToolCard[];
+}
+
+function groupToolCards(tools: ToolCard[]): ToolGroup[] {
+  const groups: ToolGroup[] = [];
+  for (const t of tools) {
+    const last = groups[groups.length - 1];
+    if (last && last.name === t.name) last.cards.push(t);
+    else groups.push({ name: t.name, cards: [t] });
+  }
+  return groups;
+}
+
+function ToolCardGroupView({ group }: { group: ToolGroup }) {
+  if (group.cards.length === 1) return <ToolCardView card={group.cards[0]} />;
+  const running = group.cards.some((c) => c.result === undefined);
+  return (
+    <details className="tool-card tool-card-group">
+      <summary>
+        <span>
+          🔧 {group.name} {running && <em>running…</em>}
+        </span>
+        <span className="tool-card-count">×{group.cards.length}</span>
+      </summary>
+      {group.cards.map((c) => (
+        <ToolCardView key={c.id} card={c} />
+      ))}
+    </details>
+  );
+}
+
 /** A user message sent from a workflow prompt: collapsed to just its title,
  * openable to see the exact text that was sent and to jump to editing the
  * stored prompt (which only affects future runs, not this one). */
@@ -815,8 +852,8 @@ export function Chat() {
         )}
         {msgs.map((m, i) => (
           <div key={i} className={`chat-msg chat-${m.role}`}>
-            {m.tools.map((t) => (
-              <ToolCardView key={t.id} card={t} />
+            {groupToolCards(m.tools).map((g) => (
+              <ToolCardGroupView key={g.cards[0].id} group={g} />
             ))}
             {m.text && (
               m.origin

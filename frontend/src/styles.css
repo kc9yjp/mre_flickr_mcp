@@ -837,6 +837,28 @@ select:focus {
   padding-top: 6px;
 }
 
+.tool-card-group summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.tool-card-count {
+  flex: 0 0 auto;
+  background: var(--border);
+  color: var(--ink-secondary);
+  border-radius: 999px;
+  padding: 1px 8px;
+  font-size: 0.72rem;
+  font-weight: 600;
+}
+
+.tool-card-group .tool-card {
+  margin-top: 6px;
+  margin-left: 4px;
+}
+
 .chat-bubble.markdown-body {
   white-space: normal;
 }
