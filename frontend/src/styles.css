@@ -443,38 +443,43 @@ select:focus {
   padding: 6px 8px;
 }
 
-.thumb-title-row {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  min-width: 0;
-}
-
 .thumb-title {
+  display: block;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   min-width: 0;
-  flex: 1;
+}
+
+.thumb-stats-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+  min-width: 0;
 }
 
 .photo-id {
   display: inline-flex;
   align-items: center;
-  gap: 2px;
+  gap: 0;
   flex: none;
   color: var(--ink-muted);
   font-size: 0.75rem;
 }
 
 .photo-id-copy {
-  padding: 1px 4px;
+  padding: 1px 3px;
   font-size: 0.75rem;
 }
 
 .thumb-stats {
   color: var(--ink-muted);
   font-size: 0.75rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
 }
 
 .load-more {

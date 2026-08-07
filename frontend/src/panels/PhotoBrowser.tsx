@@ -85,13 +85,13 @@ function Thumb({ photo, onClick }: { photo: Photo; onClick: () => void }) {
         <span className="thumb-placeholder">no image</span>
       )}
       <span className="thumb-caption">
-        <span className="thumb-title-row">
-          <span className="thumb-title">{photo.title || "Untitled"}</span>
-          <PhotoId id={photo.id} />
-        </span>
-        <span className="thumb-stats">
-          {compactNumber(photo.views)} views · {photo.favorites} ★
-          {photo.is_public ? "" : " · private"}
+        <span className="thumb-title">{photo.title || "Untitled"}</span>
+        <span className="thumb-stats-row">
+          <span className="thumb-stats">
+            {compactNumber(photo.views)} views · {photo.favorites} ★
+            {photo.is_public ? "" : " · private"}
+          </span>
+          <PhotoId id={photo.id} showId={false} />
         </span>
       </span>
     </div>

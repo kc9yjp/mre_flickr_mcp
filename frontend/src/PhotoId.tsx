@@ -7,7 +7,18 @@
 import { MouseEvent, useState } from "react";
 import * as bus from "./bus";
 
-export function PhotoId({ id, className }: { id: string; className?: string }) {
+export function PhotoId({
+  id,
+  className,
+  showId = true,
+}: {
+  id: string;
+  className?: string;
+  /** Render the id as visible text next to the buttons. When false (e.g. in a
+   * thumbnail's cramped caption), the id is only surfaced via the button
+   * tooltips, so it's still discoverable on hover without taking up space. */
+  showId?: boolean;
+}) {
   const [copied, setCopied] = useState(false);
 
   const copy = (e: MouseEvent) => {
@@ -27,12 +38,12 @@ export function PhotoId({ id, className }: { id: string; className?: string }) {
 
   return (
     <span className={className ? `photo-id ${className}` : "photo-id"}>
-      {id}
+      {showId && id}
       <button
         type="button"
         className="icon-btn photo-id-copy"
         onClick={copy}
-        title={copied ? "Copied!" : "Copy photo ID"}
+        title={copied ? "Copied!" : `Copy photo ID ${id}`}
       >
         {copied ? "✓" : "⧉"}
       </button>
@@ -40,7 +51,7 @@ export function PhotoId({ id, className }: { id: string; className?: string }) {
         type="button"
         className="icon-btn photo-id-copy"
         onClick={sendToChat}
-        title="Send photo ID to chat"
+        title={`Send photo ID ${id} to chat`}
       >
         💬
       </button>
