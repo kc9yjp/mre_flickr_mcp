@@ -6,7 +6,9 @@
 import { useEffect, useState } from "react";
 import { getJSON, PhotoDetail } from "../api";
 import * as bus from "../bus";
+import { FlickrLinkMenu } from "../FlickrLinkMenu";
 import { compactNumber } from "../format";
+import { PhotoId } from "../PhotoId";
 import { SafeHtml } from "../safeHtml";
 import { useWorkflowCommands } from "../useWorkflowCommands";
 
@@ -82,9 +84,7 @@ export function PhotoViewer() {
       <div className="photo-detail">
         <div className="detail-toolbar">
           <button onClick={() => bus.emit("openPanel", "photos")}>◀ Photo Browser</button>
-          <a href={detail.url_photopage} target="flickr_photo" rel="noreferrer">
-            Open on Flickr ↗
-          </a>
+          <FlickrLinkMenu url={detail.url_photopage} />
         </div>
         {photoCommands.length > 0 && (
           <div className="detail-workflows">
@@ -115,7 +115,10 @@ export function PhotoViewer() {
             }}
           />
         )}
-        <h2>{detail.title || detail.id}</h2>
+        <h2>
+          {detail.title || "Untitled"}
+          <PhotoId id={detail.id} />
+        </h2>
         {!detail.is_own && detail.owner && (
           <p className="hint other-photo-owner">
             {detail.owner.avatar_url && <img className="owner-avatar" src={detail.owner.avatar_url} alt="" />}

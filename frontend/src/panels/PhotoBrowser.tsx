@@ -24,6 +24,7 @@ import {
 } from "../api";
 import * as bus from "../bus";
 import { compactNumber } from "../format";
+import { PhotoId } from "../PhotoId";
 import { SafeHtml } from "../safeHtml";
 import { useWorkflowCommands } from "../useWorkflowCommands";
 
@@ -63,20 +64,37 @@ function filterParams(filters: Filters, offset: number): Record<string, string> 
 function Thumb({ photo, onClick }: { photo: Photo; onClick: () => void }) {
   const src = photo.url_medium || photo.url_original;
   return (
-    <button className="thumb" onClick={onClick} title={photo.title}>
+    // A div (not <button>) because the id-copy control below is a real
+    // <button>, and interactive controls can't nest inside <button>.
+    <div
+      className="thumb"
+      role="button"
+      tabIndex={0}
+      onClick={onClick}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onClick();
+        }
+      }}
+      title={photo.title}
+    >
       {src ? (
         <img src={src} alt={photo.title} loading="lazy" />
       ) : (
         <span className="thumb-placeholder">no image</span>
       )}
       <span className="thumb-caption">
-        <span className="thumb-title">{photo.title || photo.id}</span>
+        <span className="thumb-title-row">
+          <span className="thumb-title">{photo.title || "Untitled"}</span>
+          <PhotoId id={photo.id} />
+        </span>
         <span className="thumb-stats">
           {compactNumber(photo.views)} views · {photo.favorites} ★
           {photo.is_public ? "" : " · private"}
         </span>
       </span>
-    </button>
+    </div>
   );
 }
 
