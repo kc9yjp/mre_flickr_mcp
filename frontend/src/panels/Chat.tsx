@@ -149,13 +149,34 @@ function isTurnLockedError(message: string): boolean {
   return /turn is already running/i.test(message);
 }
 
-function ErrorBanner({ message, onCancelTurn }: { message: string; onCancelTurn: () => void }) {
+// The other concrete-recovery-action error case: the turn hit loop.py's
+// MAX_ITERATIONS cap mid-tool-loop rather than failing outright. Matches on
+// wording (like isTurnLockedError above) rather than a structured field,
+// since the message text is already the one place this is defined.
+function isResumableError(message: string): boolean {
+  return /^Stopped after \d+ tool iterations\.$/.test(message);
+}
+
+function ErrorBanner({
+  message,
+  onCancelTurn,
+  onContinue,
+}: {
+  message: string;
+  onCancelTurn: () => void;
+  onContinue: () => void;
+}) {
   return (
     <p className="error error-banner">
       <span>{message}</span>
       {isTurnLockedError(message) && (
         <button type="button" className="btn-sm cancel-turn-btn" onClick={onCancelTurn}>
           Cancel stuck turn
+        </button>
+      )}
+      {isResumableError(message) && (
+        <button type="button" className="btn-sm continue-turn-btn" onClick={onContinue}>
+          Continue
         </button>
       )}
     </p>
@@ -396,50 +417,38 @@ export function Chat() {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
   }, [msgs, confirm]);
 
-  const send = useCallback(async (message: string, origin?: PromptOrigin) => {
-    const text = message.trim();
-    if (!text) return;
-
-    const route = classifyFlickrUrl(text);
-    if (route) {
-      setInput("");
-      routeFlickrUrl(route);
-      return;
-    }
-
+  // Shared streaming plumbing for both a normal send() and a Continue-button
+  // resume of a turn that hit loop.py's MAX_ITERATIONS cap. Callers push
+  // whatever msgs bubbles their case needs *before* calling this — it only
+  // drives streamChat and reacts to the events it emits.
+  const runStream = useCallback(async (body: {
+    conversation_id?: string;
+    message?: string;
+    resume?: boolean;
+    focused_photo_id?: string | null;
+    connection?: string;
+    model?: string;
+  }) => {
     setError("");
-    setInput("");
     setStreaming(true);
-    setMsgs((prev) => [
-      ...prev,
-      { role: "user", text, tools: [], origin },
-      { role: "assistant", text: "", tools: [] },
-    ]);
 
     const patchLast = (fn: (m: ChatMsg) => ChatMsg) =>
       setMsgs((prev) => prev.map((m, i) => (i === prev.length - 1 ? fn(m) : m)));
 
-    // This send() call is "for" whichever conversation was active when it
-    // started (a brand-new one gets its id from the "start" event). If the
-    // user switches to a different conversation — or back to "new" — before
-    // this stream ends, later events must stop touching msgs/confirm: the
-    // backend still finishes and persists the turn, but a stale event
-    // handler silently patching whatever conversation happens to be on
-    // screen right now is exactly what caused an old turn's compacted-
-    // conversation summary to bleed into a totally unrelated new chat.
+    // This call is "for" whichever conversation was active when it started
+    // (a brand-new one gets its id from the "start" event). If the user
+    // switches to a different conversation — or back to "new" — before this
+    // stream ends, later events must stop touching msgs/confirm: the backend
+    // still finishes and persists the turn, but a stale event handler
+    // silently patching whatever conversation happens to be on screen right
+    // now is exactly what caused an old turn's compacted-conversation
+    // summary to bleed into a totally unrelated new chat.
     let forConversationId = activeIdRef.current;
     const stale = () => activeIdRef.current !== forConversationId;
 
-    const { connectionId, model } = parseSelector(connectionModelRef.current);
     try {
       await streamChat(
-        {
-          conversation_id: activeIdRef.current ?? undefined,
-          message: text,
-          focused_photo_id: focusedPhotoRef.current,
-          connection: connectionId || undefined,
-          model: model || undefined,
-        },
+        body,
         (event) => {
           switch (event.type) {
             case "start":
@@ -568,6 +577,50 @@ export function Chat() {
       refreshConversations();
     }
   }, [refreshConversations, setActive]);
+
+  const send = useCallback(async (message: string, origin?: PromptOrigin) => {
+    const text = message.trim();
+    if (!text) return;
+
+    const route = classifyFlickrUrl(text);
+    if (route) {
+      setInput("");
+      routeFlickrUrl(route);
+      return;
+    }
+
+    setInput("");
+    setMsgs((prev) => [
+      ...prev,
+      { role: "user", text, tools: [], origin },
+      { role: "assistant", text: "", tools: [] },
+    ]);
+
+    const { connectionId, model } = parseSelector(connectionModelRef.current);
+    await runStream({
+      conversation_id: activeIdRef.current ?? undefined,
+      message: text,
+      focused_photo_id: focusedPhotoRef.current,
+      connection: connectionId || undefined,
+      model: model || undefined,
+    });
+  }, [runStream]);
+
+  // "Continue" button on a resumable error (loop.py's tool loop hit
+  // MAX_ITERATIONS): picks the same turn back up — same conversation and
+  // model, no new user text — rather than starting a fresh one. A new empty
+  // assistant bubble marks the resumption instead of silently reopening the
+  // one that already trailed off into the error banner.
+  const continueTurn = useCallback(async () => {
+    const conversationId = activeIdRef.current;
+    if (!conversationId) return;
+    setMsgs((prev) => [...prev, { role: "assistant", text: "", tools: [] }]);
+    await runStream({
+      conversation_id: conversationId,
+      resume: true,
+      focused_photo_id: focusedPhotoRef.current,
+    });
+  }, [runStream]);
 
   // Auto-send the next queued message once the current turn finishes.
   useEffect(() => {
@@ -841,7 +894,7 @@ export function Chat() {
       <div className="chat-messages" ref={scrollRef}>
         {error && (
           <div style={{ marginBottom: 12 }}>
-            <ErrorBanner message={error} onCancelTurn={cancelTurn} />
+            <ErrorBanner message={error} onCancelTurn={cancelTurn} onContinue={continueTurn} />
           </div>
         )}
         {msgs.length === 0 && !error && (
@@ -938,7 +991,7 @@ export function Chat() {
             </button>
           </div>
         )}
-        {error && <ErrorBanner message={error} onCancelTurn={cancelTurn} />}
+        {error && <ErrorBanner message={error} onCancelTurn={cancelTurn} onContinue={continueTurn} />}
       </div>
       {queued.length > 0 && (
         <div className="queued-messages">

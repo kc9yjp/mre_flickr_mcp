@@ -13,7 +13,9 @@
     {"type": "compacted", "summary"}                     auto-compact ran before this turn
     {"type": "injected", "text"}                         user's add_injection text was folded in
     {"type": "inject_missed", "text"}                    add_injection arrived too late; client re-queues it
-    {"type": "error", "message"}
+    {"type": "error", "message"}                         MAX_ITERATIONS cutoffs are recoverable via
+                                                          run_turn(resume=True) — see the client's
+                                                          isResumableError, which matches on this message
     {"type": "done"}
 
 A turn can also be ended early by cancelling its task (see loop.cancel_turn) —
@@ -471,6 +473,7 @@ async def run_turn(
     cfg: dict,
     focused_photo_id: str | None = None,
     session_id: str = "",
+    resume: bool = False,
 ) -> AsyncIterator[dict]:
     """Run one user turn: LLM ↔ tools until the model stops calling tools.
 
@@ -481,6 +484,14 @@ async def run_turn(
     turn's LLM call only and is never persisted to the stored conversation:
     the note would otherwise go stale the moment the user looks at a
     different photo, silently misdirecting later turns that replay history.
+
+    ``resume`` — continue a turn that was cut off by MAX_ITERATIONS (the
+    "Continue" button) instead of starting a new one: ``user_message`` is
+    ignored, nothing new is appended to the stored history, and auto-compact
+    is skipped (there's no new question to compact around, and the trailing
+    stored message is already a tool result the model still needs — folding
+    it into a summary would throw away the very thing it's meant to act on).
+    The tool loop just re-enters on the conversation's existing history.
     """
     username = user["username"]
     nsid = user["nsid"]
@@ -489,20 +500,24 @@ async def run_turn(
     session_key = (username, session_id)
     _active_conversations[session_key] = conversation_id
 
-    # Auto-compact runs on the *prior* history, before this turn's message is
-    # appended — compacting after would fold the user's brand-new question
-    # into the summary and leave nothing for the model to actually respond to.
-    if settings.load_settings(nsid).get("auto_compact"):
-        prior_messages = store.get_messages(username, conversation_id)
-        context_window = cfg.get("context_window") or DEFAULT_CONTEXT_WINDOW
-        if approx_tokens(prior_messages) >= context_window * AUTO_COMPACT_THRESHOLD:
-            summary = await compact.compact(username, nsid, conversation_id, cfg)
-            if summary:
-                store.reset_context_stats(username, conversation_id)
-                yield {"type": "compacted", "summary": summary}
+    # See the `resume` docstring above for why both of these are skipped
+    # when picking a cut-off turn back up rather than starting a new one.
+    if not resume:
+        # Auto-compact runs on the *prior* history, before this turn's message
+        # is appended — compacting after would fold the user's brand-new
+        # question into the summary and leave nothing for the model to
+        # actually respond to.
+        if settings.load_settings(nsid).get("auto_compact"):
+            prior_messages = store.get_messages(username, conversation_id)
+            context_window = cfg.get("context_window") or DEFAULT_CONTEXT_WINDOW
+            if approx_tokens(prior_messages) >= context_window * AUTO_COMPACT_THRESHOLD:
+                summary = await compact.compact(username, nsid, conversation_id, cfg)
+                if summary:
+                    store.reset_context_stats(username, conversation_id)
+                    yield {"type": "compacted", "summary": summary}
 
-    user_msg = {"role": "user", "content": user_message}
-    store.append_message(username, conversation_id, user_msg)
+        user_msg = {"role": "user", "content": user_message}
+        store.append_message(username, conversation_id, user_msg)
     system_prompt = prompts_store.get_prompt_by_code(nsid, "system-core")
     system_text = system_prompt["text"] if system_prompt else prompts_store.SYSTEM_PROMPT_DEFAULT
     messages = [{

@@ -586,9 +586,20 @@ export function modelSupportsVision(modelId: string): boolean {
   return !VISION_UNSUPPORTED.has(modelId);
 }
 
-/** POST to /api/chat/stream and invoke onEvent for every SSE data event. */
+/** POST to /api/chat/stream and invoke onEvent for every SSE data event.
+ *
+ * Pass `resume: true` (with an existing `conversation_id`, no `message`) to
+ * pick a turn back up after it was cut off by the server's iteration cap —
+ * see the "error" event's `resumable` flag. */
 export async function streamChat(
-  body: { conversation_id?: string; message: string; focused_photo_id?: string | null; connection?: string; model?: string },
+  body: {
+    conversation_id?: string;
+    message?: string;
+    resume?: boolean;
+    focused_photo_id?: string | null;
+    connection?: string;
+    model?: string;
+  },
   onEvent: (event: StreamEvent) => void,
 ): Promise<void> {
   const response = await fetch("/api/chat/stream", {

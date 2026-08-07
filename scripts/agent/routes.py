@@ -73,8 +73,12 @@ async def chat_stream(request: Request):
         body = await request.json()
     except ValueError:
         return JSONResponse({"error": "invalid JSON body"}, status_code=400)
+    resume = bool(body.get("resume"))
     message = (body.get("message") or "").strip()
-    if not message:
+    # A resume ("Continue" button) picks an existing, already-cut-off turn
+    # back up — there's no new user text, and run_turn(resume=True) ignores
+    # `message` entirely. A fresh turn still needs real text, same as before.
+    if not message and not resume:
         return JSONResponse({"error": "message is required"}, status_code=400)
 
     nsid = user["nsid"]
@@ -104,6 +108,8 @@ async def chat_stream(request: Request):
                 cmodel = meta.get("model") or None
                 if cconn or cmodel:
                     cfg = settings.resolve_cfg(nsid, cconn, cmodel)
+    elif resume:
+        return JSONResponse({"error": "conversation_id is required to resume"}, status_code=400)
     else:
         conv_connection = connection_override or settings.load_settings(nsid).get("active_connection", "")
         conv_model = model_override or cfg.get("model", "")
@@ -126,7 +132,8 @@ async def chat_stream(request: Request):
         async with loop.conversation_turn_lock(username, conversation_id):
             yield {"type": "start", "conversation_id": conversation_id}
             async for event in loop.run_turn(
-                user, conversation_id, message, cfg, focused_photo_id, session_id=session_id
+                user, conversation_id, message, cfg, focused_photo_id,
+                session_id=session_id, resume=resume,
             ):
                 yield event
 
