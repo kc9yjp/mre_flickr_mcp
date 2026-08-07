@@ -228,6 +228,7 @@ export function Chat() {
   connectionModelRef.current = connectionModel;
 
   const scrollRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
   // Kept in sync with activeId, but ONLY via setActive below — never derived
   // from the activeId state at render time. State updates are batched and
   // only land on the next render, which is too late for send()'s stale()
@@ -593,6 +594,21 @@ export function Chat() {
     [send],
   );
 
+  // A photo id (or other snippet) sent from elsewhere in the workbench —
+  // append to the input rather than sending, so the user can type the rest
+  // of the prompt around it. The bus event alone can arrive before this
+  // panel has mounted/subscribed (closed tab), so also check the sticky
+  // slot once on mount — same pattern as editPrompt above.
+  const insertChatText = useCallback((text: string) => {
+    setInput((prev) => (prev ? `${prev} ${text}` : text));
+    inputRef.current?.focus();
+  }, []);
+  useEffect(() => {
+    const sticky = bus.consumePendingChatText();
+    if (sticky) insertChatText(sticky);
+    return bus.on("insertChatText", insertChatText);
+  }, [insertChatText]);
+
   // Triggered by the "Compact" button in the input bar below. Shows the
   // compact prompt (from the "compact-conversation" builtin prompt, editable
   // in the Prompts panel via the same "Edit prompt →" link every workflow
@@ -928,6 +944,7 @@ export function Chat() {
         }}
       >
         <textarea
+          ref={inputRef}
           value={input}
           rows={2}
           placeholder={streaming ? "Add info to the running turn…" : "Message the workbench agent…"}

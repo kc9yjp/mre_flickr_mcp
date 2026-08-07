@@ -123,6 +123,12 @@ export default function App() {
     if (dockApi.current) openOrFocusPanel(dockApi.current, "chat");
   }), []);
 
+  // Same for insertChatText (e.g. "send photo id to chat") — bring Chat
+  // forward so the user can see the id land in the input and keep typing.
+  useEffect(() => bus.on("insertChatText", () => {
+    if (dockApi.current) openOrFocusPanel(dockApi.current, "chat");
+  }), []);
+
   // The single place that opens/focuses the Photo Viewer panel — reacts to
   // both hash deep-links (emitHashFocus) and in-app grid clicks, on desktop
   // (dockApi) and mobile (switchPanel) alike.

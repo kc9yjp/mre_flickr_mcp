@@ -9,6 +9,7 @@ interface RunCommandPayload {
 interface Events {
   viewPhoto: string; // open (or focus) the Photo Viewer panel and load this photo id — own or someone else's, the Viewer figures out which
   runCommand: RunCommandPayload; // a chat prompt to send immediately
+  insertChatText: string; // append this text to the chat input (not sent) so the user can build a prompt around it
   editPrompt: string;   // request the Prompts panel open a prompt (by id) for editing
   promptsChanged: void; // a prompt/category/variable was created, edited, deleted, or reset — refetch /api/commands
   llmConnectionsChanged: void; // a connection was added/edited/deleted, or its disabled_models changed — refetch /api/llm-settings + model lists
@@ -54,6 +55,22 @@ export function consumePendingEditPrompt(): string | null {
   const id = pendingEditPromptId;
   pendingEditPromptId = null;
   return id;
+}
+
+// Same problem, same fix, for insertChatText: a click that lands before the
+// Chat panel remounts (tab was closed, or mobile hasn't visited it yet) would
+// otherwise be dropped since the subscription only registers after mount.
+let pendingChatText: string | null = null;
+
+export function requestInsertChatText(text: string): void {
+  pendingChatText = text;
+  emit("insertChatText", text);
+}
+
+export function consumePendingChatText(): string | null {
+  const text = pendingChatText;
+  pendingChatText = null;
+  return text;
 }
 
 // Same problem, same fix, for viewPhoto: the Photo Viewer panel is created
