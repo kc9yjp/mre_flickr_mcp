@@ -264,24 +264,36 @@ def _prompts_db(nsid: str):
         path = _prompts_db_path(nsid)
         os.makedirs(os.path.dirname(path), exist_ok=True)
         conn = sqlite3.connect(path, timeout=10)
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA foreign_keys = ON")
-        # WAL lets concurrent readers proceed without waiting on a writer,
-        # unlike the default rollback journal — defense in depth alongside
-        # the per-nsid lock above (which only covers this process; nothing
-        # stops e.g. a second process touching the same file).
-        conn.execute("PRAGMA journal_mode = WAL")
-        conn.execute("PRAGMA busy_timeout = 10000")
-        conn.executescript(_SCHEMA)
-        for check_sql, alter_sql in _MIGRATIONS:
-            if conn.execute(check_sql).fetchone() is None:
-                conn.execute(alter_sql)
-        _seed_defaults(conn, nsid)
-        _sync_builtin_defaults(conn)
-        # Commit the seed/sync writes now rather than leaving them pending
-        # until the caller's own work finishes below.
-        conn.commit()
+        # Everything from here on is inside try/finally — not just the
+        # yield below. A prior version only wrapped the yield, so an
+        # exception during schema setup or _sync_builtin_defaults (e.g. a
+        # UNIQUE(code) clash — see that function's docstring) skipped
+        # conn.close() entirely. The leaked connection kept holding
+        # prompts.db's write lock indefinitely, which is what turned one
+        # real error into "database is locked" for every request behind it,
+        # not the per-nsid lock above (that part released correctly).
         try:
+            conn.row_factory = sqlite3.Row
+            conn.execute("PRAGMA foreign_keys = ON")
+            # NOT WAL: tried it here as defense in depth alongside the
+            # per-nsid lock above, but WAL's shared-memory (-shm) file
+            # depends on mmap-based locking that doesn't behave reliably on
+            # Docker Desktop for Windows' virtualized volumes — it produced
+            # a *stuck* "database is locked" that persisted even for a
+            # brand-new connection with no other request in flight, which
+            # the plain rollback journal (the default) never did. The
+            # per-nsid lock plus a busy_timeout give the same practical
+            # protection without depending on mmap.
+            conn.execute("PRAGMA busy_timeout = 10000")
+            conn.executescript(_SCHEMA)
+            for check_sql, alter_sql in _MIGRATIONS:
+                if conn.execute(check_sql).fetchone() is None:
+                    conn.execute(alter_sql)
+            _seed_defaults(conn, nsid)
+            _sync_builtin_defaults(conn)
+            # Commit the seed/sync writes now rather than leaving them
+            # pending until the caller's own work finishes below.
+            conn.commit()
             yield conn
             conn.commit()
         except Exception:
@@ -342,9 +354,14 @@ def _sync_builtin_defaults(conn: sqlite3.Connection) -> None:
       so it's a no-op once present) — categories first, since prompts below
       reference them.
     - Inserts any builtin prompt in ``_SEED_PROMPTS`` whose code doesn't
-      exist yet for this user (same shape ``_seed_defaults`` would have used
-      for a brand-new user), so a new builtin prompt reaches existing users
-      too instead of only ever appearing for accounts created after it shipped.
+      exist yet for this user at all (same shape ``_seed_defaults`` would
+      have used for a brand-new user), so a new builtin prompt reaches
+      existing users too instead of only ever appearing for accounts
+      created after it shipped. If a *non-builtin* prompt already owns that
+      code — e.g. the user had already hand-built the very prompt a new
+      default was authored from — it's promoted to builtin in place rather
+      than inserted alongside it, which would violate ``code``'s UNIQUE
+      constraint; the user's own text is left untouched.
     - Refreshes a builtin prompt's ``default_text`` whenever the shipped
       default in ``_SEED_PROMPTS`` changes, and carries that change into the
       live ``text`` too — but only if the user hasn't diverged their own
@@ -363,7 +380,7 @@ def _sync_builtin_defaults(conn: sqlite3.Connection) -> None:
     now = int(time.time())
     for p in _SEED_PROMPTS:
         row = conn.execute(
-            "SELECT text, default_text FROM prompts WHERE code = ? AND builtin = 1",
+            "SELECT id, text, default_text, builtin FROM prompts WHERE code = ?",
             (p["code"],),
         ).fetchone()
         if row is None:
@@ -377,6 +394,12 @@ def _sync_builtin_defaults(conn: sqlite3.Connection) -> None:
                 "VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, 1, ?, ?, ?)",
                 (uuid.uuid4().hex, p["code"], p["name"], p.get("description", ""),
                  p["category_id"], p["context"], p["text"], p["text"], sort_order, now, now),
+            )
+            continue
+        if not row["builtin"]:
+            conn.execute(
+                "UPDATE prompts SET builtin = 1, default_text = ?, updated_at = ? WHERE id = ?",
+                (p["text"], now, row["id"]),
             )
             continue
         if row["default_text"] == p["text"]:
