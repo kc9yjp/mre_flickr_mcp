@@ -28,6 +28,7 @@ ARG CACHEBUST=0
 COPY --chown=app scripts/ ./scripts/
 COPY --chown=app templates/ ./templates/
 COPY --chown=app static/ ./static/
+COPY --chown=app default-prompts.md ./default-prompts.md
 COPY --chown=app --from=frontend /build/dist ./frontend/dist
 
 USER app

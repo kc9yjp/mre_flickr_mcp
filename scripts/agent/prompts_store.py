@@ -15,6 +15,7 @@ can be reset; they can't be deleted, only edited or reset.
 """
 
 import os
+import re
 import sqlite3
 import time
 import uuid
@@ -61,115 +62,132 @@ CREATE TABLE IF NOT EXISTS prompt_variables (
 # PRAGMA user_version cursor like flickr_sync.py's would be overkill).
 _MIGRATIONS: list[tuple[str, str]] = []
 
-SYSTEM_PROMPT_DEFAULT = (
-    "You are the Flickr Workbench assistant. You manage the user's own Flickr "
-    "account through the provided tools: their photos, albums, groups, "
-    "galleries, and contacts, backed by a local database synced from Flickr.\n"
-    "The logged-in account is NSID {user_nsid}, currently using the username "
-    "'{username}' (this is the name that appears in flickr.com URLs, e.g. "
-    "flickr.com/photos/{username}/...).\n"
-    "Guidelines:\n"
-    "- The NSID is the only identifier that's guaranteed stable — usernames "
-    "can be renamed at any time. If a URL, profile, or comment mentions a "
-    "username that looks unfamiliar or different from '{username}', don't "
-    "assume it's a different person: call get_person_info on it (it accepts "
-    "a username, NSID, or profile/photo URL) and check its `is_you` field "
-    "before concluding whether it belongs to this account or someone else.\n"
-    "- Read current state before changing anything (e.g. get_photo before "
-    "update_photo).\n"
-    "- Propose changes and wait for the user's go-ahead; write tools "
-    "additionally require an explicit confirmation in the UI, and a declined "
-    "confirmation means skip it and move on.\n"
-    "- When suggesting groups or albums, use numbered lists so the user can "
-    "pick by number.\n"
-    "- Suggested tags: lowercase, compound words concatenated (oakpark), "
-    "never bare year tags.\n"
-    "- Keep responses concise. When you discuss a specific photo, mention its "
-    "photo id.\n"
-    "- Some turns include a note naming the photo currently open in the "
-    "user's Photo Viewer panel. Treat that as the default target for "
-    "instructions that don't name a different photo — but an explicit photo "
-    "id or link in the user's own message always takes priority over it. "
-    "That note only gives an id, not details — if the user asks about 'the "
-    "current photo' or similar, call get_photo (or another relevant tool) "
-    "for that id to get fresh data rather than recalling an earlier photo "
-    "from this conversation's history.\n"
-    "- You CAN change what the user sees in the Photo Viewer panel: calling "
-    "any tool with a photo id (get_photo is the cheapest) switches that panel "
-    "to show that photo. This works for ANY Flickr photo, not just the "
-    "user's own — the Photo Viewer fetches live from the Flickr API and "
-    "shows a different set of actions depending on who owns it (only the "
-    "local SQLite caches described below are own-library-only; the Photo "
-    "Viewer itself is not). Whenever the user asks to see, open, switch to, "
-    "or pull up a specific photo by id — their own or someone else's — call "
-    "get_photo for it. Do not claim you have no way to control the Photo "
-    "Viewer, and do not claim it can only display the user's own photos.\n"
-    "- When the user says 'remember' or 'memory' followed by guidance, or asks "
-    "you to remember a preference or rule for future conversations, call the "
-    "`remember` tool with that guidance. Keep each piece of guidance as a "
-    "concise, self-contained sentence or rule.\n"
-    "- CRITICAL: Never claim to have seen, viewed, or visually described a "
-    "photo unless actual image data was provided in the tool result. If a tool "
-    "result says vision is disabled, work from title, description, tags, and "
-    "EXIF only, and tell the user explicitly that visual inspection is "
-    "unavailable. Guessing or fabricating visual details is not allowed.\n"
-    "- CRITICAL: Tool schemas are provided to you exactly as they are. Never "
-    "claim a tool doesn't support a field, parameter, or capability without "
-    "rechecking its schema first — if it's in the schema, it's supported. "
-    "Never state you performed an action, or that a specific field was "
-    "updated, without checking the actual arguments you sent in that tool "
-    "call. If you made a mistake (e.g. left a field out of an update), say so "
-    "plainly instead of inventing an explanation for why it couldn't be done."
+# ---------------------------------------------------------------------------
+# Builtin prompt defaults — sourced from default-prompts.md
+# ---------------------------------------------------------------------------
+#
+# ``default-prompts.md`` (repo root, copied into the Docker image alongside
+# ``scripts/`` — see Dockerfile) is the single source of truth for every
+# builtin prompt's category, name, description, and text. To change a
+# default, edit that file — ``_parse_default_prompts_md`` below regenerates
+# ``_SEED_CATEGORIES``/``_SEED_PROMPTS`` from it on import, so there's
+# nothing to hand-sync here.
+#
+# ``_sync_builtin_defaults`` (further down) is what actually gets an edited
+# default in front of existing users: it diffs the freshly parsed
+# ``default_text`` against what's stored, and only overwrites a user's live
+# ``text`` if they hadn't already diverged it from the old default.
+
+_DEFAULT_PROMPTS_MD_PATH = os.path.normpath(
+    os.path.join(os.path.dirname(__file__), "..", "..", "default-prompts.md")
 )
 
-GROUP_SUMMARY_PROMPT_DEFAULT = (
-    "You are cataloging a Flickr group for photo-sharing automation.\n\n"
-    "Group name: {group_name}\n\n"
-    "Group description (rules/restrictions, as written by the group admin):\n"
-    "{group_description}\n\n"
-    "The user's own note about this group (may be empty):\n"
-    "{group_user_note}\n\n"
-    "Reply with ONLY a JSON object (no markdown code fences, no commentary) with these keys:\n"
-    "- \"summary\": a short markdown summary (2-5 sentences) of what the group is about, "
-    "and any posting rules or restrictions (limits on photos per day/week, required themes, "
-    "content restrictions, etc). Incorporate the user's note above where relevant.\n"
-    "- \"is_milestone\": true if this is a \"milestone\"/threshold group that only accepts "
-    "photos once they reach a minimum view or favorite count, else false.\n"
-    "- \"fave_min\": integer minimum favorite count required to post, or null if none/not applicable.\n"
-    "- \"view_min\": integer minimum view count required to post, or null if none/not applicable.\n"
-    "- \"open_subject\": true if the group accepts photos of any subject (no theme restriction), "
-    "false if it's restricted to a specific theme or subject (e.g. \"black and white only\", "
-    "\"nature only\").\n"
-    "- \"keywords\": a list of 5-15 lowercase keywords and synonyms describing the group's theme, "
-    "useful for search.\n"
-)
+# Maps each "## " section heading in default-prompts.md to the stable
+# category id stored in the database. Lives here, not in the markdown,
+# because it's a code-level identifier rather than user-facing content.
+_CATEGORY_IDS = {
+    "System": "system",
+    "My Photo": "own_photo",
+    "Someone Else's Photo": "other_photo",
+    "My Collection": "collection",
+}
 
-COMPACT_PROMPT_DEFAULT = (
-    "Summarize this entire conversation so it can continue seamlessly without "
-    "the full history above. Capture what the user asked for and why, "
-    "decisions made, any photo/album/group ids or titles referenced, and "
-    "anything left unresolved. Be concise but keep the specifics the "
-    "assistant will need to keep working correctly. Write the summary "
-    "itself, not a description of writing one."
-)
+# Same shape as the frontend's own parser (parseExportedMarkdown in
+# frontend/src/panels/PromptsSection.tsx) — that panel's "Export as
+# Markdown" button produces exactly this layout, and "Import from Markdown"
+# reads it back in. Keep the two in sync if the format ever changes.
+_PROMPT_META_RE = re.compile(r"^\*Code: `([^`]+)` — Context: (\w+)\*$")
 
-_STYLE_RULES = (
-    "Style rules: never include year tags (e.g. '2007'); compound tags are "
-    "concatenated lowercase (oakpark, not oak-park); don't add location tags "
-    "like oakpark/chicago unless the subject is location-relevant; never "
-    "include self-promotional URLs."
-)
 
-_SEED_CATEGORIES = [
-    ("system", "System", "Core agent behavior and standing memory.", 0),
-    ("own_photo", "My Photo", "Prompts about a single photo you own.", 1),
-    ("other_photo", "Someone Else's Photo",
-     "Prompts for photos you don't own — fave/comment style workflows.", 2),
-    ("collection", "My Collection",
-     "Prompts that operate across your whole photo library — weak-photo "
-     "review, threshold/boost groups, unearthing private photos, replying "
-     "to comments.", 3),
-]
+def _parse_default_prompts_md(path: str) -> tuple[list[tuple], list[dict]]:
+    """Parse default-prompts.md into (_SEED_CATEGORIES, _SEED_PROMPTS) shape.
+
+    ``user-memory``'s shipped default is always blank, regardless of what
+    the fence under "Standing memory" shows — that fence documents what
+    accumulated guidance looks like, it isn't meant to ship as everyone's
+    starting memory.
+    """
+    with open(path, encoding="utf-8") as f:
+        lines = f.read().split("\n")
+    n = len(lines)
+    categories: list[tuple] = []
+    prompts: list[dict] = []
+    current_category: str | None = None
+    current_cat_id: str | None = None
+    category_desc_lines: list[str] = []
+    cat_sort = 0
+
+    def flush_category():
+        nonlocal cat_sort
+        if current_category is not None:
+            categories.append((current_cat_id, current_category,
+                                "\n".join(category_desc_lines).strip(), cat_sort))
+            cat_sort += 1
+
+    i = 0
+    while i < n:
+        line = lines[i]
+        if line.startswith("## "):
+            flush_category()
+            current_category = line[3:].strip()
+            current_cat_id = _CATEGORY_IDS.get(current_category)
+            if current_cat_id is None:
+                raise ValueError(
+                    f"default-prompts.md: unknown category heading {current_category!r}"
+                )
+            category_desc_lines = []
+            i += 1
+            while i < n and not lines[i].startswith("### ") and not lines[i].startswith("## "):
+                category_desc_lines.append(lines[i])
+                i += 1
+            continue
+        if line.startswith("### ") and current_category is not None:
+            name = line[4:].strip()
+            i += 1
+            meta = _PROMPT_META_RE.match(lines[i]) if i < n else None
+            code, context = "", "global"
+            if meta:
+                code, context = meta.group(1), meta.group(2)
+                i += 1
+            desc_lines: list[str] = []
+            while i < n and lines[i].strip() != "```":
+                desc_lines.append(lines[i])
+                i += 1
+            if i < n and lines[i].strip() == "```":
+                i += 1
+            text_lines: list[str] = []
+            while i < n and lines[i].strip() != "```":
+                text_lines.append(lines[i])
+                i += 1
+            if i < n and lines[i].strip() == "```":
+                i += 1
+            if not code:
+                raise ValueError(
+                    f"default-prompts.md: prompt {name!r} is missing its "
+                    "'*Code: `...` — Context: ...*' line"
+                )
+            text = "\n".join(text_lines).strip()
+            if code == "user-memory":
+                text = ""
+            prompts.append(dict(code=code, name=name, category_id=current_cat_id,
+                                 context=context,
+                                 description="\n".join(desc_lines).strip(), text=text))
+            continue
+        i += 1
+    flush_category()
+    return categories, prompts
+
+
+_SEED_CATEGORIES, _SEED_PROMPTS = _parse_default_prompts_md(_DEFAULT_PROMPTS_MD_PATH)
+
+# Kept as module-level constants for the handful of callers that reference a
+# single builtin default directly rather than going through _SEED_PROMPTS:
+# agent/loop.py (system prompt fallback), agent/compact.py (compaction
+# fallback), scripts/flickr_sync.py (group summary fallback).
+_prompt_defaults_by_code = {p["code"]: p["text"] for p in _SEED_PROMPTS}
+SYSTEM_PROMPT_DEFAULT = _prompt_defaults_by_code["system-core"]
+GROUP_SUMMARY_PROMPT_DEFAULT = _prompt_defaults_by_code["group-summary"]
+COMPACT_PROMPT_DEFAULT = _prompt_defaults_by_code["compact-conversation"]
 
 # Categories aren't user-editable — a fixed, known set, so the system (not
 # the user) can use a prompt's category to decide which page its workflow
@@ -206,162 +224,6 @@ _SEED_VARIABLES = [
     ("group_user_note", "Your note about the group", "Your own freeform "
      "note about the group (set via the set_group_note tool). Substituted "
      "by the background groups sync before calling the LLM.", "server"),
-]
-
-_SEED_PROMPTS = [
-    dict(code="system-core", name="System prompt", category_id="system",
-         context="global", text=SYSTEM_PROMPT_DEFAULT,
-         description="Core behavior contract sent as the first system "
-         "message on every turn."),
-    dict(code="user-memory", name="Standing memory", category_id="system",
-         context="global", text="",
-         description="Accumulated guidance saved via the `remember` tool "
-         "or edited here; sent as a second system message on every turn."),
-    dict(code="compact-conversation", name="Compact conversation", category_id="system",
-         context="global", text=COMPACT_PROMPT_DEFAULT,
-         description="Instruction sent to the LLM to summarize a conversation "
-         "when compacting it, replacing its stored history in place — used "
-         "by both the manual \"Compact now\" action and auto-compact."),
-    dict(code="group-summary", name="Group summary", category_id="system",
-         context="global", text=GROUP_SUMMARY_PROMPT_DEFAULT,
-         description="Used by the background groups sync to (re)generate a "
-         "joined group's AI summary, milestone thresholds, and search "
-         "keywords whenever its name, description, or your note changes. "
-         "Sent alone in a fresh, tool-free call — not launchable from chat."),
-    dict(code="improve-photo", name="Improve metadata", category_id="own_photo",
-         context="photo", description="Suggest title/description/tags for "
-         "the current photo.",
-         text=(
-             "Review my photo {photo_id}. If you don't already have its image and "
-             "current metadata from earlier in this conversation, fetch it first "
-             "with fetch_photo_image and get_photo — never overwrite without "
-             "reading first. Then suggest a concise descriptive title, a 1-2 "
-             "sentence description capturing mood and subject, and relevant tags. "
-             + _STYLE_RULES + " Show your suggestions and wait for my confirmation "
-             "before calling update_photo."
-         )),
-    dict(code="suggest-groups", name="Suggest groups", category_id="own_photo",
-         context="photo", description="Suggest Flickr groups for the current photo.",
-         text=(
-             "Look at my photo {photo_id}. If you don't already have its image and "
-             "group memberships from earlier in this conversation, fetch it first "
-             "(fetch_photo_image, then get_photo and get_photo_contexts to see "
-             "which groups it's already in). Search my joined groups with "
-             "find_groups using 2-3 keyword searches based on the photo's subject "
-             "and location, and also check get_group_stats with limit=100 to "
-             "browse by membership size. Suggest up to 5 relevant groups it's not "
-             "in yet as a NUMBERED list and wait for me to pick numbers. Only add "
-             "the groups whose numbers I pick, with add_to_group."
-         )),
-    dict(code="suggest-albums", name="Suggest albums", category_id="own_photo",
-         context="photo", description="Suggest albums for the current photo.",
-         text=(
-             "Check which albums my photo {photo_id} should be in. If you don't "
-             "already have its image and current albums from earlier in this "
-             "conversation, fetch it first (fetch_photo_image, then "
-             "get_photo_contexts for current albums) and find_albums to see what "
-             "exists. Suggest topical albums that match the subject as a numbered "
-             "list — but don't suggest more once the photo is already in about 5 "
-             "albums, and never suggest the 'Made Explore' album unless I confirm "
-             "the photo made Explore. Wait for my picks, then add with "
-             "add_to_album."
-         )),
-    dict(code="threshold-groups", name="Threshold groups", category_id="own_photo",
-         context="photo", description="Check the current photo against "
-         "view/fave threshold group requirements.",
-         text=(
-             "Check if my photo {photo_id} qualifies for view/fave threshold "
-             "groups. If you don't already have its stats and group contexts "
-             "from earlier in this conversation, get them with get_photo_stats "
-             "and get_photo_contexts. Then compare its stats against these joined "
-             "groups, skipping any it's already in: 10,000 Views Unlimited "
-             "(2337493@N25, 10k+ views), 5,000 Views (48333387@N00, 5k+ views), "
-             "2,000 Views Unlimited (2337875@N25, 2k+ views), Flickr's Finest "
-             "100+ Faves (910466@N22), 100 faves minimum (14707878@N20), 50+ "
-             "Favorites (2888626@N21), 250 faves (2838082@N25), The Flickr "
-             "Collection (778902@N24, 250+ faves). List qualifying groups as a "
-             "numbered list and wait for my picks before add_to_group."
-         )),
-    dict(code="suggest-comment-fave", name="Suggest a comment & like", category_id="other_photo",
-         context="photo", description="Suggest a comment for a photo you don't "
-         "own, then fave and post it once you confirm.",
-         text=(
-             "Look at photo {photo_id}, which isn't mine. Fetch it with "
-             "fetch_photo_image and get_photo if you don't already have its image "
-             "and metadata from earlier in this conversation. Suggest one short, "
-             "genuine-sounding comment (not generic praise — reference something "
-             "specific about the photo). Show it and wait for my go-ahead or edits "
-             "before calling fave_photo and add_comment."
-         )),
-    dict(code="other-photo-owner", name="About the creator", category_id="other_photo",
-         context="photo", description="Look up the owner of a photo you don't "
-         "own, and your relationship to them.",
-         text=(
-             "Look up who owns photo {photo_id} (call get_photo if you don't "
-             "already have its owner from earlier in this conversation), then call "
-             "get_person_info on their NSID. Summarize: their name/location/bio, "
-             "how many photos they have, and — most importantly — our relationship: "
-             "do I follow them, do they follow me, and are they marked as a friend "
-             "or family contact."
-         )),
-    dict(code="other-photo-groups", name="Group status", category_id="other_photo",
-         context="photo", description="Check the groups a photo you don't own "
-         "belongs to: joined or not, popularity, description.",
-         text=(
-             "Find the group pools photo {photo_id} belongs to with "
-             "get_photo_contexts, then call get_group_info on each one. For every "
-             "group, report: its name, whether I've already joined it, its member "
-             "and pool-photo counts (popularity), and a short summary of its "
-             "description/rules."
-         )),
-    dict(code="reply-comments", name="Reply to comments", category_id="collection",
-         context="global", description="Draft replies to unanswered comments "
-         "across your photos.",
-         text=(
-             "Help me reply to recent comments on my photos. Call "
-             "get_photos_with_comments (limit=30), then get_photo_comments for "
-             "each. My NSID is {user_nsid}: a comment already has a reply if one "
-             "of my comments appears after it in the thread. Reply to group "
-             "notification comments too, not just personal ones. For each "
-             "unanswered comment, one at a time: show the photo title, commenter, "
-             "and comment text, then suggest 5 short reply options with variety "
-             "(emoji-only, brief thanks, specific, warm, casual), each formatted "
-             "as '[<author_url>] <message>' using author_url from the comment "
-             "data. Wait for me to pick or write my own before posting with "
-             "add_comment."
-         )),
-    dict(code="weak-photos", name="Review weak photos", category_id="collection",
-         context="global", description="Find and review your weakest photos "
-         "one at a time.",
-         text=(
-             "Find my weakest photos with find_weak_photos "
-             "(require_zero_favorites=true, limit=30). Take the top candidate "
-             "not yet reviewed in this conversation: fetch it with "
-             "fetch_photo_image, give an honest visual assessment (composition, "
-             "light, subject, technical quality — early smartphone photos get "
-             "more latitude), and recommend keep-public or make-private. Wait "
-             "for my decision. If private: suggest title/description/tags, apply "
-             "with update_photo, then set_visibility to private. If keep: "
-             "suggest improved metadata and ask about groups. "
-             + _STYLE_RULES
-         )),
-    dict(code="unearth-private", name="Unearth private photos", category_id="collection",
-         context="global", description="Find old private photos and decide "
-         "which ones to publish.",
-         text=(
-             "Search my private photos with search_photos (is_public=false, "
-             "sort_by=date_taken, order=asc, limit=50) to find the oldest ones "
-             "not yet reviewed in this conversation. Take the top candidate: "
-             "fetch it with fetch_photo_image, give an honest visual "
-             "assessment (composition, light, subject, technical quality — "
-             "early smartphone photos get more latitude), and recommend "
-             "publish or keep-private. Wait for my decision. If publish: "
-             "suggest title/description/tags, apply with update_photo, then "
-             "set_visibility to public, and suggest a couple of relevant "
-             "groups with get_group_stats. If keep private: move to the next "
-             "candidate. "
-             + _STYLE_RULES
-         )),
 ]
 
 
@@ -660,6 +522,27 @@ def reset_prompt(nsid: str, prompt_id: str) -> dict | None:
             (int(time.time()), prompt_id),
         )
     return get_prompt(nsid, prompt_id)
+
+
+def reset_all_prompts(nsid: str, include_user_memory: bool = False) -> list[dict]:
+    """Restore every builtin prompt's text to its shipped default_text.
+
+    ``user-memory``'s default_text is always blank, so resetting it wipes
+    out the user's accumulated `remember`-tool guidance — it's skipped
+    unless *include_user_memory* is explicitly set, which the "reset all"
+    UI only does after a separate, explicit confirmation.
+    """
+    now = int(time.time())
+    with _prompts_db(nsid) as conn:
+        rows = conn.execute("SELECT id, code FROM prompts WHERE builtin = 1").fetchall()
+        for row in rows:
+            if row["code"] == "user-memory" and not include_user_memory:
+                continue
+            conn.execute(
+                "UPDATE prompts SET text = default_text, updated_at = ? WHERE id = ?",
+                (now, row["id"]),
+            )
+    return list_prompts(nsid)
 
 
 def append_user_memory(nsid: str, guidance: str) -> str:

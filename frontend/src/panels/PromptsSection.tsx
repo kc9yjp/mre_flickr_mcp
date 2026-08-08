@@ -181,6 +181,26 @@ export function PromptsSection() {
     }
   };
 
+  const resetAllPrompts = async () => {
+    if (!window.confirm(
+      "Reset every built-in prompt to its shipped default? Any edits you've made to them will be lost. " +
+      "Prompts you've added yourself are not affected."
+    )) return;
+    const includeUserMemory = window.confirm(
+      "Also clear your Standing Memory (the guidance the assistant has accumulated via \"remember\")? " +
+      "Choose Cancel to leave Standing Memory as it is."
+    );
+    try {
+      await postJSON("/api/prompts/reset-all", { include_user_memory: includeUserMemory });
+      flash(includeUserMemory
+        ? "All built-in prompts reset, including Standing Memory."
+        : "All built-in prompts reset (Standing Memory kept).");
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  };
+
   const deletePrompt = async (id: string) => {
     try {
       await postJSON(`/api/prompts/${id}/delete`, {});
@@ -320,6 +340,7 @@ export function PromptsSection() {
       <div className="settings-row">
         <button onClick={exportMarkdown}>Export as Markdown</button>
         <button onClick={() => importInputRef.current?.click()}>Import from Markdown</button>
+        <button className="btn-danger-sm" onClick={resetAllPrompts}>Reset all to default</button>
         <input
           ref={importInputRef}
           type="file"

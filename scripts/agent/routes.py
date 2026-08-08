@@ -503,6 +503,19 @@ async def prompts_reset(request: Request):
     return JSONResponse(reset)
 
 
+async def prompts_reset_all(request: Request):
+    user = _session_user(request)
+    if not user:
+        return _unauthorized()
+    try:
+        body = await request.json()
+    except ValueError:
+        body = {}
+    include_user_memory = bool(body.get("include_user_memory"))
+    prompts = prompts_store.reset_all_prompts(user["nsid"], include_user_memory=include_user_memory)
+    return JSONResponse({"prompts": prompts})
+
+
 async def prompt_categories_create(request: Request):
     user = _session_user(request)
     if not user:
@@ -613,6 +626,9 @@ def api_routes() -> list[Route]:
         Route("/api/llm-connections/{id}/model-settings/reset", endpoint=llm_model_settings_reset, methods=["POST"]),
         Route("/api/commands",     endpoint=api_commands),
         Route("/api/prompts",            endpoint=prompts_collection, methods=["GET", "POST"]),
+        # Must precede "/api/prompts/{id}" — otherwise that route's {id}
+        # param would swallow "reset-all" as a (nonexistent) prompt id.
+        Route("/api/prompts/reset-all",  endpoint=prompts_reset_all, methods=["POST"]),
         Route("/api/prompts/{id}",       endpoint=prompts_update, methods=["POST"]),
         Route("/api/prompts/{id}/delete", endpoint=prompts_delete, methods=["POST"]),
         Route("/api/prompts/{id}/reset", endpoint=prompts_reset, methods=["POST"]),

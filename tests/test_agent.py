@@ -1017,11 +1017,24 @@ async def test_run_turn_vision_enabled_image_reaches_llm_as_user_message(user_db
 # --- commands ---
 
 def test_commands_resolve_user_placeholder():
-    from agent import commands
+    """{user_nsid}/{username} are resolved server-side for any command that
+    references them, and {photo_id} is left alone for the client to fill in
+    on photo-context commands. Uses a custom prompt rather than a specific
+    builtin's wording, since builtin prompt text is sourced from
+    default-prompts.md and can change independently of this test."""
+    from agent import commands, prompts_store
 
-    cmds = commands.commands_for_api("99@N00")
-    reply = next(c for c in cmds if c["id"] == "reply-comments")
-    assert "99@N00" in reply["prompt"]
+    collection = next(c["id"] for c in prompts_store.all_data("99@N00")["categories"]
+                       if c["id"] == "collection")
+    prompts_store.create_prompt(
+        "99@N00", code="placeholder-check", name="Placeholder check",
+        category_id=collection, text="nsid={user_nsid} username={username}",
+    )
+
+    cmds = commands.commands_for_api("99@N00", "someuser")
+    custom = next(c for c in cmds if c["id"] == "placeholder-check")
+    assert "99@N00" in custom["prompt"]
+    assert "someuser" in custom["prompt"]
     photo_cmds = [c for c in cmds if c["context"] == "photo"]
     assert photo_cmds and all("{photo_id}" in c["prompt"] for c in photo_cmds)
 
@@ -1138,7 +1151,7 @@ def test_prompts_seed_once_and_are_idempotent():
     assert {p["code"] for p in data["prompts"]} == {
         "system-core", "user-memory", "compact-conversation", "group-summary",
         "improve-photo", "suggest-groups", "suggest-albums", "threshold-groups",
-        "suggest-comment-fave", "other-photo-owner", "other-photo-groups",
+        "Review photo", "suggest-comment-fave", "other-photo-owner", "other-photo-groups",
         "reply-comments", "weak-photos", "unearth-private",
     }
     assert {v["code"] for v in data["variables"]} == {
@@ -1214,6 +1227,27 @@ def test_builtin_prompt_cannot_be_deleted_but_can_be_reset():
 
     reset = prompts_store.reset_prompt(NSID, system_prompt["id"])
     assert reset["text"] == system_prompt["text"]
+
+
+def test_reset_all_prompts_skips_user_memory_unless_asked():
+    """reset_all_prompts restores every edited builtin's text, but leaves
+    user-memory alone unless include_user_memory=True — resetting it means
+    discarding the user's accumulated `remember`-tool guidance, which the UI
+    only does after a separate, explicit confirmation."""
+    from agent import prompts_store
+
+    system_prompt = prompts_store.get_prompt_by_code(NSID, "system-core")
+    prompts_store.update_prompt(NSID, system_prompt["id"], text="edited system prompt")
+    prompts_store.append_user_memory(NSID, "Remembered rule.")
+
+    prompts_store.reset_all_prompts(NSID, include_user_memory=False)
+    assert prompts_store.get_prompt_by_code(NSID, "system-core")["text"] == system_prompt["text"]
+    assert prompts_store.get_prompt_by_code(NSID, "user-memory")["text"] == "Remembered rule."
+
+    prompts_store.update_prompt(NSID, system_prompt["id"], text="edited again")
+    prompts_store.reset_all_prompts(NSID, include_user_memory=True)
+    assert prompts_store.get_prompt_by_code(NSID, "system-core")["text"] == system_prompt["text"]
+    assert prompts_store.get_prompt_by_code(NSID, "user-memory")["text"] == ""
 
 
 # --- per-browser-window session isolation of turn state ---
