@@ -48,6 +48,7 @@ Instruction sent to the LLM to summarize a conversation when compacting it, repl
 
 ```
 Summarize this entire conversation so it can continue seamlessly without the full history above. Capture what the user asked for and why, decisions made, any photo/album/group ids or titles referenced, and anything left unresolved. Be concise but keep the specifics the assistant will need to keep working correctly. Write the summary itself, not a description of writing one.
+- Only the latest photo binary data needs to be kept.
 ```
 
 ### Group summary
@@ -92,7 +93,10 @@ Review my photo {photo_id}.
 - Show your suggestions and wait for my confirmation or additional suggestions/clarifications before calling update_photo.
 - after updating, check that the description was added.
 - if the photo is private ask if it should be made public.
--
+
+You can offer to:
+1 suggest from my groups 
+2 tag as reviewed{review year}
 ```
 
 ### Suggest groups
