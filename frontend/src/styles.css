@@ -1004,7 +1004,24 @@ select:focus {
 
 .confirm-card .approve {
   border-color: var(--good);
-  margin-right: 8px;
+}
+
+.confirm-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.cancel-chat-btn {
+  margin-left: auto;
+  border-color: transparent;
+  color: var(--ink-secondary);
+  font-size: 0.75rem;
+}
+
+.cancel-chat-btn:hover {
+  color: var(--danger);
+  border-color: var(--danger);
 }
 
 .deny-reason {

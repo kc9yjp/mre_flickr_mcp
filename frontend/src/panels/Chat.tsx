@@ -942,15 +942,23 @@ export function Chat() {
             )}
             <pre>{prettyArgs(confirm.arguments)}</pre>
             {denyReason === null ? (
-              <div>
+              <div className="confirm-actions">
                 <button className="approve" onClick={() => answerConfirm(true)}>
                   Approve
                 </button>
                 <button onClick={() => setDenyReason("")}>Deny</button>
+                <button
+                  type="button"
+                  className="cancel-chat-btn"
+                  onClick={cancelTurn}
+                  title="Stop the whole turn instead of answering each request"
+                >
+                  Cancel chat
+                </button>
               </div>
             ) : (
               <form
-                className="deny-reason"
+                className="deny-reason confirm-actions"
                 onSubmit={(e) => {
                   e.preventDefault();
                   answerConfirm(false, denyReason);
@@ -966,6 +974,14 @@ export function Chat() {
                 <button type="submit">Send</button>
                 <button type="button" onClick={() => answerConfirm(false)}>
                   Skip
+                </button>
+                <button
+                  type="button"
+                  className="cancel-chat-btn"
+                  onClick={cancelTurn}
+                  title="Stop the whole turn instead of answering each request"
+                >
+                  Cancel chat
                 </button>
               </form>
             )}
