@@ -235,15 +235,29 @@ def _prompts_db_path(nsid: str) -> str:
 def _prompts_db(nsid: str):
     path = _prompts_db_path(nsid)
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    conn = sqlite3.connect(path)
+    conn = sqlite3.connect(path, timeout=10)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
+    # WAL lets concurrent readers (e.g. several /api/* calls firing at once
+    # on page load) proceed without waiting on a writer, unlike the default
+    # rollback journal. Matters more here than for other stores: every call
+    # into this module goes through the seed/sync writes below first, so
+    # without WAL a burst of simultaneous requests can queue up past the
+    # busy timeout and surface as "database is locked" (seen when a
+    # default-prompts.md edit changes many builtins' default_text at once —
+    # see _sync_builtin_defaults — right as several requests land together).
+    conn.execute("PRAGMA journal_mode = WAL")
+    conn.execute("PRAGMA busy_timeout = 10000")
     conn.executescript(_SCHEMA)
     for check_sql, alter_sql in _MIGRATIONS:
         if conn.execute(check_sql).fetchone() is None:
             conn.execute(alter_sql)
     _seed_defaults(conn, nsid)
     _sync_builtin_defaults(conn)
+    # Commit the seed/sync writes now rather than leaving them pending until
+    # the caller's own work finishes below — that would hold the write lock
+    # for the whole request instead of just this setup step.
+    conn.commit()
     try:
         yield conn
         conn.commit()
