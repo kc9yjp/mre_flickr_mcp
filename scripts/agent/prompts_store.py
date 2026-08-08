@@ -17,6 +17,7 @@ can be reset; they can't be deleted, only edited or reset.
 import os
 import re
 import sqlite3
+import threading
 import time
 import uuid
 from contextlib import contextmanager
@@ -231,41 +232,63 @@ def _prompts_db_path(nsid: str) -> str:
     return os.path.join(_CREDS_BASE, nsid, "prompts.db")
 
 
+# Per-nsid locks serializing all access to that user's prompts.db within
+# this process — see the comment in _prompts_db for why.
+_db_locks: dict[str, threading.Lock] = {}
+_db_locks_meta_lock = threading.Lock()
+
+
+def _lock_for(nsid: str) -> threading.Lock:
+    with _db_locks_meta_lock:
+        lock = _db_locks.get(nsid)
+        if lock is None:
+            lock = _db_locks[nsid] = threading.Lock()
+        return lock
+
+
 @contextmanager
 def _prompts_db(nsid: str):
-    path = _prompts_db_path(nsid)
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    conn = sqlite3.connect(path, timeout=10)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON")
-    # WAL lets concurrent readers (e.g. several /api/* calls firing at once
-    # on page load) proceed without waiting on a writer, unlike the default
-    # rollback journal. Matters more here than for other stores: every call
-    # into this module goes through the seed/sync writes below first, so
-    # without WAL a burst of simultaneous requests can queue up past the
-    # busy timeout and surface as "database is locked" (seen when a
-    # default-prompts.md edit changes many builtins' default_text at once —
-    # see _sync_builtin_defaults — right as several requests land together).
-    conn.execute("PRAGMA journal_mode = WAL")
-    conn.execute("PRAGMA busy_timeout = 10000")
-    conn.executescript(_SCHEMA)
-    for check_sql, alter_sql in _MIGRATIONS:
-        if conn.execute(check_sql).fetchone() is None:
-            conn.execute(alter_sql)
-    _seed_defaults(conn, nsid)
-    _sync_builtin_defaults(conn)
-    # Commit the seed/sync writes now rather than leaving them pending until
-    # the caller's own work finishes below — that would hold the write lock
-    # for the whole request instead of just this setup step.
-    conn.commit()
-    try:
-        yield conn
+    # _seed_defaults/_sync_builtin_defaults run on every open (see their own
+    # docstrings for why — new builtins must reach existing users on their
+    # next load, not just brand-new ones) and are near-instant no-ops in the
+    # common case. Right after a default-prompts.md edit changes many
+    # builtins' default_text at once though, they briefly become real,
+    # repeated write work, and a page load firing several /api/* calls at
+    # once for the same user could race for the write lock and hit "database
+    # is locked" before either finished. Serializing per nsid — rather than
+    # skipping the check once it's been done, which would also mean a
+    # not-yet-restarted process could miss a change made *after* its first
+    # request — removes the possibility of that race outright: it just
+    # means the second request waits a beat instead of erroring.
+    with _lock_for(nsid):
+        path = _prompts_db_path(nsid)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        conn = sqlite3.connect(path, timeout=10)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA foreign_keys = ON")
+        # WAL lets concurrent readers proceed without waiting on a writer,
+        # unlike the default rollback journal — defense in depth alongside
+        # the per-nsid lock above (which only covers this process; nothing
+        # stops e.g. a second process touching the same file).
+        conn.execute("PRAGMA journal_mode = WAL")
+        conn.execute("PRAGMA busy_timeout = 10000")
+        conn.executescript(_SCHEMA)
+        for check_sql, alter_sql in _MIGRATIONS:
+            if conn.execute(check_sql).fetchone() is None:
+                conn.execute(alter_sql)
+        _seed_defaults(conn, nsid)
+        _sync_builtin_defaults(conn)
+        # Commit the seed/sync writes now rather than leaving them pending
+        # until the caller's own work finishes below.
         conn.commit()
-    except Exception:
-        conn.rollback()
-        raise
-    finally:
-        conn.close()
+        try:
+            yield conn
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
 
 
 def _seed_defaults(conn: sqlite3.Connection, nsid: str) -> None:
