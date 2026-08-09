@@ -9,8 +9,10 @@ httpx
 tzdata
 Pillow
 
-# Security floors for transitive / base-image packages flagged by the
-# container vulnerability scan. Not imported directly by the app — pinned only
-# to keep the built image off the vulnerable versions.
+# General security floors, not imported directly by the app. NOTE: these do
+# NOT fix the container scanner's msgpack/setuptools findings — those come
+# from pip's own internal vendored copies (pip/_vendor/vendor.txt), a
+# separate, older set of versions from whatever we pin here. That's handled
+# by removing pip from the final image in the Dockerfile instead.
 msgpack>=1.2.1        # GHSA-6v7p-g79w-8964 (OOB read on Unpacker reuse), fixed 1.2.1
 setuptools>=78.1.1    # CVE-2025-47273 (PackageIndex path traversal), fixed 78.1.1

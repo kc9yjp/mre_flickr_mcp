@@ -25,6 +25,16 @@ RUN if [ "$INSTALL_VECTOR_SEARCH" = "true" ]; then \
         pip install --no-cache-dir -r requirements-vector.txt; \
     fi
 
+# pip ships its own internal, older copies of a few libraries for its own
+# bootstrapping (see pip/_vendor/vendor.txt in the base image — notably
+# msgpack and setuptools versions well behind what we pin above), which is
+# where the container scanner's msgpack/setuptools findings actually come
+# from — not from anything installed by requirements.txt. Nothing here
+# shells out to pip at runtime, so the simplest real fix is to not ship pip
+# (and its vendored bundle) in the final image at all, rather than chase a
+# vulnerable version that was never ours to begin with.
+RUN python -m pip uninstall -y pip
+
 RUN useradd -m -u 1000 app && \
     chown -R app /app && \
     mkdir -p /home/app/.flickr_mcp && \
