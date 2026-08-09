@@ -289,9 +289,13 @@ reset.
 1. SQL LIKE search over name/description/summary/keywords   (unchanged)
 2. [if enabled]
      - Embed the query
-     - Ask Chroma for the nearest `limit` groups
+     - Budget: semantic hits get whatever is left of `limit` after the
+       keyword rows, so the response never exceeds the requested size
+     - Ask Chroma for (budget + keyword hits) neighbours, since the keyword
+       matches are usually also the nearest vectors and get filtered below
      - Drop anything the keyword search already returned
-     - Drop anything beyond WORKBENCH_VECTOR_MAX_DISTANCE
+     - Drop anything beyond WORKBENCH_VECTOR_MAX_DISTANCE, and anything the
+       store returned without a distance to check against it
      - Look the survivors up in SQLite and append them, nearest first
 ```
 
@@ -300,6 +304,12 @@ is why the distance ceiling exists: without it every search would append its
 full quota of "matches" regardless of relevance. The `1.0` default (cosine
 distance) drops anything with no positive correlation to the query at all;
 tighten it if your embedding model still surfaces noise.
+
+Because the budget is what's left of `limit`, a query whose keyword matches
+already fill `limit` returns no semantic section at all — the caller got the
+number of groups it asked for, all of them literal matches. Raise `limit` to
+leave room for semantic hits; that trade-off is stated in the `find_groups`
+tool description so the calling model can act on it.
 
 ### Failure behaviour
 

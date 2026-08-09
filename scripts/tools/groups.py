@@ -16,12 +16,19 @@ from text_utils import html_to_text
 TOOLS = [
     Tool(
         name="find_groups",
-        description="Search the user's Flickr groups by keyword from the local database. Searches group name, description, and AI-generated summary/keywords (see 'sync' with type='groups').",
+        description=(
+            "Search the user's Flickr groups from the local database. Matches keywords against group "
+            "name, description, and AI-generated summary/keywords (see 'sync' with type='groups'). "
+            "If semantic search is enabled on this server, any remaining result slots are filled with "
+            "thematically similar groups that share no keyword with the query, listed after the keyword "
+            "matches under a 'Semantically similar groups' heading — raise limit to leave room for them "
+            "when the keyword matches alone fill the budget."
+        ),
         inputSchema={
             "type": "object",
             "properties": {
                 "query": {"type": "string", "description": "Keyword(s) to search group names, descriptions, and AI-generated keywords. Comma-separate multiple unrelated keywords to OR them together (e.g. 'wildlife, sunset, macro')."},
-                "limit": {"type": "integer", "description": "Max results (default 25)"},
+                "limit": {"type": "integer", "description": "Max results in total, keyword and semantic matches combined (default 25)"},
             },
         },
     ),
@@ -279,7 +286,11 @@ async def _find_groups(args):
         groups_empty = table_empty(conn, "groups") if not rows else False
 
     # Optional second retrieval path — off by default, see vector_search.py.
-    semantic_rows = await _vector_group_matches(query, limit, {r["id"] for r in rows})
+    # Semantic hits are budgeted out of the caller's `limit` rather than added
+    # on top of it, so the response never exceeds the size that was asked for.
+    semantic_rows = await _vector_group_matches(
+        query, limit - len(rows), {r["id"] for r in rows}
+    )
 
     if not rows and not semantic_rows:
         if groups_empty:
@@ -297,8 +308,9 @@ async def _find_groups(args):
     return [TextContent(type="text", text=text)]
 
 
-async def _vector_group_matches(query: str, limit: int, exclude_ids: set[str]):
-    """Semantic matches for *query*, minus group ids the keyword search found.
+async def _vector_group_matches(query: str, budget: int, exclude_ids: set[str]):
+    """Up to *budget* semantic matches for *query*, minus the group ids the
+    keyword search already found.
 
     Returns an empty list when the optional vector-search feature is off (the
     default), and also when it's on but the vector store or embedding backend
@@ -307,7 +319,7 @@ async def _vector_group_matches(query: str, limit: int, exclude_ids: set[str]):
     """
     import vector_search
 
-    if not vector_search.enabled():
+    if budget <= 0 or not vector_search.enabled():
         return []
 
     from db import _current_user
@@ -317,12 +329,24 @@ async def _vector_group_matches(query: str, limit: int, exclude_ids: set[str]):
     try:
         # Both the embedding HTTP call and the Chroma query are blocking, so
         # they run off the event loop.
-        hits = await asyncio.to_thread(vector_search.search_group_ids, query, limit, nsid, username)
+        #
+        # Ask for `budget + len(exclude_ids)` neighbours, not `budget`: literal
+        # keyword matches are usually also the *nearest* vectors, so asking for
+        # only `budget` would see most of them filtered out below and return
+        # fewer semantic groups than the budget allows — often none.
+        #
+        # (This currently equals `limit`, since budget == limit - len(rows) and
+        # exclude_ids holds exactly those rows' ids. It's written in terms of
+        # the budget because that's the quantity that has to survive the dedup,
+        # and it stays correct if the budgeting rule changes.)
+        hits = await asyncio.to_thread(
+            vector_search.search_group_ids, query, budget + len(exclude_ids), nsid, username
+        )
     except Exception as e:
         logging.warning("find_groups: vector search failed for %s: %s", nsid or "unknown user", e)
         return []
 
-    ids = [gid for gid, _distance in hits if gid not in exclude_ids][:limit]
+    ids = [gid for gid, _distance in hits if gid not in exclude_ids][:budget]
     if not ids:
         return []
 

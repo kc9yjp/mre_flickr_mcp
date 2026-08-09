@@ -70,8 +70,9 @@ class FakeCollection:
         for gid in ids:
             self.records.pop(gid, None)
 
-    def query(self, query_embeddings, n_results):
-        self.query_calls.append({"embeddings": query_embeddings, "n_results": n_results})
+    def query(self, query_embeddings, n_results, include=None):
+        self.query_calls.append({"embeddings": query_embeddings, "n_results": n_results,
+                                 "include": include})
         ids = self.next_query_ids[:n_results]
         if self.next_query_distances is not None:
             distances = self.next_query_distances[:n_results]
@@ -253,7 +254,8 @@ class TestSyncGroupVectors:
 
         stats = vector_search.sync_group_vectors(conn, "user@N00", "jdoe")
 
-        assert stats == {"total": 0, "embedded": 0, "unchanged": 0, "deleted": 0, "failed": 0}
+        assert stats == {"total": 0, "embedded": 0, "unchanged": 0, "deleted": 0,
+                         "failed": 0, "skipped": "vector search disabled"}
         get_collection.assert_not_called()
 
     def test_embeds_all_groups_on_first_run(self, monkeypatch, enabled_env):
@@ -291,7 +293,8 @@ class TestSyncGroupVectors:
         monkeypatch.setattr(vector_search, "embed_texts", _tracking_embed)
         stats = vector_search.sync_group_vectors(conn, "user@N00", "jdoe")
 
-        assert stats == {"total": 2, "embedded": 1, "unchanged": 1, "deleted": 0, "failed": 0}
+        assert stats == {"total": 2, "embedded": 1, "unchanged": 1, "deleted": 0,
+                         "failed": 0, "skipped": ""}
         assert len(embedded_texts) == 1
         assert "Golden hour and dusk" in embedded_texts[0]
 
@@ -352,6 +355,40 @@ class TestSyncGroupVectors:
 
         assert stats["embedded"] == 0
         assert stats["failed"] == 0
+        # Counters alone can't distinguish this from "nothing needed doing" —
+        # `skipped` is what tells a backfill it never actually ran.
+        assert stats["skipped"] == "chromadb is not installed"
+
+    def test_skipped_is_empty_when_the_phase_ran(self, monkeypatch, enabled_env):
+        conn = _groups_db()
+        _insert_group(conn, "1@N", "Tree Pics")
+        monkeypatch.setattr(vector_search, "get_collection", lambda username: FakeCollection())
+        monkeypatch.setattr(vector_search, "embed_texts", _fake_embed)
+
+        assert vector_search.sync_group_vectors(conn, "user@N00", "jdoe")["skipped"] == ""
+
+    def test_skipped_set_when_no_endpoint_configured(self, monkeypatch):
+        monkeypatch.setenv("WORKBENCH_VECTOR_SEARCH_ENABLED", "true")
+        conn = _groups_db()
+        _insert_group(conn, "1@N", "Tree Pics")
+        with patch("agent.settings.resolve_sync_cfg", return_value={"base_url": "", "api_key": ""}):
+            stats = vector_search.sync_group_vectors(conn, "user@N00", "jdoe")
+
+        assert stats["skipped"] == "no embedding endpoint configured"
+
+    def test_skipped_set_when_store_is_unreadable(self, monkeypatch, enabled_env):
+        conn = _groups_db()
+        _insert_group(conn, "1@N", "Tree Pics")
+        collection = FakeCollection()
+
+        def _boom(include=None):
+            raise RuntimeError("index corrupt")
+
+        collection.get = _boom
+        monkeypatch.setattr(vector_search, "get_collection", lambda username: collection)
+        stats = vector_search.sync_group_vectors(conn, "user@N00", "jdoe")
+
+        assert "index corrupt" in stats["skipped"]
 
     def test_skips_when_no_embedding_endpoint_configured(self, monkeypatch):
         monkeypatch.setenv("WORKBENCH_VECTOR_SEARCH_ENABLED", "true")
@@ -432,6 +469,27 @@ class TestSearchGroupIds:
 
         assert [gid for gid, _ in hits] == ["1@N"]
 
+    def test_ids_without_a_distance_are_dropped(self, monkeypatch, enabled_env):
+        """A result set with no distances can't be filtered by the ceiling, so
+        it must fail closed rather than pass every id through unchecked."""
+        collection = FakeCollection()
+        collection.next_query_ids = ["1@N", "2@N"]
+        collection.next_query_distances = []
+        monkeypatch.setattr(vector_search, "get_collection", lambda username: collection)
+        monkeypatch.setattr(vector_search, "embed_texts", _fake_embed)
+
+        assert vector_search.search_group_ids("golden hour", 5, "user@N00", "jdoe") == []
+
+    def test_distances_are_explicitly_requested(self, monkeypatch, enabled_env):
+        collection = FakeCollection()
+        collection.next_query_ids = ["1@N"]
+        monkeypatch.setattr(vector_search, "get_collection", lambda username: collection)
+        monkeypatch.setattr(vector_search, "embed_texts", _fake_embed)
+
+        vector_search.search_group_ids("golden hour", 5, "user@N00", "jdoe")
+
+        assert collection.query_calls[0]["include"] == ["distances"]
+
     def test_max_distance_is_configurable(self, monkeypatch, enabled_env):
         monkeypatch.setenv("WORKBENCH_VECTOR_MAX_DISTANCE", "0.3")
         collection = FakeCollection()
@@ -488,7 +546,7 @@ class TestFindGroupsIntegration:
     async def test_semantic_matches_are_appended(self, groups_db_file, monkeypatch, enabled_env):
         import mcp_tools
         monkeypatch.setattr(vector_search, "search_group_ids",
-                            lambda q, limit, nsid, username: [("group2@N00", 0.2)])
+                            lambda q, n, nsid, username: [("group2@N00", 0.2)])
 
         text = _text(await mcp_tools._find_groups({"query": "Landscape"}))
 
@@ -503,7 +561,7 @@ class TestFindGroupsIntegration:
     async def test_group_already_matched_by_keyword_is_not_repeated(self, groups_db_file, monkeypatch, enabled_env):
         import mcp_tools
         monkeypatch.setattr(vector_search, "search_group_ids",
-                            lambda q, limit, nsid, username: [("group1@N00", 0.1)])
+                            lambda q, n, nsid, username: [("group1@N00", 0.1)])
 
         text = _text(await mcp_tools._find_groups({"query": "Landscape"}))
 
@@ -514,7 +572,7 @@ class TestFindGroupsIntegration:
     async def test_semantic_only_result_is_returned(self, groups_db_file, monkeypatch, enabled_env):
         import mcp_tools
         monkeypatch.setattr(vector_search, "search_group_ids",
-                            lambda q, limit, nsid, username: [("group2@N00", 0.2)])
+                            lambda q, n, nsid, username: [("group2@N00", 0.2)])
 
         text = _text(await mcp_tools._find_groups({"query": "zzz"}))
 
@@ -522,10 +580,52 @@ class TestFindGroupsIntegration:
         assert "No groups match" not in text
 
     @pytest.mark.asyncio
+    async def test_store_queried_with_headroom_for_dedup(self, groups_db_file, monkeypatch, enabled_env):
+        """Keyword matches are usually the nearest vectors too, so the store
+        must be asked for enough neighbours to survive the dedup — otherwise
+        the semantic section empties out exactly when keyword search worked."""
+        import mcp_tools
+        calls = []
+
+        def _record(query, n, nsid, username):
+            calls.append(n)
+            return []
+
+        monkeypatch.setattr(vector_search, "search_group_ids", _record)
+        await mcp_tools._find_groups({"query": "Landscape", "limit": 10})
+
+        # 1 keyword hit → 9 semantic slots, and 1 id will be filtered out.
+        assert calls == [10]
+
+    @pytest.mark.asyncio
+    async def test_semantic_hits_are_budgeted_out_of_limit(self, groups_db_file, monkeypatch, enabled_env):
+        import mcp_tools
+        monkeypatch.setattr(vector_search, "search_group_ids",
+                            lambda q, n, nsid, username: [("group2@N00", 0.2)])
+
+        # limit=1 is filled by the keyword hit, leaving no budget — so the
+        # response stays within the size the caller asked for.
+        text = _text(await mcp_tools._find_groups({"query": "Landscape", "limit": 1}))
+
+        assert "Landscape Lovers" in text
+        assert "Fleeting Light" not in text
+
+    @pytest.mark.asyncio
+    async def test_no_vector_query_when_budget_is_used_up(self, groups_db_file, monkeypatch, enabled_env):
+        import mcp_tools
+        search = MagicMock()
+        monkeypatch.setattr(vector_search, "search_group_ids", search)
+
+        await mcp_tools._find_groups({"query": "Landscape", "limit": 1})
+
+        # No budget left means no embedding round trip at all.
+        search.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_vector_backend_failure_keeps_keyword_results(self, groups_db_file, monkeypatch, enabled_env):
         import mcp_tools
 
-        def _boom(query, limit, nsid, username):
+        def _boom(query, n, nsid, username):
             raise vector_search.VectorSearchError("chroma is down")
 
         monkeypatch.setattr(vector_search, "search_group_ids", _boom)
@@ -539,7 +639,7 @@ class TestFindGroupsIntegration:
     async def test_stale_vector_id_not_in_local_cache_is_ignored(self, groups_db_file, monkeypatch, enabled_env):
         import mcp_tools
         monkeypatch.setattr(vector_search, "search_group_ids",
-                            lambda q, limit, nsid, username: [("gone@N00", 0.2)])
+                            lambda q, n, nsid, username: [("gone@N00", 0.2)])
 
         text = _text(await mcp_tools._find_groups({"query": "Landscape"}))
 
