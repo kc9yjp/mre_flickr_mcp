@@ -71,7 +71,15 @@ def main():
         print("Done.")
         # Unlike the sync path — where a failed embedding must never fail the
         # run — this is an explicit one-shot command, so report the failure.
-        sys.exit(1 if stats["failed"] or (stats["total"] and not stats["embedded"]) else 0)
+        # stats["skipped"] covers the cases that write nothing *and* count
+        # nothing (no embedding endpoint, chromadb missing, store unreachable);
+        # without it those exit 0 and a scripted backfill reports success
+        # having embedded not one group.
+        incomplete = bool(stats["skipped"] or stats["failed"] or (stats["total"] and not stats["embedded"]))
+        if incomplete:
+            reason = stats["skipped"] or f"{stats['failed']} group(s) failed to embed"
+            print(f"Backfill did not complete: {reason}", file=sys.stderr)
+        sys.exit(1 if incomplete else 0)
 
     with sqlite3.connect(target_db) as conn:
         init_db(conn)

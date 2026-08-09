@@ -360,9 +360,16 @@ def sync_group_vectors(conn, nsid: str | None = None, username: str | None = Non
 
     Never raises: any failure is logged and reported in the returned stats
     dict, leaving the affected groups SQL-searchable as before.
+
+    ``stats["skipped"]`` is the one non-numeric key: empty when the phase ran,
+    otherwise the reason it couldn't. Callers need it to tell "ran, nothing to
+    do" (all counters zero because every group was already current) apart from
+    "never ran" (all counters zero because there was no endpoint, no chromadb,
+    or no reachable store) — the two are otherwise indistinguishable.
     """
-    stats = {"total": 0, "embedded": 0, "unchanged": 0, "deleted": 0, "failed": 0}
+    stats = {"total": 0, "embedded": 0, "unchanged": 0, "deleted": 0, "failed": 0, "skipped": ""}
     if not enabled():
+        stats["skipped"] = "vector search disabled"
         return stats
 
     cfg = embedding_cfg(nsid)
@@ -370,6 +377,7 @@ def sync_group_vectors(conn, nsid: str | None = None, username: str | None = Non
         logging.warning("vector_search: no embedding endpoint configured for %s; skipping group vectors", nsid)
         print("  Skipping group vectors: no embedding endpoint configured "
               "(set WORKBENCH_EMBEDDING_BASE_URL / WORKBENCH_EMBEDDING_MODEL).")
+        stats["skipped"] = "no embedding endpoint configured"
         return stats
 
     try:
@@ -378,6 +386,7 @@ def sync_group_vectors(conn, nsid: str | None = None, username: str | None = Non
     except VectorSearchError as e:
         logging.warning("vector_search: vector store unavailable for %s: %s", username or nsid, e)
         print(f"  Skipping group vectors: {e}")
+        stats["skipped"] = str(e)
         return stats
 
 
@@ -399,6 +408,7 @@ def _write_group_vectors(conn, collection, cfg: dict, stats: dict, rebuild: bool
     except Exception as e:
         logging.warning("vector_search: could not read existing fingerprints for %s: %s", label, e)
         print(f"  Skipping group vectors: could not read vector store ({e}).")
+        stats["skipped"] = f"could not read vector store ({e})"
         return stats
 
     live_ids = set()
@@ -473,7 +483,15 @@ def search_group_ids(query: str, limit: int = 25, nsid: str | None = None,
     vector = embed_texts([query], cfg)[0]
     with open_collection(username) as collection:
         try:
-            result = collection.query(query_embeddings=[vector], n_results=max(1, limit))
+            # include=["distances"] is explicit rather than relying on the
+            # default, since the distance is what the relevance ceiling below
+            # is applied to — a result set without it is unusable, not a
+            # result set to accept unfiltered.
+            result = collection.query(
+                query_embeddings=[vector],
+                n_results=max(1, limit),
+                include=["distances"],
+            )
         except Exception as e:
             raise VectorSearchError(f"vector query failed: {e}") from e
 
@@ -486,7 +504,13 @@ def search_group_ids(query: str, limit: int = 25, nsid: str | None = None,
     distances = (result.get("distances") or [[]])[0]
     hits = []
     for i, gid in enumerate(ids):
-        distance = distances[i] if i < len(distances) else 0.0
-        if distance < max_distance:
-            hits.append((gid, distance))
+        if i >= len(distances):
+            # No distance means the ceiling can't be applied to this id.
+            # Dropping it fails closed; substituting a default would let an
+            # arbitrarily distant group through labelled "semantically
+            # similar", which is exactly what the ceiling exists to prevent.
+            logging.warning("vector_search: dropping group %s from results — no distance returned", gid)
+            continue
+        if distances[i] < max_distance:
+            hits.append((gid, distances[i]))
     return hits

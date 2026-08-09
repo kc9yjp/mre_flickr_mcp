@@ -153,7 +153,7 @@ sync_log          — type, mode, photos_fetched, synced_at
 | `create_album` | Create a new album |
 | `edit_album` | Update album title/description |
 | `delete_album` | Delete an album |
-| `find_groups` | Search joined groups by keyword; returns a markdown listing (one section per group, headed by its id) with the AI summary, milestone thresholds, and your note. With `WORKBENCH_VECTOR_SEARCH_ENABLED=true`, semantically similar groups are appended under their own heading |
+| `find_groups` | Search joined groups by keyword; returns a markdown listing (one section per group, headed by its id) with the AI summary, milestone thresholds, and your note. With `WORKBENCH_VECTOR_SEARCH_ENABLED=true`, leftover result slots are filled with semantically similar groups under their own heading (`limit` caps both paths combined) |
 | `set_group_note` | Set a personal note about a group, incorporated into its AI summary on the next sync |
 | `get_group_stats` | Groups ranked by how many of your photos are in each |
 | `get_threshold_groups` | Joined groups with a fave or view count minimum to post, sorted by that threshold |
