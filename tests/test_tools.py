@@ -458,11 +458,25 @@ class TestPhotoGroups:
     async def test_add_to_group_writes_local_db(self, db, api_post):
         import mcp_tools
         api_post.return_value = {"stat": "ok"}
-        await mcp_tools._add_to_group({"photo_id": "photo1", "group_id": "group1@N00"})
+        await mcp_tools._add_to_group({"photo_id": "photo1", "group_ids": ["group1@N00"]})
         row = db.execute(
             "SELECT 1 FROM photo_groups WHERE photo_id='photo1' AND group_id='group1@N00'"
         ).fetchone()
         assert row is not None
+
+    @pytest.mark.asyncio
+    async def test_add_to_group_multiple_groups(self, db, api_post):
+        import mcp_tools
+        api_post.return_value = {"stat": "ok"}
+        result = await mcp_tools._add_to_group(
+            {"photo_id": "photo1", "group_ids": ["group1@N00", "group2@N00"]}
+        )
+        text = _text(result)
+        assert "group1@N00" in text and "group2@N00" in text
+        rows = db.execute(
+            "SELECT group_id FROM photo_groups WHERE photo_id='photo1' ORDER BY group_id"
+        ).fetchall()
+        assert [r["group_id"] for r in rows] == ["group1@N00", "group2@N00"]
 
     @pytest.mark.asyncio
     async def test_remove_from_group_deletes_local_db(self, db, api_post):
@@ -563,7 +577,7 @@ class TestPhotoGroups:
         from flickr_api import FlickrAPIError
         import mcp_tools
         api_post.side_effect = FlickrAPIError(5, "Daily posting limit reached")
-        result = await mcp_tools._add_to_group({"photo_id": "photo1", "group_id": "group1@N00"})
+        result = await mcp_tools._add_to_group({"photo_id": "photo1", "group_ids": ["group1@N00"]})
         assert "queued" in _text(result).lower()
         row = db.execute(
             "SELECT status FROM pending_group_adds WHERE photo_id='photo1' AND group_id='group1@N00'"
@@ -584,7 +598,7 @@ class TestPhotoGroups:
         db.commit()
         api_post.side_effect = FlickrAPIError(5, "Daily posting limit reached")
         result = await mcp_tools._add_to_group(
-            {"photo_id": "photo1", "group_id": "group1@N00", "retry_at": "morning"}
+            {"photo_id": "photo1", "group_ids": ["group1@N00"], "retry_at": "morning"}
         )
         assert "rescheduled" in _text(result).lower()
         count = db.execute(
@@ -593,12 +607,33 @@ class TestPhotoGroups:
         assert count == 1
 
     @pytest.mark.asyncio
-    async def test_add_to_group_reraises_non_limit_errors(self, db, api_post):
+    async def test_add_to_group_reports_non_limit_errors_without_raising(self, db, api_post):
         from flickr_api import FlickrAPIError
         import mcp_tools
         api_post.side_effect = FlickrAPIError(2, "Unknown user")
-        with pytest.raises(FlickrAPIError):
-            await mcp_tools._add_to_group({"photo_id": "photo1", "group_id": "group1@N00"})
+        result = await mcp_tools._add_to_group({"photo_id": "photo1", "group_ids": ["group1@N00"]})
+        text = _text(result)
+        assert "NOT added" in text
+        assert "Unknown user" in text
+
+    @pytest.mark.asyncio
+    async def test_add_to_group_continues_after_one_group_fails(self, db, api_post):
+        from flickr_api import FlickrAPIError
+        import mcp_tools
+        api_post.side_effect = [
+            FlickrAPIError(2, "Unknown user"),
+            {"stat": "ok"},
+        ]
+        result = await mcp_tools._add_to_group(
+            {"photo_id": "photo1", "group_ids": ["bad_group@N00", "group2@N00"]}
+        )
+        text = _text(result)
+        assert "NOT added" in text and "bad_group@N00" in text
+        assert "added to group group2@N00" in text
+        row = db.execute(
+            "SELECT 1 FROM photo_groups WHERE photo_id='photo1' AND group_id='group2@N00'"
+        ).fetchone()
+        assert row is not None
 
 
 # ---------------------------------------------------------------------------

@@ -50,12 +50,13 @@ TOOLS = [
     Tool(
         name="add_to_group",
         description=(
-            "Add a photo to a Flickr group pool. "
-            "If the daily posting limit is hit, the add is queued for automatic retry. "
-            "Use retry_at to control when the retry fires: named times (morning, lunchtime, "
+            "Add a photo to one or more Flickr group pools. "
+            "If the daily posting limit is hit for a group, that group's add is queued for automatic "
+            "retry — other groups in the list are added normally and unaffected. "
+            "Use retry_at to control when a queued retry fires: named times (morning, lunchtime, "
             "afternoon, evening, night, midnight) or HH:MM are resolved in Chicago time. "
             "If the photo/group pair is already waiting in the queue, retry_at updates its schedule. "
-            "Set queue=true to skip the immediate Flickr call and schedule the add for a future time — "
+            "Set queue=true to skip the immediate Flickr call(s) and schedule the add for a future time — "
             "useful for drip-posting one photo per day. Combine with days_offset to spread adds across days "
             "(e.g. days_offset=2 with retry_at=morning schedules for morning two days from now)."
         ),
@@ -63,7 +64,11 @@ TOOLS = [
             "type": "object",
             "properties": {
                 "photo_id": {"type": "string", "description": "Flickr photo ID"},
-                "group_id": {"type": "string", "description": "Flickr group NSID"},
+                "group_ids": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Flickr group NSIDs to add the photo to",
+                },
                 "retry_at": {
                     "type": "string",
                     "description": (
@@ -87,7 +92,7 @@ TOOLS = [
                     ),
                 },
             },
-            "required": ["photo_id", "group_id"],
+            "required": ["photo_id", "group_ids"],
         },
     ),
     Tool(
@@ -548,71 +553,74 @@ def _flush_group_queue(conn, force: bool = False) -> list[dict]:
     return flushed
 
 
+def _queue_group_add(conn, photo_id: str, group_id: str, retry_at_str, days_offset: int) -> tuple[str, int]:
+    """Insert or reschedule a pending_group_adds row. Returns (action, retry_after)."""
+    retry_after = _parse_retry_time(retry_at_str, days_offset)
+    existing = conn.execute(
+        "SELECT id FROM pending_group_adds WHERE photo_id=? AND group_id=? AND status='waiting'",
+        (photo_id, group_id),
+    ).fetchone()
+    if existing:
+        conn.execute(
+            "UPDATE pending_group_adds SET retry_after=? WHERE id=?",
+            (retry_after, existing["id"]),
+        )
+        return "rescheduled", retry_after
+    conn.execute(
+        "INSERT INTO pending_group_adds (photo_id, group_id, status, retry_after, queued_at) "
+        "VALUES (?, ?, 'waiting', ?, ?)",
+        (photo_id, group_id, retry_after, int(time.time())),
+    )
+    return "queued", retry_after
+
+
+def _add_photo_to_one_group(conn, photo_id: str, group_id: str, retry_at_str, queue_immediately: bool, days_offset: int) -> str:
+    """Add *photo_id* to a single *group_id*, returning a human-readable result line.
+
+    Errors other than the daily throttle are reported per-group rather than
+    raised, so one bad group in a list doesn't abort the rest of the batch.
+    """
+    if queue_immediately:
+        action, retry_after = _queue_group_add(conn, photo_id, group_id, retry_at_str, days_offset)
+        eta = _fmt_chicago(retry_after)
+        return f"Photo {photo_id} {action} for group {group_id} — scheduled for {eta}."
+
+    try:
+        flickr_api._api_post("flickr.groups.pools.add", {"photo_id": photo_id, "group_id": group_id})
+        conn.execute(
+            "INSERT OR IGNORE INTO photo_groups (photo_id, group_id) VALUES (?, ?)",
+            (photo_id, group_id),
+        )
+        return f"Photo {photo_id} added to group {group_id}."
+    except FlickrAPIError as e:
+        if e.code == _GROUP_THROTTLE_ERROR_CODE:
+            action, retry_after = _queue_group_add(conn, photo_id, group_id, retry_at_str, days_offset)
+            eta = _fmt_chicago(retry_after)
+            return (
+                f"Daily posting limit reached for group {group_id}. "
+                f"{action.capitalize()} for retry at {eta}."
+            )
+        logging.warning("add_to_group: failed to add photo %s to group %s: %s", photo_id, group_id, e.flickr_message)
+        return f"Photo {photo_id} NOT added to group {group_id}: {e.flickr_message}"
+
+
 async def _add_to_group(args):
     photo_id = args["photo_id"]
-    group_id = args["group_id"]
+    group_ids = args["group_ids"]
+    if isinstance(group_ids, str):
+        group_ids = [group_ids]
     retry_at_str = args.get("retry_at")
     queue_immediately = bool(args.get("queue", False))
     days_offset = int(args.get("days_offset", 0))
 
     with get_db() as conn:
         _flush_group_queue(conn)
+        results = [
+            _add_photo_to_one_group(conn, photo_id, group_id, retry_at_str, queue_immediately, days_offset)
+            for group_id in group_ids
+        ]
 
-        if queue_immediately:
-            retry_after = _parse_retry_time(retry_at_str, days_offset)
-            existing = conn.execute(
-                "SELECT id FROM pending_group_adds WHERE photo_id=? AND group_id=? AND status='waiting'",
-                (photo_id, group_id),
-            ).fetchone()
-            if existing:
-                conn.execute(
-                    "UPDATE pending_group_adds SET retry_after=? WHERE id=?",
-                    (retry_after, existing["id"]),
-                )
-                action = "rescheduled"
-            else:
-                conn.execute(
-                    "INSERT INTO pending_group_adds (photo_id, group_id, status, retry_after, queued_at) "
-                    "VALUES (?, ?, 'waiting', ?, ?)",
-                    (photo_id, group_id, retry_after, int(time.time())),
-                )
-                action = "queued"
-            eta = _fmt_chicago(retry_after)
-            return [TextContent(type="text", text=f"Photo {photo_id} {action} for group {group_id} — scheduled for {eta}.")]
-
-        try:
-            flickr_api._api_post("flickr.groups.pools.add", {"photo_id": photo_id, "group_id": group_id})
-            conn.execute(
-                "INSERT OR IGNORE INTO photo_groups (photo_id, group_id) VALUES (?, ?)",
-                (photo_id, group_id),
-            )
-            return [TextContent(type="text", text=f"Photo {photo_id} added to group {group_id}.")]
-        except FlickrAPIError as e:
-            if e.code == _GROUP_THROTTLE_ERROR_CODE:
-                retry_after = _parse_retry_time(retry_at_str, days_offset)
-                existing = conn.execute(
-                    "SELECT id FROM pending_group_adds WHERE photo_id=? AND group_id=? AND status='waiting'",
-                    (photo_id, group_id),
-                ).fetchone()
-                if existing:
-                    conn.execute(
-                        "UPDATE pending_group_adds SET retry_after=? WHERE id=?",
-                        (retry_after, existing["id"]),
-                    )
-                    action = "rescheduled"
-                else:
-                    conn.execute(
-                        "INSERT INTO pending_group_adds (photo_id, group_id, status, retry_after, queued_at) "
-                        "VALUES (?, ?, 'waiting', ?, ?)",
-                        (photo_id, group_id, retry_after, int(time.time())),
-                    )
-                    action = "queued"
-                eta = _fmt_chicago(retry_after)
-                return [TextContent(type="text", text=(
-                    f"Daily posting limit reached for group {group_id}. "
-                    f"{action.capitalize()} for retry at {eta}."
-                ))]
-            raise
+    return [TextContent(type="text", text="\n".join(results))]
 
 
 async def _remove_from_group(args):

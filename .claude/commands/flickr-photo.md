@@ -13,7 +13,7 @@ Then do the following in order:
 
 3. Once confirmed, update the metadata using `update_photo` and make it public using `set_visibility` if it isn't already.
 
-4. Search the user's groups using `find_groups` with 2-3 relevant keyword searches based on the photo's subject and location. Suggest the top 2-3 most relevant groups and ask the user to confirm before adding with `add_to_group`.
+4. Search the user's groups using `find_groups` with 2-3 relevant keyword searches based on the photo's subject and location. Suggest the top 2-3 most relevant groups and ask the user to confirm before adding with `add_to_group` (pass all confirmed group IDs in one call via `group_ids`).
 
 5. Refresh the browser tab to the photo page by running: `node playwright/scripts/browser-open.js <photo-page-url>`
 
