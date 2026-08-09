@@ -499,6 +499,137 @@ def test_reset_model_settings_removes_override(_creds_dir):
     assert settings.reset_model_settings(NSID, "no-such-id", "m") is None
 
 
+# --- paused connections ---
+
+def test_new_connection_defaults_to_not_paused(_creds_dir):
+    from agent import settings
+
+    cid, out = settings.create_connection(NSID, "LM Studio", "openai_compatible", "http://host.docker.internal:1234/v1")
+    assert out["connections"][cid]["paused"] is False
+
+
+def test_pre_existing_connection_without_paused_field_gets_default(_creds_dir):
+    """Older llm.json files predate `paused` — load_settings must backfill
+    it (as False) rather than leave it missing."""
+    from agent import settings
+
+    settings.create_connection(NSID, "Ollama chat", "ollama", "http://host.docker.internal:11434/v1")
+    raw = settings._raw_load(NSID)
+    cid = next(iter(raw["connections"]))
+    del raw["connections"][cid]["paused"]
+    settings._write_settings(NSID, raw)
+
+    loaded = settings.load_settings(NSID)
+    assert loaded["connections"][cid]["paused"] is False
+
+
+def test_update_connection_toggles_paused(_creds_dir):
+    from agent import settings
+
+    cid, _ = settings.create_connection(NSID, "LM Studio", "openai_compatible", "http://host.docker.internal:1234/v1")
+
+    updated = settings.update_connection(NSID, cid, {"paused": True})
+    assert updated["connections"][cid]["paused"] is True
+
+    updated = settings.update_connection(NSID, cid, {"paused": False})
+    assert updated["connections"][cid]["paused"] is False
+
+
+def test_pausing_active_connection_clears_active_connection(_creds_dir):
+    from agent import settings
+
+    cid, _ = settings.create_connection(NSID, "OpenCode Zen", "openai_compatible", "https://opencode.ai/zen/v1")
+    s = settings.load_settings(NSID)
+    s["active_connection"] = cid
+    settings.save_settings(NSID, s)
+
+    updated = settings.update_connection(NSID, cid, {"paused": True})
+    assert updated["active_connection"] == ""
+    # The connection itself is kept, just paused — not deleted.
+    assert cid in updated["connections"]
+    assert updated["connections"][cid]["paused"] is True
+
+
+def test_pausing_sync_connection_clears_sync_pick(_creds_dir):
+    from agent import settings
+
+    cid, _ = settings.create_connection(NSID, "OpenCode Zen", "openai_compatible", "https://opencode.ai/zen/v1")
+    s = settings.load_settings(NSID)
+    s["sync_connection"] = cid
+    s["sync_model"] = "grok-4.5"
+    settings.save_settings(NSID, s)
+
+    updated = settings.update_connection(NSID, cid, {"paused": True})
+    assert updated["sync_connection"] == ""
+    assert updated["sync_model"] == ""
+
+
+def test_pausing_via_save_settings_also_clears_active_connection(_creds_dir):
+    """The bulk /api/llm-settings save path (save_settings) must clear a
+    now-dangling active_connection the same way update_connection does."""
+    from agent import settings
+
+    cid, _ = settings.create_connection(NSID, "OpenCode Zen", "openai_compatible", "https://opencode.ai/zen/v1")
+    s = settings.load_settings(NSID)
+    s["active_connection"] = cid
+    settings.save_settings(NSID, s)
+
+    s2 = settings.load_settings(NSID)
+    saved = settings.save_settings(NSID, {
+        "connections": {cid: {"name": "OpenCode Zen", "base_url": s2["connections"][cid]["base_url"], "paused": True}},
+    })
+    assert saved["active_connection"] == ""
+    assert saved["connections"][cid]["paused"] is True
+
+
+def test_resolve_cfg_fallback_skips_paused_connections(_creds_dir):
+    from agent import settings
+
+    # A fresh install already seeds a default "ollama" connection — pause it
+    # too, so Zen is the only non-paused one and the fallback is unambiguous.
+    settings.load_settings(NSID)
+    settings.update_connection(NSID, "ollama", {"paused": True})
+    settings.create_connection(NSID, "OpenCode Zen", "openai_compatible", "https://opencode.ai/zen/v1")
+
+    # No active_connection set -> fallback must pick the non-paused one.
+    cfg = settings.resolve_cfg(NSID)
+    assert cfg["base_url"] == "https://opencode.ai/zen/v1"
+
+    # An unknown explicit id falls back the same way.
+    cfg2 = settings.resolve_cfg(NSID, "does-not-exist")
+    assert cfg2["base_url"] == "https://opencode.ai/zen/v1"
+
+
+def test_resolve_cfg_fallback_uses_paused_connection_if_all_paused(_creds_dir):
+    """Every connection paused is a degenerate case — still resolve to
+    something rather than an empty cfg."""
+    from agent import settings
+
+    settings.load_settings(NSID)
+    settings.update_connection(NSID, "ollama", {"paused": True})
+    cid, _ = settings.create_connection(NSID, "OpenCode Zen", "openai_compatible", "https://opencode.ai/zen/v1")
+    settings.update_connection(NSID, cid, {"paused": True})
+
+    cfg = settings.resolve_cfg(NSID, "does-not-exist")
+    assert cfg["base_url"] in {
+        "http://host.docker.internal:11434/v1",
+        "https://opencode.ai/zen/v1",
+    }
+
+
+def test_resolve_cfg_explicit_id_ignores_paused(_creds_dir):
+    """A conversation already pinned to a specific (now-paused) connection
+    must still resolve to it — pausing only affects the fallback pick."""
+    from agent import settings
+
+    cid, _ = settings.create_connection(NSID, "OpenCode Zen", "openai_compatible", "https://opencode.ai/zen/v1")
+    settings.update_connection(NSID, cid, {"paused": True})
+
+    cfg = settings.resolve_cfg(NSID, cid, "grok-4.5")
+    assert cfg["base_url"] == "https://opencode.ai/zen/v1"
+    assert cfg["model"] == "grok-4.5"
+
+
 # --- masked() ---
 
 def test_masked_strips_all_connection_api_keys(_creds_dir):

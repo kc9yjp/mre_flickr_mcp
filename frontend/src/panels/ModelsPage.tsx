@@ -1,10 +1,11 @@
-// Models panel: a list of named LLM connections (add / update / delete).
-// "Edit" expands a connection inline to edit its base URL/API key/api
+// Models panel: a list of named LLM connections (add / update / delete),
+// shown as cards. Each card expands to edit its base URL/API key/api
 // mode/timeout, refresh its model list, and enable/disable individual
-// models. Each model also has a "Details" panel of its own —
-// vision/max_tokens/sampling/tool_choice all apply to one specific model,
-// not the whole connection or the whole page (a model's capabilities and
-// ideal settings vary even within one connection).
+// models via a toggle. Each model also has its own "Details" disclosure —
+// vision/max_tokens/context window are edited inline, and the less-common
+// sampling knobs (temperature/top-p/penalties/seed/tool choice) sit behind
+// an "Advanced settings" disclosure, since a model's capabilities and ideal
+// settings vary even within one connection.
 
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import {
@@ -42,6 +43,35 @@ function draftKey(connectionId: string, model: string): string {
   return `${connectionId}::${model}`;
 }
 
+function kindLabel(kind: ConnectionKind): string {
+  return kind === "ollama" ? "Ollama" : "OpenAI-compatible";
+}
+
+function contextLabel(contextWindow: number): string {
+  return `${Math.round(contextWindow / 1000)}k ctx`;
+}
+
+// Checkbox styled as an on/off track+knob switch, used for "model enabled"
+// and "auto-compact". `large` matches the bigger size used for the one
+// page-level toggle (auto-compact) vs. the compact per-model ones.
+function Switch({
+  checked,
+  onChange,
+  large,
+}: {
+  checked: boolean;
+  onChange: () => void;
+  large?: boolean;
+}) {
+  return (
+    <label className={`llm-switch${large ? " llm-switch--lg" : ""}`}>
+      <input type="checkbox" checked={checked} onChange={onChange} />
+      <span className="llm-switch-track" />
+      <span className="llm-switch-knob" />
+    </label>
+  );
+}
+
 export function ModelsPage() {
   const [cfg, setCfg] = useState<LLMSettings | null>(null);
   const [presets, setPresets] = useState<Record<string, ConnectionPreset> | null>(null);
@@ -53,6 +83,7 @@ export function ModelsPage() {
   const [newConn, setNewConn] = useState<NewConnectionDraft | null>(null);
   const [expandedConnectionId, setExpandedConnectionId] = useState<string | null>(null);
   const [expandedModel, setExpandedModel] = useState<string | null>(null);
+  const [advancedModel, setAdvancedModel] = useState<string | null>(null);
   const [modelDrafts, setModelDrafts] = useState<Record<string, ModelSettings>>({});
 
   useEffect(() => {
@@ -110,6 +141,20 @@ export function ModelsPage() {
         ? { ...c, connections: { ...c.connections, [cid]: { ...c.connections[cid], ...patch } } }
         : c,
     );
+  };
+
+  const togglePaused = async (cid: string) => {
+    const conn = cfg?.connections[cid];
+    if (!conn) return;
+    setError("");
+    try {
+      const updated = await updateConnection(cid, { paused: !conn.paused });
+      setCfg(updated);
+      flash(updated.connections[cid]?.paused ? "Connection paused." : "Connection resumed.");
+      bus.emit("llmConnectionsChanged", undefined);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
   };
 
   const saveConnection = async (cid: string) => {
@@ -237,6 +282,9 @@ export function ModelsPage() {
     }
   };
 
+  const openCustomConnection = () =>
+    setNewConn({ name: "", kind: "openai_compatible", base_url: "", api_mode: "chat_completions", timeout_seconds: DEFAULT_TIMEOUT_SECONDS });
+
   const saveActiveSelection = async (e: FormEvent) => {
     e.preventDefault();
     if (!cfg) return;
@@ -261,6 +309,10 @@ export function ModelsPage() {
   return (
     <div className="panel">
       <h2>Models &amp; Connections</h2>
+      <p className="hint">
+        Manage the LLM connections the Workbench can talk to, which of their models are available, and each
+        model's own generation settings.
+      </p>
       {status && <p className="hint">{status}</p>}
       {error && <p className="error">{error}</p>}
 
@@ -270,231 +322,275 @@ export function ModelsPage() {
         const expanded = expandedConnectionId === cid;
         const list = modelLists[cid];
         const drafted = disabledDrafts[cid];
+        const enabledCount = list ? list.all_models.length - (drafted ?? new Set(conn.disabled_models)).size : null;
+
         return (
-          <div key={cid} className="settings-item">
-            <div className="settings-row">
-              <strong>{conn.name || cid}</strong>
-              <span className="hint">— {conn.kind}, {conn.base_url}</span>
-              <button type="button" className="btn-sm" onClick={() => toggleExpandedConnection(cid, conn)}>
-                {expanded ? "Close" : "Edit"}
+          <div key={cid} className={`llm-conn-card${conn.paused ? " paused" : ""}`}>
+            <div className="llm-conn-header">
+              <button
+                type="button"
+                className="llm-conn-header-main"
+                onClick={() => toggleExpandedConnection(cid, conn)}
+              >
+                <div className="llm-conn-title">
+                  <div className="llm-conn-name-row">
+                    <span className="llm-conn-name">{conn.name || cid}</span>
+                    <span className="llm-kind-badge">{kindLabel(conn.kind)}</span>
+                    {conn.paused && <span className="llm-paused-badge">Paused</span>}
+                  </div>
+                  <div className="llm-conn-url">{conn.base_url}</div>
+                </div>
+                <div className="llm-conn-meta">
+                  {enabledCount !== null ? (
+                    <div>
+                      {enabledCount} / {list!.all_models.length} models enabled
+                    </div>
+                  ) : (
+                    <div className="hint">models not fetched yet</div>
+                  )}
+                </div>
+                <span className={`llm-chevron${expanded ? " expanded" : ""}`}>›</span>
               </button>
-              <button type="button" className="danger" onClick={() => removeConnection(cid)}>
-                Delete
-              </button>
+              <label className="llm-pause-toggle" title={conn.paused ? "Paused — click to resume" : "Pause this connection"}>
+                <Switch checked={!conn.paused} onChange={() => togglePaused(cid)} />
+              </label>
             </div>
 
             {expanded && (
-              <div style={{ marginTop: 8 }}>
-                <p className="settings-label">Connection details</p>
-                <div className="settings-row">
-                  <input
-                    value={conn.name}
-                    placeholder="Connection name"
-                    onChange={(e) => setConnectionField(cid, { name: e.target.value })}
-                  />
-                  <span className="hint">name</span>
-                </div>
-                <div className="settings-row">
-                  <input
-                    value={conn.base_url}
-                    placeholder="https://…/v1"
-                    onChange={(e) => setConnectionField(cid, { base_url: e.target.value })}
-                  />
-                  <span className="hint">base URL</span>
-                </div>
-                <div className="settings-row">
-                  <input
-                    value={conn.api_key}
-                    placeholder={conn.kind === "ollama" ? "(no auth)" : "API key"}
-                    onChange={(e) => setConnectionField(cid, { api_key: e.target.value })}
-                  />
-                  <span className="hint">API key</span>
-                </div>
-                <div className="settings-row">
-                  <label>
-                    API mode
-                    <select
-                      value={conn.api_mode}
-                      onChange={(e) => setConnectionField(cid, { api_mode: e.target.value as ApiMode })}
-                    >
-                      <option value="chat_completions">Chat Completions</option>
-                      <option value="responses">Responses</option>
-                    </select>
-                  </label>
-                </div>
-                <div className="settings-row">
-                  <input
-                    type="number"
-                    step="1"
-                    min="5"
-                    value={conn.timeout_seconds ?? DEFAULT_TIMEOUT_SECONDS}
-                    onChange={(e) => setConnectionField(cid, { timeout_seconds: Number(e.target.value) })}
-                  />
-                  <span className="hint">
-                    request timeout (seconds) — how long to wait for the model to respond before giving up; raise
-                    this for a slow local backend
-                  </span>
-                </div>
-                <div className="settings-row">
-                  <button type="button" onClick={() => saveConnection(cid)}>
-                    Save connection
-                  </button>
-                </div>
-
-                <p className="settings-label" style={{ marginTop: 12 }}>
-                  Models
-                </p>
-                <div className="settings-row">
-                  <button
-                    type="button"
-                    disabled={loadingModels === cid}
-                    onClick={() => fetchModels(cid, conn.disabled_models)}
-                  >
-                    {loadingModels === cid ? "Refreshing…" : "Refresh models"}
-                  </button>
-                </div>
-
-                {list && (
-                  <div className="settings-row" style={{ flexDirection: "column", alignItems: "flex-start" }}>
-                    <p className="hint" style={{ marginTop: 4 }}>
-                      {list.all_models.length} model{list.all_models.length !== 1 ? "s" : ""} — uncheck to hide from
-                      the chat selector; use Details to set that model's own vision/output/sampling settings.
-                    </p>
-                    {list.all_models.map((m) => {
-                      const modelExpanded = expandedModel === m;
-                      const draft = modelDrafts[draftKey(cid, m)];
-                      return (
-                        <div key={m} style={{ width: "100%" }}>
-                          <div className="settings-row">
-                            <label className="chat-settings-checkbox">
-                              <input
-                                type="checkbox"
-                                checked={!(drafted ?? new Set(conn.disabled_models)).has(m)}
-                                onChange={() => toggleModel(cid, m)}
-                              />
-                              {m}
-                            </label>
-                            <button type="button" className="btn-sm" onClick={() => toggleModelDetails(cid, m)}>
-                              {modelExpanded ? "Hide details" : "Details"}
-                            </button>
-                          </div>
-
-                          {modelExpanded && draft && (
-                            <div className="settings-item" style={{ marginLeft: 16 }}>
-                              <label className="chat-settings-checkbox">
-                                <input
-                                  type="checkbox"
-                                  checked={draft.vision}
-                                  onChange={(e) => setModelDraft(cid, m, { vision: e.target.checked })}
-                                />
-                                Enable vision (send images to LLM)
-                                <span className="hint">
-                                  {" "}— only enable if this model supports vision
-                                  {!modelSupportsVision(m) && <> (known not to support vision)</>}
-                                </span>
-                              </label>
-                              <label>
-                                Max tokens
-                                <input
-                                  type="number"
-                                  value={draft.max_tokens}
-                                  onChange={(e) => setModelDraft(cid, m, { max_tokens: Number(e.target.value) })}
-                                />
-                              </label>
-                              <label>
-                                Context window
-                                <input
-                                  type="number"
-                                  step="1000"
-                                  value={draft.context_window}
-                                  onChange={(e) => setModelDraft(cid, m, { context_window: Number(e.target.value) })}
-                                />
-                                <span className="hint">
-                                  {" "}— total tokens this model can hold; drives auto-compact's threshold
-                                </span>
-                              </label>
-                              <label>
-                                Temperature
-                                <input
-                                  type="number"
-                                  step="0.1"
-                                  min="0"
-                                  max="2"
-                                  value={draft.temperature}
-                                  onChange={(e) => setModelDraft(cid, m, { temperature: e.target.value })}
-                                />
-                              </label>
-                              <label>
-                                Top P
-                                <input
-                                  type="number"
-                                  step="0.05"
-                                  min="0"
-                                  max="1"
-                                  value={draft.top_p}
-                                  onChange={(e) => setModelDraft(cid, m, { top_p: e.target.value })}
-                                />
-                              </label>
-                              <label>
-                                Frequency penalty
-                                <input
-                                  type="number"
-                                  step="0.1"
-                                  min="-2"
-                                  max="2"
-                                  value={draft.frequency_penalty}
-                                  onChange={(e) => setModelDraft(cid, m, { frequency_penalty: e.target.value })}
-                                />
-                              </label>
-                              <label>
-                                Presence penalty
-                                <input
-                                  type="number"
-                                  step="0.1"
-                                  min="-2"
-                                  max="2"
-                                  value={draft.presence_penalty}
-                                  onChange={(e) => setModelDraft(cid, m, { presence_penalty: e.target.value })}
-                                />
-                              </label>
-                              <label>
-                                Seed
-                                <input
-                                  type="number"
-                                  step="1"
-                                  value={draft.seed}
-                                  onChange={(e) => setModelDraft(cid, m, { seed: e.target.value })}
-                                />
-                              </label>
-                              <label>
-                                Tool choice
-                                <select
-                                  value={draft.tool_choice}
-                                  onChange={(e) => setModelDraft(cid, m, { tool_choice: e.target.value })}
-                                >
-                                  <option value="auto">auto (model decides)</option>
-                                  <option value="required">required (must call a tool)</option>
-                                  <option value="none">none (disable tool calls)</option>
-                                </select>
-                              </label>
-                              <div className="settings-row">
-                                <button type="button" className="btn-sm" onClick={() => saveModelSettings(cid, m)}>
-                                  Save
-                                </button>
-                                <button type="button" className="btn-sm" onClick={() => resetModel(cid, m)}>
-                                  Reset to defaults
-                                </button>
-                              </div>
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })}
-                    <button type="button" onClick={() => saveModels(cid)}>
-                      Save enabled/disabled models
+              <div className="llm-conn-body">
+                <div className="llm-field-group">
+                  <div className="llm-section-label">Connection details</div>
+                  <div className="llm-field-grid">
+                    <label className="llm-field">
+                      Name
+                      <input
+                        value={conn.name}
+                        placeholder="Connection name"
+                        onChange={(e) => setConnectionField(cid, { name: e.target.value })}
+                      />
+                    </label>
+                    <label className="llm-field">
+                      Base URL
+                      <input
+                        value={conn.base_url}
+                        placeholder="https://…/v1"
+                        onChange={(e) => setConnectionField(cid, { base_url: e.target.value })}
+                      />
+                    </label>
+                    <label className="llm-field">
+                      API key
+                      <input
+                        type="password"
+                        value={conn.api_key}
+                        placeholder={conn.kind === "ollama" ? "(no auth)" : "API key"}
+                        onChange={(e) => setConnectionField(cid, { api_key: e.target.value })}
+                      />
+                    </label>
+                    <label className="llm-field">
+                      API mode
+                      <select
+                        value={conn.api_mode}
+                        onChange={(e) => setConnectionField(cid, { api_mode: e.target.value as ApiMode })}
+                      >
+                        <option value="chat_completions">Chat Completions</option>
+                        <option value="responses">Responses</option>
+                      </select>
+                    </label>
+                    <label className="llm-field">
+                      Request timeout (seconds)
+                      <input
+                        type="number"
+                        step="1"
+                        min="5"
+                        value={conn.timeout_seconds ?? DEFAULT_TIMEOUT_SECONDS}
+                        onChange={(e) => setConnectionField(cid, { timeout_seconds: Number(e.target.value) })}
+                      />
+                    </label>
+                  </div>
+                  <p className="hint" style={{ marginTop: 4 }}>
+                    Timeout is how long to wait for the model to respond before giving up — raise it for a slow
+                    local backend.
+                  </p>
+                  <div className="llm-row-end">
+                    <button type="button" className="danger" onClick={() => removeConnection(cid)}>
+                      Delete connection
+                    </button>
+                    <button type="button" className="btn-primary" onClick={() => saveConnection(cid)}>
+                      Save connection
                     </button>
                   </div>
-                )}
+                </div>
+
+                <div className="llm-field-group">
+                  <div className="llm-models-header">
+                    <div className="llm-section-label">Models</div>
+                    <span className="hint">Uncheck to hide from selectors</span>
+                  </div>
+                  <div className="llm-row-end" style={{ justifyContent: "flex-start" }}>
+                    <button
+                      type="button"
+                      className="btn-sm"
+                      disabled={loadingModels === cid}
+                      onClick={() => fetchModels(cid, conn.disabled_models)}
+                    >
+                      {loadingModels === cid ? "Refreshing…" : "Refresh models"}
+                    </button>
+                  </div>
+
+                  {list && (
+                    <div className="llm-model-list">
+                      {list.all_models.map((m) => {
+                        const modelExpanded = expandedModel === m;
+                        const draft = modelDrafts[draftKey(cid, m)];
+                        const advancedOpen = advancedModel === m;
+                        const savedSettings = cfg.connections[cid]?.models?.[m];
+                        const ctxWindow = savedSettings?.context_window ?? MODEL_SETTINGS_DEFAULTS.context_window;
+                        const enabled = !(drafted ?? new Set(conn.disabled_models)).has(m);
+
+                        return (
+                          <div key={m} className="llm-model-card">
+                            <div className="llm-model-row">
+                              <Switch checked={enabled} onChange={() => toggleModel(cid, m)} />
+                              <span className="llm-model-name">{m}</span>
+                              <span className="llm-model-ctx">{contextLabel(ctxWindow)}</span>
+                              <button type="button" className="btn-sm" onClick={() => toggleModelDetails(cid, m)}>
+                                {modelExpanded ? "Hide details" : "Details"}
+                              </button>
+                            </div>
+
+                            {modelExpanded && draft && (
+                              <div className="llm-model-body">
+                                <label className="chat-settings-checkbox">
+                                  <input
+                                    type="checkbox"
+                                    checked={draft.vision}
+                                    onChange={(e) => setModelDraft(cid, m, { vision: e.target.checked })}
+                                  />
+                                  Enable vision (send images to this model)
+                                  {!modelSupportsVision(m) && (
+                                    <span className="hint"> — known not to support vision</span>
+                                  )}
+                                </label>
+                                <div className="llm-field-grid">
+                                  <label className="llm-field">
+                                    Max output tokens
+                                    <input
+                                      type="number"
+                                      value={draft.max_tokens}
+                                      onChange={(e) => setModelDraft(cid, m, { max_tokens: Number(e.target.value) })}
+                                    />
+                                  </label>
+                                  <label className="llm-field">
+                                    Context window
+                                    <input
+                                      type="number"
+                                      step="1000"
+                                      value={draft.context_window}
+                                      onChange={(e) => setModelDraft(cid, m, { context_window: Number(e.target.value) })}
+                                    />
+                                  </label>
+                                </div>
+                                <p className="hint">Context window drives auto-compact's threshold for this model.</p>
+
+                                <div>
+                                  <button
+                                    type="button"
+                                    className="llm-advanced-toggle"
+                                    onClick={() => setAdvancedModel(advancedOpen ? null : m)}
+                                  >
+                                    <span className={`llm-chevron-inline${advancedOpen ? " expanded" : ""}`}>›</span>
+                                    Advanced settings
+                                  </button>
+
+                                  {advancedOpen && (
+                                    <div className="llm-advanced-grid">
+                                      <label className="llm-field">
+                                        Temperature
+                                        <input
+                                          type="number"
+                                          step="0.1"
+                                          min="0"
+                                          max="2"
+                                          value={draft.temperature}
+                                          onChange={(e) => setModelDraft(cid, m, { temperature: e.target.value })}
+                                        />
+                                      </label>
+                                      <label className="llm-field">
+                                        Top P
+                                        <input
+                                          type="number"
+                                          step="0.05"
+                                          min="0"
+                                          max="1"
+                                          value={draft.top_p}
+                                          onChange={(e) => setModelDraft(cid, m, { top_p: e.target.value })}
+                                        />
+                                      </label>
+                                      <label className="llm-field">
+                                        Seed
+                                        <input
+                                          type="number"
+                                          step="1"
+                                          value={draft.seed}
+                                          onChange={(e) => setModelDraft(cid, m, { seed: e.target.value })}
+                                        />
+                                      </label>
+                                      <label className="llm-field">
+                                        Frequency penalty
+                                        <input
+                                          type="number"
+                                          step="0.1"
+                                          min="-2"
+                                          max="2"
+                                          value={draft.frequency_penalty}
+                                          onChange={(e) => setModelDraft(cid, m, { frequency_penalty: e.target.value })}
+                                        />
+                                      </label>
+                                      <label className="llm-field">
+                                        Presence penalty
+                                        <input
+                                          type="number"
+                                          step="0.1"
+                                          min="-2"
+                                          max="2"
+                                          value={draft.presence_penalty}
+                                          onChange={(e) => setModelDraft(cid, m, { presence_penalty: e.target.value })}
+                                        />
+                                      </label>
+                                      <label className="llm-field">
+                                        Tool choice
+                                        <select
+                                          value={draft.tool_choice}
+                                          onChange={(e) => setModelDraft(cid, m, { tool_choice: e.target.value })}
+                                        >
+                                          <option value="auto">auto (model decides)</option>
+                                          <option value="required">required (must call a tool)</option>
+                                          <option value="none">none (disable tool calls)</option>
+                                        </select>
+                                      </label>
+                                    </div>
+                                  )}
+                                </div>
+
+                                <div className="llm-row-end">
+                                  <button type="button" className="btn-sm" onClick={() => resetModel(cid, m)}>
+                                    Reset to defaults
+                                  </button>
+                                  <button type="button" className="btn-sm btn-primary" onClick={() => saveModelSettings(cid, m)}>
+                                    Save model settings
+                                  </button>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                      <button type="button" onClick={() => saveModels(cid)}>
+                        Save enabled/disabled models
+                      </button>
+                    </div>
+                  )}
+                </div>
               </div>
             )}
           </div>
@@ -502,59 +598,62 @@ export function ModelsPage() {
       })}
 
       <h3>Add connection</h3>
-      <div className="settings-item">
-        {presets && (
-          <div className="settings-row">
-            {Object.entries(presets).map(([pid, preset]) => (
-              <button
-                key={pid}
-                type="button"
-                onClick={() =>
-                  setNewConn({
-                    name: preset.label,
-                    kind: preset.kind,
-                    base_url: preset.base_url,
-                    api_mode: preset.api_mode,
-                    timeout_seconds: DEFAULT_TIMEOUT_SECONDS,
-                  })
-                }
-              >
-                Quick add: {preset.label}
-              </button>
-            ))}
-          </div>
-        )}
-        {newConn && (
-          <>
-            <div className="settings-row">
+      <div className="llm-add-row">
+        {presets &&
+          Object.entries(presets).map(([pid, preset]) => (
+            <button
+              key={pid}
+              type="button"
+              className="llm-add-preset-btn"
+              onClick={() =>
+                setNewConn({
+                  name: preset.label,
+                  kind: preset.kind,
+                  base_url: preset.base_url,
+                  api_mode: preset.api_mode,
+                  timeout_seconds: DEFAULT_TIMEOUT_SECONDS,
+                })
+              }
+            >
+              + {preset.label}
+            </button>
+          ))}
+        <button type="button" className="llm-add-custom-btn" onClick={openCustomConnection}>
+          + Custom connection
+        </button>
+      </div>
+
+      {newConn && (
+        <div className="llm-conn-card llm-add-card">
+          <div className="llm-field-grid">
+            <label className="llm-field">
+              Name
               <input
                 value={newConn.name}
-                placeholder="Connection name"
+                placeholder="My connection"
                 onChange={(e) => setNewConn({ ...newConn, name: e.target.value })}
               />
-              <span className="hint">name</span>
-            </div>
-            <div className="settings-row">
+            </label>
+            <label className="llm-field">
+              Base URL
               <input
                 value={newConn.base_url}
                 placeholder="https://…/v1"
                 onChange={(e) => setNewConn({ ...newConn, base_url: e.target.value })}
               />
-              <span className="hint">base URL</span>
-            </div>
-            <div className="settings-row">
-              <label>
-                API mode
-                <select
-                  value={newConn.api_mode}
-                  onChange={(e) => setNewConn({ ...newConn, api_mode: e.target.value as ApiMode })}
-                >
-                  <option value="chat_completions">Chat Completions</option>
-                  <option value="responses">Responses</option>
-                </select>
-              </label>
-            </div>
-            <div className="settings-row">
+            </label>
+            <label className="llm-field">
+              API mode
+              <select
+                value={newConn.api_mode}
+                onChange={(e) => setNewConn({ ...newConn, api_mode: e.target.value as ApiMode })}
+              >
+                <option value="chat_completions">Chat Completions</option>
+                <option value="responses">Responses</option>
+              </select>
+            </label>
+            <label className="llm-field">
+              Request timeout (seconds)
               <input
                 type="number"
                 step="1"
@@ -562,28 +661,27 @@ export function ModelsPage() {
                 value={newConn.timeout_seconds}
                 onChange={(e) => setNewConn({ ...newConn, timeout_seconds: Number(e.target.value) })}
               />
-              <span className="hint">request timeout (seconds) — raise for a slow local backend</span>
-            </div>
-            <div className="settings-row">
-              <button type="button" onClick={addConnection}>
-                Add connection
-              </button>
-              <button type="button" onClick={() => setNewConn(null)}>
-                Cancel
-              </button>
-            </div>
-          </>
-        )}
-      </div>
+            </label>
+          </div>
+          <div className="llm-row-end">
+            <button type="button" onClick={() => setNewConn(null)}>
+              Cancel
+            </button>
+            <button type="button" className="btn-primary" onClick={addConnection}>
+              Add connection
+            </button>
+          </div>
+        </div>
+      )}
 
       <h3>Active selection</h3>
-      <p className="hint">
-        The connection/model a brand-new conversation defaults to. The Chat panel's own selector overrides this per
-        conversation.
-      </p>
-      <form onSubmit={saveActiveSelection} className="settings-item">
-        <div className="settings-row">
-          <label>
+      <form onSubmit={saveActiveSelection} className="llm-active-card">
+        <p className="hint" style={{ margin: 0 }}>
+          The connection/model a brand-new conversation defaults to. Chat's own selector overrides this per
+          conversation.
+        </p>
+        <div className="llm-active-row">
+          <label className="llm-field llm-active-field">
             Connection
             <select
               value={cfg.active_connection}
@@ -592,11 +690,12 @@ export function ModelsPage() {
               {connectionIds.map((cid) => (
                 <option key={cid} value={cid}>
                   {cfg.connections[cid]?.name || cid}
+                  {cfg.connections[cid]?.paused ? " (paused)" : ""}
                 </option>
               ))}
             </select>
           </label>
-          <label>
+          <label className="llm-field llm-active-field">
             Model
             <select
               value={cfg.active_model}
@@ -621,29 +720,25 @@ export function ModelsPage() {
               {loadingModels === cfg.active_connection ? "Fetching…" : "Fetch models"}
             </button>
           )}
-          <button type="submit">Save</button>
         </div>
-      </form>
 
-      <h3>Auto-compact</h3>
-      <p className="hint">
-        When a conversation's history nears the active model's context window (set per model
-        under Details above), automatically summarize it via the LLM and replace the history with
-        that summary before the next turn. Off by default — compaction is a lossy, irreversible
-        rewrite of that conversation's stored history. You can also compact a conversation manually
-        any time via the Compact button in Chat's message box.
-      </p>
-      <form onSubmit={saveActiveSelection} className="settings-item">
-        <div className="settings-row">
-          <label className="chat-settings-checkbox">
-            <input
-              type="checkbox"
-              checked={cfg.auto_compact}
-              onChange={(e) => setCfg((c) => (c ? { ...c, auto_compact: e.target.checked } : c))}
-            />
-            Auto-compact conversations when context fills up
-          </label>
-          <button type="submit">Save</button>
+        <div className="llm-toggle-row">
+          <div>
+            <div className="llm-toggle-title">Auto-compact conversations</div>
+            <p className="hint" style={{ marginTop: 2 }}>
+              Summarize history automatically as a conversation nears its model's context window (set per model
+              under Details above). Off by default — this is a lossy, irreversible rewrite.
+            </p>
+          </div>
+          <Switch
+            large
+            checked={cfg.auto_compact}
+            onChange={() => setCfg((c) => (c ? { ...c, auto_compact: !c.auto_compact } : c))}
+          />
+        </div>
+
+        <div className="llm-row-end">
+          <button type="submit" className="btn-primary">Save</button>
         </div>
       </form>
 

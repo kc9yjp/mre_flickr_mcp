@@ -239,7 +239,7 @@ export function SyncPage() {
           >
             <option value="">Use chat model ({llmSettings.active_connection || "none set"})</option>
             {Object.entries(llmSettings.connections).map(([id, conn]) => (
-              <option key={id} value={id}>{conn.name}</option>
+              <option key={id} value={id}>{conn.name}{conn.paused ? " (paused)" : ""}</option>
             ))}
           </select>
           {llmSettings.sync_connection && (

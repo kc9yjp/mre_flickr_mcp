@@ -365,13 +365,24 @@ export function Chat() {
       .then((s) => {
         setLlmCfg(s);
         const last = loadLastModel();
-        const lastConnectionValid = !!(last && s.connections?.[last.connection]);
+        // A paused connection (kept configured but regularly unreachable)
+        // is never auto-picked here — only an explicit prior selection
+        // (still resolvable below) or a manual pick from the dropdown uses one.
+        const lastConnectionValid =
+          !!(last && s.connections?.[last.connection] && !s.connections[last.connection].paused);
+        const activeValid =
+          !!(s.active_connection && s.connections?.[s.active_connection] && !s.connections[s.active_connection].paused);
+        const firstUnpaused = Object.keys(s.connections ?? {}).find((id) => !s.connections[id].paused) || "";
         const cid = (lastConnectionValid ? last!.connection : "")
-          || s.active_connection || (s.connections && Object.keys(s.connections)[0]) || "";
+          || (activeValid ? s.active_connection : "") || firstUnpaused || "";
         const model = (lastConnectionValid && last!.connection === cid ? last!.model : s.active_model) || "";
         setConnectionModel(cid ? makeSelector(cid, model) : "");
 
-        for (const connectionId of Object.keys(s.connections ?? {})) {
+        // Skip eager-fetching models for paused connections (they're
+        // regularly unreachable — no point hammering them on every load),
+        // except the one actually selected above.
+        for (const [connectionId, conn] of Object.entries(s.connections ?? {})) {
+          if (conn.paused && connectionId !== cid) continue;
           fetchModelsForConnection(connectionId);
         }
       })
@@ -391,13 +402,15 @@ export function Chat() {
       getJSON<LLMSettings>("/api/llm-settings")
         .then((s) => {
           setLlmCfg(s);
-          for (const connectionId of Object.keys(s.connections ?? {})) {
+          const currentCid = parseSelector(connectionModel).connectionId;
+          for (const [connectionId, conn] of Object.entries(s.connections ?? {})) {
+            if (conn.paused && connectionId !== currentCid) continue;
             fetchModelsForConnection(connectionId);
           }
         })
         .catch((e) => console.error("Failed to refresh LLM settings:", e));
     });
-  }, [fetchModelsForConnection]);
+  }, [fetchModelsForConnection, connectionModel]);
 
   // Persist whatever connection/model is active so a reload restores it.
   useEffect(() => {
@@ -842,13 +855,17 @@ export function Chat() {
           className="chat-connection-model-select"
         >
           {!connectionModel && <option value="">(select connection: model)</option>}
-          {llmCfg && Object.entries(llmCfg.connections).map(([cid, conn]) =>
-            (modelsByConnection[cid] ?? []).map((m) => (
+          {llmCfg && Object.entries(llmCfg.connections).map(([cid, conn]) => {
+            // Hide a paused connection from the picker — unless it's the one
+            // already selected (e.g. it got paused mid-conversation), so the
+            // dropdown doesn't silently go blank.
+            if (conn.paused && cid !== parseSelector(connectionModel).connectionId) return null;
+            return (modelsByConnection[cid] ?? []).map((m) => (
               <option key={makeSelector(cid, m)} value={makeSelector(cid, m)}>
-                {conn.name || cid}: {m}
+                {conn.name || cid}{conn.paused ? " (paused)" : ""}: {m}
               </option>
-            )),
-          )}
+            ));
+          })}
         </select>
         {(() => {
           const { connectionId } = parseSelector(connectionModel);
