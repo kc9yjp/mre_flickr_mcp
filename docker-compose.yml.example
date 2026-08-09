@@ -1,9 +1,21 @@
 services:
   flickr-mcp:
-    build: .
+    build:
+      context: .
+      # Uncomment to bake the optional Chroma dependency into the image, for
+      # WORKBENCH_VECTOR_SEARCH_ENABLED=true (see readme.md → Group semantic search).
+      # args:
+      #   INSTALL_VECTOR_SEARCH: "true"
     env_file: .env
     environment:
       - MCP_PORT=8000
+      # Optional semantic group search — off by default. When true, group sync
+      # also embeds group text into Chroma and find_groups adds a vector
+      # retrieval path. Requires an embedding-capable model served at
+      # WORKBENCH_EMBEDDING_BASE_URL (e.g. LM Studio's /v1/embeddings).
+      # - WORKBENCH_VECTOR_SEARCH_ENABLED=true
+      # - WORKBENCH_EMBEDDING_BASE_URL=http://host.docker.internal:1234/v1
+      # - WORKBENCH_EMBEDDING_MODEL=nomic-embed-text
     volumes:
       - flickr-creds:/home/app/.flickr_mcp
       - flickr-data:/app/data
@@ -21,6 +33,24 @@ services:
     stdin_open: true
     profiles: [stdio]
 
+  # Standalone Chroma — only needed if you want the vector store queryable
+  # from outside the server process. The default (embedded) mode keeps Chroma
+  # in-process under data/{username}/chroma and needs no service at all.
+  #
+  #   docker compose --profile vector-search up -d
+  #
+  # Then point the server at it with:
+  #   WORKBENCH_CHROMA_HOST=vector-db
+  #   WORKBENCH_CHROMA_PORT=8000
+  vector-db:
+    image: chromadb/chroma:latest
+    profiles: [vector-search]
+    ports:
+      - "8100:8000"
+    volumes:
+      - chroma-data:/chroma/chroma
+
 volumes:
   flickr-creds:
   flickr-data:
+  chroma-data:

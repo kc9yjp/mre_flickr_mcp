@@ -1,0 +1,7 @@
+# Optional dependencies for the group semantic-search feature
+# (WORKBENCH_VECTOR_SEARCH_ENABLED=true). Not installed by default: with the
+# feature off, nothing imports chromadb and the server runs exactly as before.
+#
+#   pip install -r requirements-vector.txt
+#   docker compose build --build-arg INSTALL_VECTOR_SEARCH=true
+chromadb>=1.0.0

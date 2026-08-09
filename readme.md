@@ -156,6 +156,47 @@ Note: stdio mode has no web UI — login and sync must be done via the SSE conta
 | `MCP_PORT` | No | Port for the web/SSE server (default: `8000`) |
 | `MCP_API_KEY` | No | Bearer token to protect the SSE endpoint |
 | `MCP_TRANSPORT` | No | `sse` (default) or `stdio` |
+| `WORKBENCH_VECTOR_SEARCH_ENABLED` | No | `false` (default) — see [Group semantic search](#group-semantic-search-optional) |
+
+## Group semantic search (optional)
+
+Off by default. With the flag off, nothing changes: no vector store, no
+embedding calls, no extra dependency — group search is the same keyword
+search over the local SQLite cache it has always been.
+
+Turned on, group sync gains a final phase that embeds each group's name +
+description + AI summary into a [Chroma](https://www.trychroma.com/)
+collection, and `find_groups` gains a second retrieval path that embeds the
+query and appends nearest-neighbour groups the keyword search missed — so a
+photo described as "golden hour brick path" can surface a group called
+"Fleeting Light" that shares no literal word with it. Embeddings come from
+any OpenAI-compatible `/v1/embeddings` endpoint, typically the same LM Studio
+instance already used for chat and group summaries.
+
+```yaml
+# docker-compose.yml
+services:
+  flickr-mcp:
+    build:
+      context: .
+      args:
+        INSTALL_VECTOR_SEARCH: "true"   # installs chromadb into the image
+    environment:
+      - WORKBENCH_VECTOR_SEARCH_ENABLED=true
+      - WORKBENCH_EMBEDDING_BASE_URL=http://host.docker.internal:1234/v1
+      - WORKBENCH_EMBEDDING_MODEL=nomic-embed-text
+```
+
+```bash
+docker compose build && docker compose up -d
+# backfill the groups you already have (once):
+docker compose exec flickr-mcp \
+  python scripts/sync_groups.py --rebuild-vectors --nsid <nsid> --username <username>
+```
+
+See **[VECTOR_SEARCH.md](VECTOR_SEARCH.md)** for the full setup walkthrough,
+the standalone-Chroma variant, every configuration variable, and
+troubleshooting.
 
 ## Volumes
 
@@ -200,6 +241,7 @@ See [`playwright/README.md`](playwright/README.md) for details.
 - [ARCHITECTURE.md](ARCHITECTURE.md) — technical deep dive: server layout, multi-user model, data layer, sync pipeline, MCP tool dispatch, and the Workbench SPA/chat agent
 - [TOOLS.md](TOOLS.md) — full catalog of all MCP tools
 - [WORKBENCH.md](WORKBENCH.md) / [MODEL_CONFIG.md](MODEL_CONFIG.md) — Workbench build log and LLM settings reference
+- [VECTOR_SEARCH.md](VECTOR_SEARCH.md) — optional group semantic search: setup, configuration, and troubleshooting
 - [Docker Hub](https://hub.docker.com/repositories/ejwettstein)
 - [Flickr API docs](https://www.flickr.com/services/api/)
 - [Model Context Protocol](https://modelcontextprotocol.io/)

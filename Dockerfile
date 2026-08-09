@@ -16,6 +16,15 @@ ENV PYTHONUNBUFFERED=1
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Optional: group semantic search (WORKBENCH_VECTOR_SEARCH_ENABLED). Left out
+# by default so the image doesn't carry Chroma when the feature is off —
+# build with --build-arg INSTALL_VECTOR_SEARCH=true to include it.
+ARG INSTALL_VECTOR_SEARCH=false
+COPY requirements-vector.txt .
+RUN if [ "$INSTALL_VECTOR_SEARCH" = "true" ]; then \
+        pip install --no-cache-dir -r requirements-vector.txt; \
+    fi
+
 RUN useradd -m -u 1000 app && \
     chown -R app /app && \
     mkdir -p /home/app/.flickr_mcp && \
