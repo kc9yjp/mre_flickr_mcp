@@ -181,3 +181,12 @@ frontend/tsconfig.tsbuildinfo
 
 # tailscale config
 tailscale/serve-config.json
+
+# design-sync (Claude Design import) — staged scripts, build output, and
+# machine state; everything under .design-sync/ NOT listed here is durable
+# and committed (config.json, NOTES.md, conventions.md, previews/, overrides/)
+.ds-sync/
+ds-bundle/
+.design-sync/.cache/
+.design-sync/learnings/
+.design-sync/node_modules

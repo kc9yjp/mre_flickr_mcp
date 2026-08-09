@@ -1,0 +1,34 @@
+{
+  "projectId": "fe45e0b6-89b1-4d8c-9463-7f0fad488eda",
+  "pkg": "flickr-workbench",
+  "shape": "package",
+  "cssEntry": "src/styles.css",
+  "tokensPkg": "dockview",
+  "tokensGlob": "dist/styles/dockview.css",
+  "readmeHeader": ".design-sync/conventions.md",
+  "overrides": {
+    "CommandPalette": { "cardMode": "single", "viewport": "560x460" },
+    "FlickrLinkMenu": { "cardMode": "column" },
+    "ThemeMenu": { "cardMode": "column" },
+    "UserMenu": { "cardMode": "column" },
+
+    "App": { "cardMode": "single", "viewport": "1280x820" },
+    "MobileLayout": { "cardMode": "single", "viewport": "390x780" },
+    "Chat": { "cardMode": "single", "viewport": "1040x760" },
+    "Command": { "cardMode": "single", "viewport": "720x420" },
+    "ModelsPage": { "cardMode": "single", "viewport": "1040x760" },
+    "PhotoBrowser": { "cardMode": "single", "viewport": "1120x780" },
+    "PhotoViewer": { "cardMode": "single", "viewport": "900x700" },
+    "PromptsPage": { "cardMode": "single", "viewport": "1040x760" },
+    "PromptsSection": { "cardMode": "single", "viewport": "1040x760" },
+    "QueuePage": { "cardMode": "single", "viewport": "1000x680" },
+    "SettingsPage": { "cardMode": "single", "viewport": "860x620" },
+    "SetupPage": { "cardMode": "single", "viewport": "960x720" },
+    "Summary": { "cardMode": "single", "viewport": "900x640", "primaryStory": "Default" },
+    "SyncPage": { "cardMode": "single", "viewport": "980x700", "primaryStory": "Idle" }
+  },
+  "libOverrides": {
+    "source-kit.mjs": "app entrypoint main.tsx has top-level DOM-mounting side effects that crash the synthesized re-export bundle; excluded from the src sweep"
+  },
+  "componentSrcMap": {}
+}
