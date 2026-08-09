@@ -1,0 +1,32 @@
+{
+  "projectId": "303fff4d-ccdf-48ad-85a7-6065b4f7ea26",
+  "pkg": "flickr-workbench",
+  "shape": "package",
+  "cssEntry": "src/styles.css",
+  "readmeHeader": ".design-sync/conventions.md",
+  "overrides": {
+    "CommandPalette": { "cardMode": "single", "viewport": "560x460" },
+    "FlickrLinkMenu": { "cardMode": "column" },
+    "ThemeMenu": { "cardMode": "column" },
+    "UserMenu": { "cardMode": "column" }
+  },
+  "libOverrides": {
+    "source-kit.mjs": "app entrypoint main.tsx has top-level DOM-mounting side effects that crash the synthesized re-export bundle; excluded from the src sweep"
+  },
+  "componentSrcMap": {
+    "App": null,
+    "MobileLayout": null,
+    "Chat": null,
+    "Command": null,
+    "ModelsPage": null,
+    "PhotoBrowser": null,
+    "PhotoViewer": null,
+    "PromptsPage": null,
+    "PromptsSection": null,
+    "QueuePage": null,
+    "SettingsPage": null,
+    "SetupPage": null,
+    "Summary": null,
+    "SyncPage": null
+  }
+}
