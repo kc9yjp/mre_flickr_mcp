@@ -154,7 +154,7 @@ class TestEmbeddingText:
         assert "sunset dusk" in text
         assert "one a day" in text
 
-    def test_missing_and_null_fields_are_skipped(self):
+    def test_missing_and_null_fields_skipped(self):
         row = {"id": "1@N", "name": "Just A Name", "description": None}
         assert vector_search.group_embedding_text(row) == "Just A Name"
 
@@ -387,7 +387,7 @@ class TestStoreLock:
             assert vector_search._STORE_LOCK.locked()
         assert not vector_search._STORE_LOCK.locked()
 
-    def test_lock_is_released_when_opening_fails(self, monkeypatch):
+    def test_lock_released_when_opening_fails(self, monkeypatch):
         def _boom(username):
             raise vector_search.VectorSearchError("nope")
 
@@ -421,7 +421,7 @@ class TestSearchGroupIds:
         assert hits[0][1] < hits[1][1]
         assert collection.query_calls[0]["n_results"] == 5
 
-    def test_uncorrelated_neighbours_are_dropped(self, monkeypatch, enabled_env):
+    def test_uncorrelated_neighbours_dropped(self, monkeypatch, enabled_env):
         collection = FakeCollection()
         collection.next_query_ids = ["1@N", "2@N"]
         collection.next_query_distances = [0.4, 1.0]  # 1.0 = no correlation at all
@@ -511,7 +511,7 @@ class TestFindGroupsIntegration:
         assert "Semantically similar" not in text
 
     @pytest.mark.asyncio
-    async def test_semantic_only_result_still_returned(self, groups_db_file, monkeypatch, enabled_env):
+    async def test_semantic_only_result_is_returned(self, groups_db_file, monkeypatch, enabled_env):
         import mcp_tools
         monkeypatch.setattr(vector_search, "search_group_ids",
                             lambda q, limit, nsid, username: [("group2@N00", 0.2)])
