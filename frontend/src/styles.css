@@ -1518,6 +1518,376 @@ select:focus {
   min-width: 160px;
 }
 
+/* --- Models & Connections panel --- */
+
+.llm-conn-card {
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+  margin-bottom: 12px;
+  transition: opacity 0.15s;
+}
+
+.llm-conn-card.paused {
+  opacity: 0.62;
+}
+
+.llm-conn-card.paused:hover,
+.llm-conn-card.paused:focus-within {
+  opacity: 0.9;
+}
+
+.llm-conn-header {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 8px 6px 16px;
+}
+
+.llm-conn-header-main {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex: 1;
+  min-width: 0;
+  padding: 8px 8px 8px 0;
+  background: none;
+  border: none;
+  border-radius: 0;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.llm-conn-header-main:hover {
+  border-color: transparent;
+}
+
+.llm-pause-toggle {
+  flex: none;
+  display: flex;
+  align-items: center;
+  padding: 8px;
+  cursor: pointer;
+}
+
+.llm-conn-title {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.llm-conn-name-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.llm-conn-name {
+  font-size: 0.9375rem;
+  font-weight: 600;
+}
+
+.llm-kind-badge {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  color: var(--ink-secondary);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 1px 9px;
+}
+
+.llm-paused-badge {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  color: var(--warn);
+  background: var(--surface);
+  border: 1px solid var(--warn);
+  border-radius: 999px;
+  padding: 1px 9px;
+}
+
+.llm-conn-url {
+  font-size: 0.8125rem;
+  color: var(--ink-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.llm-conn-meta {
+  flex: none;
+  font-size: 0.8125rem;
+  color: var(--ink-secondary);
+  text-align: right;
+}
+
+.llm-chevron {
+  flex: none;
+  font-size: 18px;
+  color: var(--ink-muted);
+  transition: transform 0.15s;
+}
+
+.llm-chevron.expanded {
+  transform: rotate(90deg);
+}
+
+.llm-conn-body {
+  border-top: 1px solid var(--border);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  animation: fadeIn 0.15s ease-out;
+}
+
+.llm-field-group {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.llm-section-label {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--ink-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.llm-models-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.llm-field-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.llm-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.8125rem;
+  color: var(--ink-muted);
+}
+
+.llm-field input,
+.llm-field select {
+  font-size: 0.875rem;
+  color: var(--ink);
+}
+
+.llm-row-end {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
+.llm-model-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: flex-start;
+}
+
+.llm-model-list > button {
+  align-self: flex-start;
+}
+
+.llm-model-card {
+  width: 100%;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.llm-model-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+}
+
+.llm-model-name {
+  flex: 1;
+  font-size: 0.84375rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.llm-model-ctx {
+  flex: none;
+  font-size: 0.71875rem;
+  color: var(--ink-muted);
+}
+
+.llm-model-body {
+  border-top: 1px solid var(--border);
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  animation: fadeIn 0.15s ease-out;
+}
+
+.llm-advanced-toggle {
+  font-size: 0.78125rem;
+  color: var(--accent);
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.llm-chevron-inline {
+  display: inline-block;
+  transition: transform 0.15s;
+}
+
+.llm-chevron-inline.expanded {
+  transform: rotate(90deg);
+}
+
+.llm-advanced-grid {
+  margin-top: 12px;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  animation: fadeIn 0.15s ease-out;
+}
+
+.llm-add-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.llm-add-preset-btn {
+  border-radius: 9px;
+}
+
+.llm-add-custom-btn {
+  background: transparent;
+  border: 1px dashed var(--border);
+  color: var(--ink-secondary);
+  border-radius: 9px;
+}
+
+.llm-add-card {
+  padding: 16px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.llm-active-card {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 18px;
+  margin-bottom: 16px;
+}
+
+.llm-active-row {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  align-items: flex-end;
+}
+
+.llm-active-field {
+  min-width: 180px;
+}
+
+.llm-toggle-row {
+  border-top: 1px solid var(--border);
+  margin-top: 2px;
+  padding-top: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.llm-toggle-title {
+  font-size: 0.84375rem;
+}
+
+/* Track+knob switch used for "model enabled" and "auto-compact". */
+.llm-switch {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+  width: 34px;
+  height: 20px;
+}
+
+.llm-switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+  position: absolute;
+}
+
+.llm-switch-track {
+  position: absolute;
+  inset: 0;
+  border-radius: 999px;
+  background: var(--border);
+  transition: background 0.15s;
+}
+
+.llm-switch input:checked + .llm-switch-track {
+  background: var(--good);
+}
+
+.llm-switch-knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--ink);
+  transition: left 0.15s;
+}
+
+.llm-switch input:checked ~ .llm-switch-knob {
+  left: 16px;
+}
+
+.llm-switch--lg {
+  width: 38px;
+  height: 22px;
+}
+
+.llm-switch--lg .llm-switch-knob {
+  width: 18px;
+  height: 18px;
+}
+
+.llm-switch--lg input:checked ~ .llm-switch-knob {
+  left: 18px;
+}
+
 .prompt-text {
   display: block;
   width: 100%;

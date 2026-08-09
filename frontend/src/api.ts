@@ -208,6 +208,11 @@ export interface Connection {
   timeout_seconds: number;
   disabled_models: string[];
   models: Record<string, ModelSettings>;
+  // Kept-but-unused: stays fully configured, but skipped by the backend's
+  // "first connection" fallback and by the frontend's connection selectors/
+  // eager model-fetch. For a connection that's regularly unreachable (a
+  // local backend that's often off) without deleting its setup.
+  paused: boolean;
 }
 
 export const DEFAULT_TIMEOUT_SECONDS = 300;

@@ -19,7 +19,7 @@ Storage shape (v4 — named connections, per-model settings)::
                     }},
         "zen":    {"name": "OpenCode Zen", "kind": "openai_compatible", "api_mode": "chat_completions",
                     "base_url": "https://opencode.ai/zen/v1", "api_key": "...",
-                    "disabled_models": ["gpt-5", "..."], "models": {}}
+                    "disabled_models": ["gpt-5", "..."], "models": {}, "paused": false}
       },
       "active_connection": "ollama",
       "active_model": "",
@@ -47,6 +47,17 @@ simply uses ``DEFAULTS`` — entries are only created when a user edits that
 model's settings and saves. ``context_window`` is never sent to the
 connection; it only feeds loop.py's auto-compact threshold and the chat
 stats "context used" readout.
+
+``paused`` (default ``false``) marks a connection as kept-but-unused: it
+stays fully configured and editable, but is skipped by the "first connection"
+fallback in ``resolve_cfg`` and by the frontend's connection selectors/eager
+model-fetch, so a connection that's regularly unreachable (a local backend
+that's often off) doesn't get auto-picked or hammered with requests. It has
+no effect on an *explicit* connection_id passed to ``resolve_cfg`` — a
+conversation already pinned to a paused connection, or a deliberate manual
+pick, still resolves normally. Pausing the current ``active_connection`` (or
+``sync_connection``) clears that pointer so the fallback takes over, the same
+way ``delete_connection`` does.
 
 ``auto_compact`` is a top-level, per-user flag (default ``false``): when on,
 ``loop.run_turn`` compacts a conversation's history into an LLM-written
@@ -114,6 +125,7 @@ DEFAULT_CONNECTIONS: dict[str, dict] = {
         "timeout_seconds": 300,
         "disabled_models": [],
         "models": {},
+        "paused": False,
     },
 }
 
@@ -240,6 +252,8 @@ def save_settings(nsid: str, data: dict) -> dict:
             base["timeout_seconds"] = _coerce_timeout(conn["timeout_seconds"])
         if "disabled_models" in conn:
             base["disabled_models"] = list(conn["disabled_models"])
+        if "paused" in conn:
+            base["paused"] = bool(conn["paused"])
         # mask-guard the api_key
         if "api_key" in conn:
             old_key = stored.get(cid, {}).get("api_key", "")
@@ -247,6 +261,7 @@ def save_settings(nsid: str, data: dict) -> dict:
                 base["api_key"] = conn["api_key"]
         stored[cid] = base
     current["connections"] = stored
+    _clear_dangling_picks_if_paused(current)
 
     _write_settings(nsid, current)
     return current
@@ -291,6 +306,7 @@ def create_connection(
         "timeout_seconds": _coerce_timeout(timeout_seconds),
         "disabled_models": sorted(suggested_disabled_models(kind, base_url)),
         "models": {},
+        "paused": False,
     }
     current["connections"] = connections
     _write_settings(nsid, current)
@@ -312,12 +328,15 @@ def update_connection(nsid: str, connection_id: str, patch: dict) -> dict | None
         conn["timeout_seconds"] = _coerce_timeout(patch["timeout_seconds"])
     if "disabled_models" in patch:
         conn["disabled_models"] = list(patch["disabled_models"])
+    if "paused" in patch:
+        conn["paused"] = bool(patch["paused"])
     if "api_key" in patch:
         if patch["api_key"] != _mask_key(conn.get("api_key", "")):
             conn["api_key"] = patch["api_key"]
 
     connections[connection_id] = conn
     current["connections"] = connections
+    _clear_dangling_picks_if_paused(current)
     _write_settings(nsid, current)
     return masked(current)
 
@@ -391,6 +410,22 @@ def delete_connection(nsid: str, connection_id: str) -> dict | None:
     return masked(current)
 
 
+def _clear_dangling_picks_if_paused(current: dict) -> None:
+    """Clear ``active_connection``/``sync_connection`` in place if either now
+    points at a paused connection, mirroring what ``delete_connection`` does
+    for a removed one — so ``resolve_cfg``'s "first connection" fallback
+    picks a live connection instead of silently continuing to target the one
+    just paused."""
+    connections = current.get("connections") or {}
+    active = current.get("active_connection")
+    if active and (connections.get(active) or {}).get("paused"):
+        current["active_connection"] = ""
+    sync_conn = current.get("sync_connection")
+    if sync_conn and (connections.get(sync_conn) or {}).get("paused"):
+        current["sync_connection"] = ""
+        current["sync_model"] = ""
+
+
 # ── Resolve a flat cfg dict for llm.py ────────────────────────────────────────
 
 
@@ -411,8 +446,12 @@ def resolve_cfg(
     cid = connection_id or s.get("active_connection") or ""
     conn = connections.get(cid) or {}
     if not conn and connections:
-        # first connection in the dict as fallback
-        cid = next(iter(connections))
+        # First non-paused connection in the dict as fallback (a paused one
+        # is kept configured but shouldn't be auto-picked); if every
+        # connection is paused, fall back to the first one anyway rather
+        # than resolving to nothing.
+        non_paused = [c for c, v in connections.items() if not v.get("paused")]
+        cid = non_paused[0] if non_paused else next(iter(connections))
         conn = connections[cid]
 
     model_id = model or s.get("active_model") or ""
@@ -587,6 +626,7 @@ def _merge_defaults(raw: dict) -> dict:
     for conn in raw["connections"].values():
         conn.setdefault("models", {})
         conn.setdefault("timeout_seconds", DEFAULT_TIMEOUT_SECONDS)
+        conn.setdefault("paused", False)
     return {
         "connections": raw["connections"],
         "active_connection": raw.get("active_connection", ""),
