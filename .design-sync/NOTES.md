@@ -80,23 +80,83 @@ node .ds-sync/resync.mjs --config .design-sync/config.json \
 A healthy run prints `[NO_DIST] no built entry — synthesizing from 21 src
 files` — that line is expected here, not a failure to chase.
 
-## Why 14 components are excluded (`componentSrcMap: null`)
+## The 14 screens are now IN (was: excluded) — how they work
 
-- `App`, `MobileLayout` — app shells that mount the full panel set
-  unconditionally; their default render bakes in live-API error text
-  ("Not Found", "Could not load stats") from panels that need a real
-  authenticated Flickr session.
-- `Chat`, `Command`, `ModelsPage`, `PhotoBrowser`, `PhotoViewer`,
-  `PromptsPage`, `PromptsSection`, `QueuePage`, `SettingsPage`, `SetupPage`,
-  `Summary`, `SyncPage` — page-level panels, same reason: they self-fetch
-  from the live backend and have no meaningful standalone render. Not floor
-  cards (the mechanical floor-card fallback only triggers on an EMPTY
-  render root — these render real, non-empty, but misleading error text) —
-  they had to be excluded from the component list entirely.
+A previous sync excluded all 14 page-level components via
+`componentSrcMap: null`, on the grounds that they self-fetch and render
+error text. That exclusion has been removed; all 21 components now sync.
+Two facts made it straightforward, both worth knowing before touching this:
 
-If any of these ever need syncing, it would require mocking `api.ts`'s
-fetch layer per component — out of scope for "compose realistic props",
-arguably reimplementation. Left as future work only if requested.
+- **They were always in the bundle.** The exclusion only removed them from
+  the *component list* (no card, no `.d.ts`, no `.prompt.md`). The synth
+  entry sweeps all 21 `src` `.tsx` files regardless, so
+  `window.FlickrWorkbench` has exposed `Chat`, `PhotoBrowser`, `App` &c. the
+  whole time — the design agent simply had no contract or card for them.
+- **The network is a single choke point.** Every panel's data goes through
+  `getJSON` in `api.ts` (5 `fetch(` call sites total). One `window.fetch`
+  stub feeds any screen, so the previews supply *data* and the real shipped
+  component still renders — no reimplementation.
+
+`.design-sync/previews/_fixtures.ts` is that stub plus the fixture set. It is
+deliberately **`.ts`, not `.tsx`**: the converter's stale-preview scan only
+reads `.tsx` in `previews/`, so a helper module is invisible to it while
+esbuild still bundles it (previews compile with `bundle: true`).
+
+Every panel takes **zero props** (`export function Chat()`); only
+`MobileLayout` takes one (`me`). Their `.d.ts` contracts are therefore empty
+by nature — that is accurate, not a extraction failure. It also means the
+design agent can place and restyle a screen but cannot parameterize its
+content; making that possible would require refactoring the panels to accept
+data instead of self-fetching, which is app work, not sync work.
+
+## Fixture gotchas (each one cost a debugging cycle)
+
+- **Timestamps must be relative to render time.** The panels render epochs
+  through `format.ts`'s `relativeTime()`, so a hard-coded 2024 epoch renders
+  as "680 d ago". `_fixtures.ts` derives everything from `Date.now()`.
+- **`package-capture.mjs` pins the browser clock** to `2024-05-15T12:00:00Z`
+  (`page.clock.setFixedTime`, line ~102) for deterministic screenshots, while
+  `package-validate.mjs` uses the real clock. Relative fixtures are correct
+  under both; this is also why absolute dates in captures read as 2024 and
+  why render hashes stay stable despite `Date.now()` in the fixtures. Not a
+  bug — do not "fix" it.
+- **`SetupPage` looks up snippets by `CLIENT_TABS` id**, not display label —
+  `claude_code`, `claude_desktop`, `cursor`, `windsurf`, `opencode`, `stdio`
+  (plus optional `claude_code_sse` for the legacy disclosure). A mismatched
+  key renders an empty snippet box, silently.
+- **`Command` and `CommandPalette` read `/api/commands`**, which is separate
+  from `/api/prompts`. `Command` filters to `context: "global"`, a photo's
+  detail view takes `"photo"` — the fixture needs both or a section is empty.
+- **`Chat` needs its conversation selected.** It loads messages only on
+  selection, and the list arrives asynchronously, so setting the `<select>`
+  on mount is a silent no-op (no matching `<option>` yet). The preview polls
+  via `whenReady()` and then drives the real selector with a native-setter
+  `change` event, since React tracks its own value.
+- **`PhotoViewer`** takes its photo from the `#photo=<id>` deep link (the
+  bookmarklet's own path), which is simpler than poking the bus.
+
+## dockview CSS must be routed in explicitly
+
+`main.tsx` is the only file that does `import "dockview/dist/styles/dockview.css"`,
+and the source-kit fork excludes `main.tsx` — so dockview's stylesheet never
+reached the bundle. The shell rendered unstyled: tabs as bare text, and the
+layout collapsed to one squashed panel. Fixed with
+
+```json
+"tokensPkg": "dockview",
+"tokensGlob": "dist/styles/dockview.css"
+```
+
+which copies it to `tokens/` and `@import`s it from `styles.css` ahead of the
+app's own CSS. **This is not preview-only cosmetics** — designs receive just
+the `styles.css` import closure, so without it every design built with the
+shell renders unstyled. Same failure family as the `cssEntry` note above:
+anything `main.tsx` alone imported is invisible to the build.
+
+`App` additionally needs an explicit height in a preview: `styles.css` sizes
+the shell with `html, body, #root { height: 100% }`, and the preview mounts
+outside `#root`, so the chain breaks and dockview measures a zero-height
+container. Its preview wraps it in `<div style={{ height: "100vh" }}>`.
 
 ## Known fixes baked into the fork/config (don't rediscover these)
 
@@ -160,11 +220,24 @@ variantsIdentical) after the fixes above.
 
 ## Re-sync risks
 
-- **The `componentSrcMap` exclusion list is manual and content-based**, not
-  structural — if a currently-excluded panel (e.g. `Summary`) is ever
-  refactored to accept props/mock data instead of self-fetching, nothing
-  will automatically re-include it; someone has to notice and edit
-  `config.json`.
+- **`componentSrcMap` is now empty** — every PascalCase `.tsx` export is a
+  component. A new file under `src/` or `src/panels/` is synced
+  automatically, with no card review, and a new *panel* will ship a
+  misleading error-text card unless someone also writes its fixture preview.
+  Watch the `components: N` count in the build log for unexplained growth.
+- **The fixtures mirror `api.ts` by hand.** `_fixtures.ts` is shaped from
+  `Stats`, `SyncStatus`, `QueueData`, `SetupData`, `PromptsData`,
+  `LLMSettings`, `WireMessage` &c. Nothing checks it against those types —
+  it is plain data, and the previews compile with esbuild (no typecheck). If
+  a backend response shape changes, the affected card quietly degrades to a
+  partial or empty render rather than failing the build. Re-read the changed
+  interface and update the fixture.
+- **Screen cards can pass the mechanical gate while being wrong.** The render
+  check only fails an EMPTY root, and these panels render *non-empty* error
+  text ("Not Found", "Could not load stats"). That is exactly how they slipped
+  past before. Grep the rendered `texts` in `.render-check.json` for that
+  wording after any fixture change — a green render check is not sufficient
+  evidence for this repo.
 - **The `main.tsx` exclusion and default-export re-export fix are file-path
   specific** (`(^|\/)main\.tsx$`) — if the app ever gains a second
   side-effecting entry file (e.g. a service worker registration script
