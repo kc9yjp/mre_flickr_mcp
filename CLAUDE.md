@@ -81,7 +81,7 @@ Logs go to stderr and are visible via `docker compose logs -f flickr-mcp`.
 - OAuth access tokens + personal API key: `~/.flickr_mcp/{nsid}/credentials.json` (in the `flickr-creds` Docker volume)
 - SQLite database: `data/{username}/flickr.db` (in the `flickr-data` volume)
 - `SESSION_COOKIE_SECURE` — set to `true` when running behind something that terminates TLS for the browser (a reverse proxy, or the tailscale sidecar in `docker-compose.yml`), so the session cookie is sent `Secure`. Defaults to `false` to match the documented default of plain `http://localhost:8000`.
-- `WORKBENCH_VECTOR_SEARCH_ENABLED` — optional semantic group search, `false` by default. When off, no vector store, no embedding calls, and `chromadb` isn't even imported. See "Group semantic search" below and the table in `readme.md` for the companion `WORKBENCH_EMBEDDING_*` / `WORKBENCH_CHROMA_*` variables.
+- `WORKBENCH_VECTOR_SEARCH_ENABLED` — optional semantic group search, `false` by default. When off, no vector store, no embedding calls, and `chromadb` isn't even imported. See "Group semantic search" below, and `VECTOR_SEARCH.md` for setup plus the companion `WORKBENCH_EMBEDDING_*` / `WORKBENCH_CHROMA_*` variables.
 
 ## Multi-User Support
 

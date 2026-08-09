@@ -5,7 +5,8 @@ usage, see [readme.md](readme.md) and [usage.md](usage.md). For the full list
 of MCP tools, see [TOOLS.md](TOOLS.md). For the Workbench SPA specifically,
 see the dedicated section near the end of this document plus
 [WORKBENCH.md](WORKBENCH.md) (build history) and
-[MODEL_CONFIG.md](MODEL_CONFIG.md) (LLM settings reference).
+[MODEL_CONFIG.md](MODEL_CONFIG.md) (LLM settings reference). For the optional
+group semantic search, see [VECTOR_SEARCH.md](VECTOR_SEARCH.md).
 
 ## Overview
 
