@@ -359,11 +359,23 @@ export const SETUP = {
   mcp_url: "http://localhost:8000/mcp",
   sse_url: "http://localhost:8000/sse",
   has_api_key: true,
+  // Keys must match SetupPage's CLIENT_TABS ids exactly — the panel looks up
+  // `data.snippets[tab]`, so a mismatched key renders an empty snippet box.
   snippets: {
-    ".mcp.json":
-      '{\n  "mcpServers": {\n    "flickr": {\n      "type": "sse",\n      "url": "http://localhost:8000/sse",\n      "headers": { "X-API-Key": "wb_live_9f3c…" }\n    }\n  }\n}',
-    "Claude Code":
+    claude_code:
+      'claude mcp add --transport http flickr http://localhost:8000/mcp \\\n  --header "X-API-Key: wb_live_9f3c…"',
+    claude_code_sse:
       'claude mcp add --transport sse flickr http://localhost:8000/sse \\\n  --header "X-API-Key: wb_live_9f3c…"',
+    claude_desktop:
+      '{\n  "mcpServers": {\n    "flickr": {\n      "type": "http",\n      "url": "http://localhost:8000/mcp",\n      "headers": { "X-API-Key": "wb_live_9f3c…" }\n    }\n  }\n}',
+    cursor:
+      '{\n  "mcpServers": {\n    "flickr": {\n      "url": "http://localhost:8000/mcp",\n      "headers": { "X-API-Key": "wb_live_9f3c…" }\n    }\n  }\n}',
+    windsurf:
+      '{\n  "mcpServers": {\n    "flickr": {\n      "serverUrl": "http://localhost:8000/mcp",\n      "headers": { "X-API-Key": "wb_live_9f3c…" }\n    }\n  }\n}',
+    opencode:
+      '{\n  "mcp": {\n    "flickr": {\n      "type": "remote",\n      "url": "http://localhost:8000/mcp",\n      "headers": { "X-API-Key": "wb_live_9f3c…" }\n    }\n  }\n}',
+    stdio:
+      'npx mcp-remote http://localhost:8000/mcp \\\n  --header "X-API-Key: wb_live_9f3c…"',
   },
   bookmarklet: "javascript:(function(){window.open('http://localhost:8000/photo?u='+encodeURIComponent(location.href))})()",
 };
@@ -454,6 +466,22 @@ export const CHAT_THREAD = {
   ],
 };
 
+// Workflow buttons, from /api/commands (useWorkflowCommands). The Command
+// panel filters to context "global"; a photo's detail view takes "photo", and
+// the command palette shows both — so the fixture needs a mix or one of those
+// surfaces renders an empty section.
+export const COMMANDS = {
+  commands: [
+    { id: "w1", prompt_id: "p6", label: "Review weak photos", context: "global", category_id: "curation", prompt: "Find photos with low views and no faves." },
+    { id: "w2", prompt_id: "p7", label: "Reply to new comments", context: "global", category_id: "engagement", prompt: "Find comments I have not replied to." },
+    { id: "w3", prompt_id: "p8", label: "Find follow candidates", context: "global", category_id: "engagement", prompt: "Who engages with me that I do not follow?" },
+    { id: "w4", prompt_id: "p9", label: "Groups needing summaries", context: "global", category_id: "curation", prompt: "Which joined groups still lack an AI summary?" },
+    { id: "w5", prompt_id: "p1", label: "Suggest a title", context: "photo", category_id: "metadata", prompt: "Suggest three titles for this photo." },
+    { id: "w6", prompt_id: "p2", label: "Suggest tags", context: "photo", category_id: "metadata", prompt: "Suggest up to 8 more tags." },
+    { id: "w7", prompt_id: "p4", label: "Pick groups", context: "photo", category_id: "curation", prompt: "Which joined groups suit this photo?" },
+  ],
+};
+
 export const SESSION_STATS = {
   turns: 4,
   prompt_tokens: 18420,
@@ -510,6 +538,7 @@ const DEFAULT_ROUTES: Record<string, Json> = {
   "/api/albums": ALBUMS,
   "/api/chat/conversations": CONVERSATIONS,
   "/api/chat/stats": SESSION_STATS,
+  "/api/commands": COMMANDS,
   "/api/llm-models": MODELS,
   "/api/extension": { installed: false, version: null },
 };

@@ -3,6 +3,8 @@
   "pkg": "flickr-workbench",
   "shape": "package",
   "cssEntry": "src/styles.css",
+  "tokensPkg": "dockview",
+  "tokensGlob": "dist/styles/dockview.css",
   "readmeHeader": ".design-sync/conventions.md",
   "overrides": {
     "CommandPalette": { "cardMode": "single", "viewport": "560x460" },

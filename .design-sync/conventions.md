@@ -1,13 +1,18 @@
-## Scope: a small UI-chrome slice, not a general component library
+## Scope: an app, in two layers — chrome and whole screens
 
-This sync ships **7 small, self-contained UI pieces** pulled out of a larger
-single-page app (a Flickr workbench) — dropdown menus, an id chip, a
-command palette, and two text renderers. It does **not** include the app's
-page-level panels (chat, photo browser, settings, etc.) — those fetch from a
-live authenticated backend session and have no meaningful standalone render,
-so they were deliberately left out. Treat what's here as reusable chrome
-(menus, chips, text rendering) to compose into new designs, not as a
-component library covering full application screens.
+This is a single-page app (a Flickr workbench), not a general component
+library, and it ships in two groups:
+
+- **`general`** — reusable chrome: dropdown menus (`UserMenu`, `ThemeMenu`,
+  `FlickrLinkMenu`), an id chip (`PhotoId`), a command palette
+  (`CommandPalette`), two text renderers (`Markdown`, `SafeHtml`), and the
+  two app shells (`App`, `MobileLayout`).
+- **`panels`** — the screens themselves: `Chat`, `PhotoBrowser`,
+  `PhotoViewer`, `Summary`, `SyncPage`, `QueuePage`, `SettingsPage`,
+  `SetupPage`, `ModelsPage`, `PromptsPage`, `PromptsSection`, `Command`.
+
+Compose chrome freely. Screens are whole panels — place one, don't try to
+build one out of parts.
 
 ## Setup: set a theme attribute before mounting anything
 
@@ -25,6 +30,58 @@ bare `:root` fallback is Slate's dark palette (`--ink: #eef0f3`, near-white),
 so plain text becomes nearly invisible against a light page background.
 Pick a light theme (`daylight`/`paper`/`mist`) when composing on a white
 canvas, a dark one otherwise.
+
+## Screens take no props — they fetch their own data
+
+Every component in `panels` is declared `export function Chat()` — no props
+at all (the sole exception is `MobileLayout`, which takes `me`). They load
+themselves from the app's JSON API on mount via `getJSON`. Two consequences:
+
+- **You cannot pass content in.** There is no `items`/`data`/`photos` prop to
+  vary. To change what a screen shows, change what the endpoints answer.
+- **Unanswered requests render error text, not an empty state.** A screen
+  dropped into a page with no backend shows literal `Not Found` / `Could not
+  load stats`, which looks like a broken design.
+
+So stub `window.fetch` before mounting a screen:
+
+```tsx
+const DATA = {
+  "/api/stats": { total_photos: 4187, total_views: 1284630, total_groups: 96,
+    total_albums: 48, total_contacts: 512, public_photos: 3902,
+    private_photos: 285, date_range: { earliest: "2006-04-11", latest: "2024-09-18" },
+    last_synced: Math.floor(Date.now() / 1000) - 7200, top_tags: [{ tag: "landscape", count: 812 }] },
+  "/api/sync/status": { running: false, rows: [] },
+};
+window.fetch = (async (input) => {
+  const path = String(typeof input === "string" ? input : (input as Request).url)
+    .split("?")[0].replace(/^https?:\/\/[^/]+/, "");
+  return new Response(JSON.stringify(DATA[path] ?? { ok: true }),
+    { status: 200, headers: { "Content-Type": "application/json" } });
+}) as typeof fetch;
+
+<Summary />;
+```
+
+Endpoints by screen: `Summary` → `/api/stats` + `/api/sync/status`;
+`SyncPage` → those plus `/api/llm-settings`; `PhotoBrowser` → `/api/photos`,
+`/api/albums`; `PhotoViewer` → `/api/photos/{id}` (and reads `#photo=<id>`);
+`QueuePage` → `/api/queue`; `SettingsPage` → `/api/settings`; `SetupPage` →
+`/api/setup` (snippet keys must be `claude_code`, `claude_desktop`, `cursor`,
+`windsurf`, `opencode`, `stdio`); `PromptsPage`/`PromptsSection` →
+`/api/prompts`; `ModelsPage` → `/api/llm-settings`; `Command` and
+`CommandPalette` → `/api/commands`; `Chat` → `/api/chat/conversations`,
+`/api/chat/conversations/{id}`, `/api/chat/stats`, `/api/llm-settings`.
+`App` and `MobileLayout` mount every panel, so they need all of the above
+plus `/api/me`.
+
+**Timestamps must be relative** (`Date.now()`-derived). The panels render
+them through `relativeTime()`, so a hard-coded epoch shows up as "680 d ago".
+
+**`App` needs an explicit height.** The stylesheet sizes the shell with
+`html, body, #root { height: 100% }`; mounted anywhere else that chain
+breaks and dockview collapses to one squashed panel. Wrap it:
+`<div style={{ height: "100vh" }}><App /></div>`.
 
 ## Styling idiom: hand-authored classes + CSS custom properties, not utilities
 

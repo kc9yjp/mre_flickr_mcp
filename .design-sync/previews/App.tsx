@@ -10,6 +10,16 @@ import { screen } from "./_fixtures";
 // source-kit fork (a plain `export *` never forwards a default).
 screen();
 
+// The height chain matters here. styles.css sizes the shell with
+// `html, body, #root { height: 100% }` and `.workbench { height: 100% }`, but
+// the preview mounts into the harness's node, not `#root` — so without an
+// explicit height the chain breaks, `.workbench` collapses to content height
+// and dockview (which measures its container) renders a single squashed panel
+// instead of the real multi-panel layout.
 export function Default() {
-  return <App />;
+  return (
+    <div style={{ height: "100vh", width: "100%" }}>
+      <App />
+    </div>
+  );
 }
