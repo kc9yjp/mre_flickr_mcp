@@ -1,5 +1,6 @@
 """Group tool definitions and handlers."""
 
+import asyncio
 import datetime
 import json
 import logging
@@ -233,6 +234,14 @@ TOOLS = [
 ]
 
 
+# Columns _format_groups_markdown() renders — shared by the keyword search and
+# the optional vector-search path so both return identically shaped rows.
+_GROUP_COLUMNS = (
+    "id, name, members, pool_count, description, summary_md, "
+    "is_milestone, fave_min, view_min, open_subject, user_note"
+)
+
+
 async def _find_groups(args):
     query = args.get("query", "")
     limit = int(args.get("limit", 25))
@@ -262,17 +271,72 @@ async def _find_groups(args):
     where_sql = " OR ".join(clauses)
     with get_db() as conn:
         rows = conn.execute(
-            f"SELECT id, name, members, pool_count, description, summary_md, "
-            f"is_milestone, fave_min, view_min, open_subject, user_note FROM groups "
+            f"SELECT {_GROUP_COLUMNS} FROM groups "
             f"WHERE {where_sql} "
             "ORDER BY members DESC LIMIT ?",
             (*params, limit),
         ).fetchall()
-        if not rows:
-            if table_empty(conn, "groups"):
-                return [TextContent(type="text", text="No groups found. Run 'sync groups' first via the web UI or the sync tool.")]
-            return [TextContent(type="text", text=f"No groups match '{query}'.")]
-    return [TextContent(type="text", text=_format_groups_markdown(rows))]
+        groups_empty = table_empty(conn, "groups") if not rows else False
+
+    # Optional second retrieval path — off by default, see vector_search.py.
+    semantic_rows = await _vector_group_matches(query, limit, {r["id"] for r in rows})
+
+    if not rows and not semantic_rows:
+        if groups_empty:
+            return [TextContent(type="text", text="No groups found. Run 'sync groups' first via the web UI or the sync tool.")]
+        return [TextContent(type="text", text=f"No groups match '{query}'.")]
+
+    text = _format_groups_markdown(rows) if rows else ""
+    if semantic_rows:
+        # Keyword matches first (they're literal, so the caller can trust
+        # them), semantic ones after under their own heading so it's obvious
+        # why a group with no shared words is in the list.
+        heading = "_Semantically similar groups (no keyword match):_"
+        semantic_text = f"{heading}\n\n{_format_groups_markdown(semantic_rows)}"
+        text = f"{text}\n\n---\n\n{semantic_text}" if text else semantic_text
+    return [TextContent(type="text", text=text)]
+
+
+async def _vector_group_matches(query: str, limit: int, exclude_ids: set[str]):
+    """Semantic matches for *query*, minus group ids the keyword search found.
+
+    Returns an empty list when the optional vector-search feature is off (the
+    default), and also when it's on but the vector store or embedding backend
+    can't be reached — that's logged and swallowed rather than failing the
+    tool, since the keyword results are still worth returning.
+    """
+    import vector_search
+
+    if not vector_search.enabled():
+        return []
+
+    from db import _current_user
+    user = _current_user.get() or {}
+    nsid, username = user.get("nsid"), user.get("username")
+
+    try:
+        # Both the embedding HTTP call and the Chroma query are blocking, so
+        # they run off the event loop.
+        hits = await asyncio.to_thread(vector_search.search_group_ids, query, limit, nsid, username)
+    except Exception as e:
+        logging.warning("find_groups: vector search failed for %s: %s", nsid or "unknown user", e)
+        return []
+
+    ids = [gid for gid, _distance in hits if gid not in exclude_ids][:limit]
+    if not ids:
+        return []
+
+    with get_db() as conn:
+        placeholders = ",".join("?" * len(ids))
+        rows = conn.execute(
+            f"SELECT {_GROUP_COLUMNS} FROM groups WHERE id IN ({placeholders})",
+            ids,
+        ).fetchall()
+    # Preserve nearest-first order, and drop any id the vector store still
+    # holds for a group that's no longer in the local cache (e.g. a group left
+    # since the last sync).
+    by_id = {r["id"]: r for r in rows}
+    return [by_id[gid] for gid in ids if gid in by_id]
 
 
 def _format_groups_markdown(rows) -> str:

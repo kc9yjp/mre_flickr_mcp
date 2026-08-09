@@ -93,6 +93,7 @@ scripts/
   flickr_api.py      — OAuth 1.0a signing, credential storage, _api_get/_api_post
   flickr_oauth.py     — legacy terminal OAuth flow (superseded by web.py's browser flow)
   flickr_sync.py     — photo sync + schema/migrations (init_db, _MIGRATIONS)
+  vector_search.py   — optional semantic group search (Chroma + /v1/embeddings), off by default
   sync_contacts.py, sync_groups.py, sync_albums.py, sync_engagement.py
                      — the other four sync scripts, one per domain
   tools/             — MCP tool implementations, one module per domain
@@ -107,6 +108,7 @@ templates/            — Jinja2 templates for the surviving server-rendered pag
 static/                — favicon, legacy CSS (mostly superseded by frontend/src/styles.css)
 tests/                 — pytest suite (~140 tests): tools, web, webapi, agent, transport, stdio
 data/{username}/       — per-user SQLite: flickr.db, chat.db (Docker volume: flickr-data)
+                         plus chroma/ when the optional vector search is enabled
 ~/.flickr_mcp/{nsid}/  — per-user credentials.json, llm.json, prompts.db (Docker volume: flickr-creds)
 ```
 
@@ -227,6 +229,46 @@ the user's configured LLM (`resolve_sync_cfg()` — see
 `summary_md`, `is_milestone`, `fave_min`, `view_min`, `open_subject`, and
 `ai_keywords` from the group's name/description/user_note and the editable
 `group-summary` prompt (`agent/prompts_store.py`).
+
+**Group vectors** (`vector_search.py`, optional): when
+`WORKBENCH_VECTOR_SEARCH_ENABLED` is on, `sync_groups.py` runs a third phase
+after the summaries. Each group's name + description + summary + keywords +
+note is embedded through an OpenAI-compatible `/v1/embeddings` endpoint
+(usually the same LM Studio the summaries use) and upserted into a Chroma
+collection — embedded in-process by default, persisting to
+`data/{username}/chroma`, or a standalone server when `WORKBENCH_CHROMA_HOST`
+is set. `find_groups` then runs a second retrieval path alongside the SQL
+LIKE search: embed the query, ask Chroma for nearest neighbours, drop
+anything the keyword search already returned or that exceeds
+`WORKBENCH_VECTOR_MAX_DISTANCE`, and append the rest under a
+"Semantically similar groups" heading — keyword hits stay first because
+they're literal and verifiable.
+
+Three properties keep this genuinely optional:
+
+- **Every entry point checks the flag first.** Off means no Chroma import
+  (it's a lazy import inside `get_collection()`, kept out of
+  `requirements.txt` — see `requirements-vector.txt` and the Dockerfile's
+  `INSTALL_VECTOR_SEARCH` build arg), no embedding request, and not even a
+  log line during sync.
+- **No schema footprint.** Change detection uses a `fingerprint` metadata
+  field on each vector (hash of the embedded text + model id), so only
+  changed groups are re-embedded and no migration holds vector state.
+  Switching embedding models re-embeds everything; deleting the chroma
+  directory resets the feature. Groups the user has left are dropped from
+  the collection on the next sync.
+- **Writes come from a subprocess, reads from the server.** Embedded Chroma
+  caches its HNSW index per process, so `vector_search.get_collection()`
+  drops that cache and re-opens the store on every operation (serialized by
+  a process-wide lock) — otherwise groups embedded by the `sync_groups.py`
+  subprocess would stay invisible to a running server's `find_groups` until
+  it restarted.
+- **No failure escapes.** An unreachable endpoint or store is logged
+  (`logging.warning`) and counted in the returned stats; the sync still
+  succeeds and the affected groups stay keyword-searchable. Backfill after
+  first enabling with `sync_groups.py --rebuild-vectors`, which is the one
+  place that *does* exit non-zero on failure, being an explicit one-shot
+  command.
 
 ## MCP tool layer
 

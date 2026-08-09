@@ -10,6 +10,7 @@ A Flickr MCP (Model Context Protocol) server. The server always runs in SSE/web 
 - `scripts/flickr_mcp.py` — MCP server + web UI (Starlette/uvicorn, SSE transport)
 - `scripts/flickr_sync.py` and `scripts/sync_*.py` — sync scripts invoked by the server
 - `scripts/flickr.py` — standalone CLI (legacy, rarely used directly)
+- `scripts/vector_search.py` — optional semantic group search (Chroma + `/v1/embeddings`), off by default
 - `frontend/` — the workbench's React/TypeScript UI (Chat, Photo Browser, Session Stats, etc.), built to `frontend/dist` and served by `flickr_mcp.py`
 
 ## Local Development
@@ -19,6 +20,9 @@ A Flickr MCP (Model Context Protocol) server. The server always runs in SSE/web 
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements-dev.txt
+
+# Optional: group semantic search (WORKBENCH_VECTOR_SEARCH_ENABLED=true)
+pip install -r requirements-vector.txt
 
 # Run server locally (needs .env)
 python scripts/flickr_mcp.py
@@ -77,6 +81,7 @@ Logs go to stderr and are visible via `docker compose logs -f flickr-mcp`.
 - OAuth access tokens + personal API key: `~/.flickr_mcp/{nsid}/credentials.json` (in the `flickr-creds` Docker volume)
 - SQLite database: `data/{username}/flickr.db` (in the `flickr-data` volume)
 - `SESSION_COOKIE_SECURE` — set to `true` when running behind something that terminates TLS for the browser (a reverse proxy, or the tailscale sidecar in `docker-compose.yml`), so the session cookie is sent `Secure`. Defaults to `false` to match the documented default of plain `http://localhost:8000`.
+- `WORKBENCH_VECTOR_SEARCH_ENABLED` — optional semantic group search, `false` by default. When off, no vector store, no embedding calls, and `chromadb` isn't even imported. See "Group semantic search" below and the table in `readme.md` for the companion `WORKBENCH_EMBEDDING_*` / `WORKBENCH_CHROMA_*` variables.
 
 ## Multi-User Support
 
@@ -148,7 +153,7 @@ sync_log          — type, mode, photos_fetched, synced_at
 | `create_album` | Create a new album |
 | `edit_album` | Update album title/description |
 | `delete_album` | Delete an album |
-| `find_groups` | Search joined groups by keyword; returns a markdown listing (one section per group, headed by its id) with the AI summary, milestone thresholds, and your note |
+| `find_groups` | Search joined groups by keyword; returns a markdown listing (one section per group, headed by its id) with the AI summary, milestone thresholds, and your note. With `WORKBENCH_VECTOR_SEARCH_ENABLED=true`, semantically similar groups are appended under their own heading |
 | `set_group_note` | Set a personal note about a group, incorporated into its AI summary on the next sync |
 | `get_group_stats` | Groups ranked by how many of your photos are in each |
 | `get_threshold_groups` | Joined groups with a fave or view count minimum to post, sorted by that threshold |
@@ -175,6 +180,7 @@ sync_log          — type, mode, photos_fetched, synced_at
 - OAuth login uses a full browser redirect flow: `/login/start` → Flickr → `/oauth/callback`
 - Schema changes must be added to the migrations list in `init_db()` — never use `ALTER TABLE` directly
 - Groups sync sets `groups.needs_summary=1` whenever a group is new, renamed, has a changed description, or gets a `set_group_note` edit — the next `sync --type=groups` regenerates its AI summary (see ARCHITECTURE.md's "Group AI summary")
+- **Group semantic search is strictly opt-in.** Everything in `scripts/vector_search.py` is gated behind `vector_search.enabled()` (`WORKBENCH_VECTOR_SEARCH_ENABLED`, default `false`), `chromadb` is imported lazily inside `get_collection()` so it stays an optional dependency (`requirements-vector.txt`), and no failure there may propagate: an unreachable embedding endpoint or vector store is logged and skipped, leaving groups keyword-searchable as before. Vector state (including the change-detection fingerprint) lives entirely in Chroma, not in `flickr.db` — there is deliberately no migration for it. Backfill after first enabling with `python scripts/sync_groups.py --rebuild-vectors`.
 - **Search tools should favor recall over precision.** Split the query into individual words/terms and OR them across all relevant text columns (e.g. title and description) rather than requiring the whole phrase to match one column — a missed match is worse than a few extra results the caller can filter mentally. See `_find_albums` in `scripts/tools/albums.py` and `_find_groups` in `scripts/tools/groups.py` for the pattern.
 
 ## Skills (Claude Code slash commands)

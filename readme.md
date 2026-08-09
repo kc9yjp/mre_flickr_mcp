@@ -156,6 +156,69 @@ Note: stdio mode has no web UI — login and sync must be done via the SSE conta
 | `MCP_PORT` | No | Port for the web/SSE server (default: `8000`) |
 | `MCP_API_KEY` | No | Bearer token to protect the SSE endpoint |
 | `MCP_TRANSPORT` | No | `sse` (default) or `stdio` |
+| `WORKBENCH_VECTOR_SEARCH_ENABLED` | No | `false` (default) — see [Group semantic search](#group-semantic-search-optional) |
+
+## Group semantic search (optional)
+
+Off by default. With the flag off, nothing changes: no vector store, no
+embedding calls, no extra dependency — group search is the same keyword
+search over the local SQLite cache it has always been.
+
+Turned on, group sync gains a final phase that embeds each group's name +
+description + AI summary into a [Chroma](https://www.trychroma.com/)
+collection, and `find_groups` gains a second retrieval path that embeds the
+query and appends nearest-neighbour groups the keyword search missed — so a
+photo described as "golden hour brick path" can surface a group called
+"Fleeting Light" that shares no literal word with it.
+
+Embeddings come from any OpenAI-compatible `/v1/embeddings` endpoint —
+typically the same LM Studio instance already configured for chat and group
+summaries, with an embedding model such as `nomic-embed-text` loaded.
+
+**Turning it on:**
+
+```bash
+# 1. Build the image with the optional Chroma dependency
+docker compose build --build-arg INSTALL_VECTOR_SEARCH=true
+#    (or, running outside Docker: pip install -r requirements-vector.txt)
+
+# 2. Set the flags in .env, then restart
+WORKBENCH_VECTOR_SEARCH_ENABLED=true
+WORKBENCH_EMBEDDING_BASE_URL=http://host.docker.internal:1234/v1
+WORKBENCH_EMBEDDING_MODEL=nomic-embed-text
+
+# 3. Backfill vectors for the groups you already have
+docker compose exec flickr-mcp \
+  python scripts/sync_groups.py --rebuild-vectors --nsid <nsid> --username <username>
+```
+
+After the backfill, every later group sync only re-embeds groups whose text
+actually changed.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `WORKBENCH_VECTOR_SEARCH_ENABLED` | `false` | Master switch. Everything below is ignored when off. |
+| `WORKBENCH_EMBEDDING_BASE_URL` | your sync LLM connection's base URL | OpenAI-compatible base URL serving `/embeddings` |
+| `WORKBENCH_EMBEDDING_MODEL` | `nomic-embed-text` | Embedding model id. Changing it re-embeds every group on the next sync. |
+| `WORKBENCH_EMBEDDING_API_KEY` | your sync LLM connection's key | Bearer token, if the endpoint needs one |
+| `WORKBENCH_EMBEDDING_TIMEOUT` | `120` | Seconds to wait on one embeddings request |
+| `WORKBENCH_VECTOR_MAX_DISTANCE` | `1.0` | Cosine-distance ceiling for a semantic match; lower it to cut noise |
+| `WORKBENCH_CHROMA_DIR` | `data/{username}/chroma` | Where embedded Chroma persists |
+| `WORKBENCH_CHROMA_HOST` | *(unset)* | Set to use a standalone Chroma server instead of embedded mode |
+| `WORKBENCH_CHROMA_PORT` | `8000` | Port for the standalone server |
+
+Chroma runs **embedded** (in-process, persisting to a directory) by default —
+no extra container or port. If you'd rather run it as its own service, a
+`vector-db` service is defined behind the `vector-search` Compose profile:
+
+```bash
+docker compose --profile vector-search up -d
+# then set WORKBENCH_CHROMA_HOST=vector-db and WORKBENCH_CHROMA_PORT=8000
+```
+
+Failures are never fatal: if LM Studio or Chroma is unreachable, the sync
+logs a warning and continues, and `find_groups` falls back to keyword-only
+results. Deleting `data/{username}/chroma` fully resets the feature.
 
 ## Volumes
 
