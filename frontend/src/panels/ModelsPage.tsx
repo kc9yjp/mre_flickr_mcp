@@ -47,6 +47,13 @@ function kindLabel(kind: ConnectionKind): string {
   return kind === "ollama" ? "Ollama" : "OpenAI-compatible";
 }
 
+// A Zen connection's wire format is resolved per model on the backend (each
+// Zen model is served over exactly one endpoint), so the manual API-mode
+// picker is hidden for it — there's nothing to choose.
+function isZenConnection(baseUrl: string): boolean {
+  return baseUrl.toLowerCase().includes("opencode.ai/zen");
+}
+
 function contextLabel(contextWindow: number): string {
   return `${Math.round(contextWindow / 1000)}k ctx`;
 }
@@ -386,16 +393,25 @@ export function ModelsPage() {
                         onChange={(e) => setConnectionField(cid, { api_key: e.target.value })}
                       />
                     </label>
-                    <label className="llm-field">
-                      API mode
-                      <select
-                        value={conn.api_mode}
-                        onChange={(e) => setConnectionField(cid, { api_mode: e.target.value as ApiMode })}
-                      >
-                        <option value="chat_completions">Chat Completions</option>
-                        <option value="responses">Responses</option>
-                      </select>
-                    </label>
+                    {isZenConnection(conn.base_url) ? (
+                      <p className="hint" style={{ margin: 0, alignSelf: "end" }}>
+                        API mode is chosen automatically per model (Responses / Messages / Chat
+                        Completions / Gemini) — no manual setting needed.
+                      </p>
+                    ) : (
+                      <label className="llm-field">
+                        API mode
+                        <select
+                          value={conn.api_mode}
+                          onChange={(e) => setConnectionField(cid, { api_mode: e.target.value as ApiMode })}
+                        >
+                          <option value="chat_completions">Chat Completions</option>
+                          <option value="responses">Responses</option>
+                          <option value="messages">Messages (Anthropic)</option>
+                          <option value="gemini">Gemini</option>
+                        </select>
+                      </label>
+                    )}
                     <label className="llm-field">
                       Request timeout (seconds)
                       <input
@@ -642,16 +658,20 @@ export function ModelsPage() {
                 onChange={(e) => setNewConn({ ...newConn, base_url: e.target.value })}
               />
             </label>
-            <label className="llm-field">
-              API mode
-              <select
-                value={newConn.api_mode}
-                onChange={(e) => setNewConn({ ...newConn, api_mode: e.target.value as ApiMode })}
-              >
-                <option value="chat_completions">Chat Completions</option>
-                <option value="responses">Responses</option>
-              </select>
-            </label>
+            {!isZenConnection(newConn.base_url) && (
+              <label className="llm-field">
+                API mode
+                <select
+                  value={newConn.api_mode}
+                  onChange={(e) => setNewConn({ ...newConn, api_mode: e.target.value as ApiMode })}
+                >
+                  <option value="chat_completions">Chat Completions</option>
+                  <option value="responses">Responses</option>
+                  <option value="messages">Messages (Anthropic)</option>
+                  <option value="gemini">Gemini</option>
+                </select>
+              </label>
+            )}
             <label className="llm-field">
               Request timeout (seconds)
               <input

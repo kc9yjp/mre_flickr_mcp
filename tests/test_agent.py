@@ -220,6 +220,160 @@ async def test_stream_responses_http_error_raises():
                 pass
 
 
+# --- llm stream parsing (Messages / Anthropic API) ---
+
+def _messages_sse_body(events: list[tuple[str, dict]]) -> bytes:
+    frames = [f"event: {etype}\ndata: {json.dumps(payload)}\n\n" for etype, payload in events]
+    return "".join(frames).encode()
+
+
+@pytest.mark.asyncio
+async def test_stream_messages_accumulates_content_and_tool_calls():
+    from agent import llm
+
+    events = [
+        ("message_start", {"type": "message_start", "message": {"usage": {"input_tokens": 12}}}),
+        ("content_block_start", {"type": "content_block_start", "index": 0,
+                                 "content_block": {"type": "text", "text": ""}}),
+        ("content_block_delta", {"type": "content_block_delta", "index": 0,
+                                 "delta": {"type": "text_delta", "text": "Hel"}}),
+        ("content_block_delta", {"type": "content_block_delta", "index": 0,
+                                 "delta": {"type": "text_delta", "text": "lo"}}),
+        ("content_block_start", {"type": "content_block_start", "index": 1,
+                                 "content_block": {"type": "tool_use", "id": "toolu_1", "name": "get_photo"}}),
+        ("content_block_delta", {"type": "content_block_delta", "index": 1,
+                                 "delta": {"type": "input_json_delta", "partial_json": "{\"id\":"}}),
+        ("content_block_delta", {"type": "content_block_delta", "index": 1,
+                                 "delta": {"type": "input_json_delta", "partial_json": " \"42\"}"}}),
+        ("message_delta", {"type": "message_delta",
+                           "delta": {"stop_reason": "tool_use"},
+                           "usage": {"output_tokens": 7}}),
+    ]
+    transport = httpx.MockTransport(
+        lambda request: httpx.Response(200, content=_messages_sse_body(events))
+    )
+    async with httpx.AsyncClient(transport=transport) as client:
+        results = [e async for e in llm.stream_messages(CFG, [], client=client)]
+
+    deltas = [e["text"] for e in results if e["type"] == "delta"]
+    assert "".join(deltas) == "Hello"
+    final = results[-1]
+    assert final["type"] == "message"
+    assert final["content"] == "Hello"
+    assert final["finish_reason"] == "tool_calls"
+    (call,) = final["tool_calls"]
+    assert call["id"] == "toolu_1"
+    assert call["function"]["name"] == "get_photo"
+    assert json.loads(call["function"]["arguments"]) == {"id": "42"}
+    assert final["usage"]["prompt_tokens"] == 12
+    assert final["usage"]["completion_tokens"] == 7
+
+
+@pytest.mark.asyncio
+async def test_stream_messages_http_error_raises():
+    from agent import llm
+
+    transport = httpx.MockTransport(
+        lambda request: httpx.Response(500, content=b"boom")
+    )
+    async with httpx.AsyncClient(transport=transport) as client:
+        with pytest.raises(llm.LLMError, match="500"):
+            async for _ in llm.stream_messages(CFG, [], client=client):
+                pass
+
+
+def test_messages_translator_splits_system_and_tool_calls():
+    """system content becomes a top-level param; assistant tool calls become
+    tool_use blocks; tool results become tool_result blocks in a user turn."""
+    from agent import llm
+
+    messages = [
+        {"role": "system", "content": "You are helpful."},
+        {"role": "user", "content": "hi"},
+        {"role": "assistant", "content": "let me check", "tool_calls": [
+            {"id": "call_a", "type": "function",
+             "function": {"name": "get_photo", "arguments": "{\"id\": \"42\"}"}},
+        ]},
+        {"role": "tool", "tool_call_id": "call_a", "content": "photo data"},
+    ]
+    system, out = llm._messages_to_anthropic_input(messages)
+
+    assert system == "You are helpful."
+    assert out[0] == {"role": "user", "content": [{"type": "text", "text": "hi"}]}
+    assistant = out[1]
+    assert assistant["role"] == "assistant"
+    assert assistant["content"][0] == {"type": "text", "text": "let me check"}
+    assert assistant["content"][1]["type"] == "tool_use"
+    assert assistant["content"][1]["input"] == {"id": "42"}
+    tool_result = out[2]
+    assert tool_result["role"] == "user"
+    assert tool_result["content"][0]["type"] == "tool_result"
+    assert tool_result["content"][0]["tool_use_id"] == "call_a"
+
+
+# --- llm stream parsing (Gemini API) ---
+
+@pytest.mark.asyncio
+async def test_stream_gemini_accumulates_content_and_tool_calls():
+    from agent import llm
+
+    chunks = [
+        {"candidates": [{"content": {"parts": [{"text": "Hel"}]}}]},
+        {"candidates": [{"content": {"parts": [{"text": "lo"}]}}]},
+        {"candidates": [{"content": {"parts": [
+            {"functionCall": {"name": "get_photo", "args": {"id": "42"}}}]}}]},
+        {"usageMetadata": {"promptTokenCount": 9, "candidatesTokenCount": 4, "totalTokenCount": 13}},
+    ]
+    transport = httpx.MockTransport(
+        lambda request: httpx.Response(200, content=_sse_body(chunks))
+    )
+    async with httpx.AsyncClient(transport=transport) as client:
+        results = [e async for e in llm.stream_gemini(CFG, [], client=client)]
+
+    deltas = [e["text"] for e in results if e["type"] == "delta"]
+    assert "".join(deltas) == "Hello"
+    final = results[-1]
+    assert final["content"] == "Hello"
+    assert final["finish_reason"] == "tool_calls"
+    (call,) = final["tool_calls"]
+    assert call["function"]["name"] == "get_photo"
+    assert json.loads(call["function"]["arguments"]) == {"id": "42"}
+    assert final["usage"] == {"prompt_tokens": 9, "completion_tokens": 4, "total_tokens": 13}
+
+
+@pytest.mark.asyncio
+async def test_stream_gemini_uses_per_model_url():
+    """Gemini is served over /v1/models/{model-id}, not a shared path."""
+    from agent import llm
+
+    seen = {}
+
+    def _handler(request):
+        seen["url"] = str(request.url)
+        return httpx.Response(200, content=_sse_body([{"candidates": [{"content": {"parts": [{"text": "x"}]}}]}]))
+
+    transport = httpx.MockTransport(_handler)
+    cfg = {**CFG, "base_url": "https://opencode.ai/zen/v1", "model": "gemini-3-flash"}
+    async with httpx.AsyncClient(transport=transport) as client:
+        async for _ in llm.stream_gemini(cfg, [], client=client):
+            pass
+
+    assert seen["url"] == "https://opencode.ai/zen/v1/models/gemini-3-flash"
+
+
+# --- stream_for_mode dispatch ---
+
+def test_stream_for_mode_maps_each_wire_format():
+    from agent import llm
+
+    assert llm.stream_for_mode("responses") is llm.stream_responses
+    assert llm.stream_for_mode("messages") is llm.stream_messages
+    assert llm.stream_for_mode("gemini") is llm.stream_gemini
+    assert llm.stream_for_mode("chat_completions") is llm.stream_chat
+    # Unknown modes degrade to chat_completions.
+    assert llm.stream_for_mode("something-else") is llm.stream_chat
+
+
 # --- store ---
 
 def test_store_roundtrip(user_db):

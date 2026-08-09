@@ -156,30 +156,79 @@ DEFAULTS = {
 # run — see "sync_throttle_seconds" in _merge_defaults()/resolve_sync_cfg().
 DEFAULT_SYNC_THROTTLE_SECONDS = 60
 
-# Models known to require the (unsupported-by-default) Responses API instead
-# of Chat Completions. Only used to seed a new Zen-preset connection's
-# disabled_models so it behaves the same as the pre-v3 hardcoded exclusion —
-# users can re-enable any of these once they flip that connection's
-# api_mode to "responses".
-_ZEN_RESPONSES_ONLY_MODELS = {
-    "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna",
-    "gpt-5.5", "gpt-5.5-pro",
-    "gpt-5.4", "gpt-5.4-pro", "gpt-5.4-mini", "gpt-5.4-nano",
-    "gpt-5.3-codex", "gpt-5.3-codex-spark",
-    "gpt-5.2", "gpt-5.2-codex",
-    "gpt-5.1", "gpt-5.1-codex", "gpt-5.1-codex-max", "gpt-5.1-codex-mini",
-    "gpt-5", "gpt-5-codex", "gpt-5-nano",
+# ── Zen per-model wire formats ───────────────────────────────────────────────
+# OpenCode Zen serves each model over exactly ONE endpoint, and the endpoint's
+# wire format varies by model family. Source of truth:
+# https://opencode.ai/docs/zen#endpoints (Zen's own /v1/models list exposes no
+# api-type field, so this static map is the only way to know which format a
+# given model needs). Four formats are in use:
+#   responses        -> /v1/responses           (gpt-*, grok-*)
+#   messages         -> /v1/messages            (claude-*, qwen*)   [Anthropic]
+#   chat_completions -> /v1/chat/completions    (deepseek/minimax/glm/kimi/...)
+#   gemini           -> /v1/models/{model-id}   (gemini-*)          [per-model URL]
+ZEN_MODEL_API_MODES: dict[str, str] = {
+    # Responses API (OpenAI /v1/responses)
+    "gpt-5.6-sol": "responses", "gpt-5.6-terra": "responses", "gpt-5.6-luna": "responses",
+    "gpt-5.5": "responses", "gpt-5.5-pro": "responses",
+    "gpt-5.4": "responses", "gpt-5.4-pro": "responses", "gpt-5.4-mini": "responses",
+    "gpt-5.4-nano": "responses",
+    "gpt-5.3-codex": "responses", "gpt-5.3-codex-spark": "responses",
+    "gpt-5.2": "responses", "gpt-5.2-codex": "responses",
+    "gpt-5.1": "responses", "gpt-5.1-codex": "responses", "gpt-5.1-codex-max": "responses",
+    "gpt-5.1-codex-mini": "responses",
+    "gpt-5": "responses", "gpt-5-codex": "responses", "gpt-5-nano": "responses",
+    "grok-4.5": "responses", "grok-build-0.1": "responses",
+    # Messages API (Anthropic /v1/messages)
+    "claude-fable-5": "messages", "claude-opus-5": "messages", "claude-opus-4-8": "messages",
+    "claude-opus-4-7": "messages", "claude-opus-4-6": "messages", "claude-opus-4-5": "messages",
+    "claude-sonnet-5": "messages", "claude-sonnet-4-6": "messages", "claude-sonnet-4-5": "messages",
+    "claude-sonnet-4": "messages", "claude-haiku-4-5": "messages",
+    "qwen3.7-max": "messages", "qwen3.7-plus": "messages",
+    "qwen3.6-plus": "messages", "qwen3.5-plus": "messages",
+    # Gemini (per-model URL /v1/models/{id})
+    "gemini-3.6-flash": "gemini", "gemini-3.5-flash": "gemini",
+    "gemini-3.5-flash-lite": "gemini", "gemini-3.1-pro": "gemini", "gemini-3-flash": "gemini",
+    # Chat Completions (/v1/chat/completions) — deepseek/minimax/glm/kimi/big-pickle/free
+    "deepseek-v4-pro": "chat_completions", "deepseek-v4-flash": "chat_completions",
+    "minimax-m3": "chat_completions", "minimax-m2.7": "chat_completions",
+    "minimax-m2.5": "chat_completions",
+    "glm-5.2": "chat_completions", "glm-5.1": "chat_completions", "glm-5": "chat_completions",
+    "kimi-k2.5": "chat_completions", "kimi-k2.6": "chat_completions",
+    "kimi-k2.7-code": "chat_completions", "kimi-k3": "chat_completions",
+    "big-pickle": "chat_completions",
+    "mimo-v2.5-free": "chat_completions", "laguna-s-2.1-free": "chat_completions",
+    "ling-3.0-flash-free": "chat_completions", "ling-3.0-tiny-free": "chat_completions",
+    "longcat-2.0-free": "chat_completions", "north-mini-code-free": "chat_completions",
+    "nemotron-3-ultra-free": "chat_completions", "deepseek-v4-flash-free": "chat_completions",
 }
+
+# Fallback wire format for a Zen model not (yet) in ZEN_MODEL_API_MODES — e.g.
+# one Zen added after this map was last updated. Chat Completions is the most
+# widely served flavor, so an unknown model degrades to it rather than breaking.
+ZEN_DEFAULT_API_MODE = "chat_completions"
+
+
+def is_zen_connection(base_url: str) -> bool:
+    """True if a connection's base_url points at OpenCode Zen."""
+    return "opencode.ai/zen" in (base_url or "").lower()
+
+
+def zen_api_mode_for_model(model_id: str) -> str:
+    """Resolve the wire format a Zen model is served over.
+
+    Returns the mapped format, or ZEN_DEFAULT_API_MODE for an unmapped model.
+    Only meaningful for Zen connections — see is_zen_connection().
+    """
+    return ZEN_MODEL_API_MODES.get(model_id, ZEN_DEFAULT_API_MODE)
 
 
 def suggested_disabled_models(kind: str, base_url: str = "") -> set[str]:
     """Default disabled-models seed for a newly created connection.
 
-    Best-effort: only Zen's known /v1/responses-only models are suggested,
-    since that's the one case we know breaks chat_completions today.
+    Now that every Zen wire format is supported (see ZEN_MODEL_API_MODES), no
+    Zen models need disabling on creation — this remains only as a hook for any
+    future connection type that genuinely can't serve some of its models.
     """
-    if kind == "openai_compatible" and "opencode.ai/zen" in base_url.lower():
-        return set(_ZEN_RESPONSES_ONLY_MODELS)
     return set()
 
 
@@ -457,12 +506,22 @@ def resolve_cfg(
     model_id = model or s.get("active_model") or ""
     model_settings = (conn.get("models") or {}).get(model_id) or {}
 
+    # Resolve the wire format. For a Zen connection the format is a per-model
+    # property (Zen serves each model over exactly one endpoint — see
+    # ZEN_MODEL_API_MODES), so it overrides whatever the connection carries.
+    # For every other connection the connection-wide api_mode applies.
+    base_url = conn.get("base_url", "")
+    if is_zen_connection(base_url) and model_id:
+        api_mode = zen_api_mode_for_model(model_id)
+    else:
+        api_mode = conn.get("api_mode", "chat_completions")
+
     return {
         **DEFAULTS,
         **{k: model_settings[k] for k in DEFAULTS if k in model_settings},
-        "base_url": conn.get("base_url", ""),
+        "base_url": base_url,
         "api_key": conn.get("api_key", ""),
-        "api_mode": conn.get("api_mode", "chat_completions"),
+        "api_mode": api_mode,
         "timeout_seconds": _coerce_timeout(conn.get("timeout_seconds")),
         "model": model_id,
     }
@@ -574,14 +633,15 @@ def _migrate_v2_to_v3(raw: dict) -> dict:
     connections = {}
     for pid, profile in (raw.get("providers") or {}).items():
         kind = "ollama" if pid == "ollama" else "openai_compatible"
-        disabled = sorted(_ZEN_RESPONSES_ONLY_MODELS) if pid == "zen" else []
+        # No disabled_models seed — every Zen wire format is now supported
+        # (ZEN_MODEL_API_MODES), so the old responses-only exclusion is gone.
         connections[pid] = {
             "name": profile.get("label", pid),
             "kind": kind,
             "api_mode": "chat_completions",
             "base_url": profile.get("base_url", ""),
             "api_key": profile.get("api_key", ""),
-            "disabled_models": disabled,
+            "disabled_models": [],
         }
     raw["connections"] = connections
     raw["active_connection"] = raw.pop("active_provider", "")

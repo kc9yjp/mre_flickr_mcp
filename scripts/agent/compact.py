@@ -45,7 +45,7 @@ async def summarize(username: str, nsid: str, conversation_id: str, cfg: dict) -
         *wire_messages(messages),
         {"role": "user", "content": instruction},
     ]
-    stream_fn = llm.stream_responses if cfg.get("api_mode") == "responses" else llm.stream_chat
+    stream_fn = llm.stream_for_mode(cfg.get("api_mode", "chat_completions"))
     final = None
     try:
         async for event in stream_fn(cfg, prompt_messages):

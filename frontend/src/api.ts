@@ -164,7 +164,10 @@ export interface SetupData {
 // ── LLM / model config ────────────────────────────────────────────────────
 
 export type ConnectionKind = "ollama" | "openai_compatible";
-export type ApiMode = "chat_completions" | "responses";
+// Wire formats. For a Zen connection the backend resolves this per model
+// (each Zen model is served over exactly one endpoint), so the connection-
+// level value is only a fallback for non-Zen connections.
+export type ApiMode = "chat_completions" | "responses" | "messages" | "gemini";
 
 // Per-model settings — vision/max_tokens/sampling/tool_choice apply to one
 // specific model on one connection, not the whole page. A model with no

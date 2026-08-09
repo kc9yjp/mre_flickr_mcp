@@ -547,7 +547,7 @@ async def run_turn(
             ),
         })
 
-    stream_fn = llm.stream_responses if cfg.get("api_mode") == "responses" else llm.stream_chat
+    stream_fn = llm.stream_for_mode(cfg.get("api_mode", "chat_completions"))
 
     try:
         for _ in range(MAX_ITERATIONS):

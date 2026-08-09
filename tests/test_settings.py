@@ -95,9 +95,9 @@ def test_v2_providers_migrate_to_v3_connections_preserving_ids(_creds_dir):
     assert zen["name"] == "OpenCode Zen"
     assert zen["kind"] == "openai_compatible"
     assert zen["api_key"] == "secretkey"
-    # Migrated Zen connection must see the exact same model list as before
-    # the upgrade: the old hardcoded exclusion becomes an explicit seed.
-    assert zen["disabled_models"] == sorted(settings._ZEN_RESPONSES_ONLY_MODELS)
+    # Zen resolves the wire format per model, so there is no longer a
+    # responses-only exclusion to seed — every model stays available.
+    assert zen["disabled_models"] == []
 
     assert s["active_connection"] == "zen"
     assert s["active_model"] == "big-pickle"
@@ -181,10 +181,40 @@ def test_resolve_cfg_explicit_connection_and_model(_creds_dir):
     cfg = settings.resolve_cfg(NSID, "opencode-zen", "grok-4.5")
     assert cfg["base_url"] == "https://opencode.ai/zen/v1"
     assert cfg["model"] == "grok-4.5"
-    assert cfg["api_mode"] == "chat_completions"
+    # grok-4.5 is served over the Responses API on Zen — the per-model wire
+    # format overrides the connection's chat_completions default.
+    assert cfg["api_mode"] == "responses"
     # No per-model override saved yet -> falls back to DEFAULTS.
     assert cfg["vision"] is False
     assert cfg["max_tokens"] == settings.DEFAULTS["max_tokens"]
+
+
+def test_resolve_cfg_zen_per_model_api_modes(_creds_dir):
+    """Each Zen model resolves to the wire format its endpoint serves."""
+    from agent import settings
+
+    settings.create_connection(NSID, "OpenCode Zen", "openai_compatible", "https://opencode.ai/zen/v1")
+
+    assert settings.resolve_cfg(NSID, "opencode-zen", "gpt-5.5")["api_mode"] == "responses"
+    assert settings.resolve_cfg(NSID, "opencode-zen", "claude-sonnet-5")["api_mode"] == "messages"
+    assert settings.resolve_cfg(NSID, "opencode-zen", "qwen3.6-plus")["api_mode"] == "messages"
+    assert settings.resolve_cfg(NSID, "opencode-zen", "gemini-3-flash")["api_mode"] == "gemini"
+    assert settings.resolve_cfg(NSID, "opencode-zen", "kimi-k3")["api_mode"] == "chat_completions"
+    # An unmapped Zen model degrades to chat_completions rather than breaking.
+    assert settings.resolve_cfg(NSID, "opencode-zen", "some-brand-new-model")["api_mode"] == "chat_completions"
+
+
+def test_resolve_cfg_non_zen_connection_keeps_connection_api_mode(_creds_dir):
+    """A non-Zen connection ignores the per-model map — its connection-wide
+    api_mode applies even to a model id that appears in ZEN_MODEL_API_MODES."""
+    from agent import settings
+
+    cid, _ = settings.create_connection(
+        NSID, "LM Studio", "openai_compatible", "http://host.docker.internal:1234/v1"
+    )
+
+    cfg = settings.resolve_cfg(NSID, cid, "gpt-5.5")
+    assert cfg["api_mode"] == "chat_completions"
 
 
 def test_resolve_cfg_uses_per_model_settings(_creds_dir):
@@ -394,7 +424,8 @@ def test_create_connection_seeds_zen_responses_only_models(_creds_dir):
     from agent import settings
 
     cid, out = settings.create_connection(NSID, "My Zen", "openai_compatible", "https://opencode.ai/zen/v1")
-    assert out["connections"][cid]["disabled_models"] == sorted(settings._ZEN_RESPONSES_ONLY_MODELS)
+    # Per-model api_mode resolution replaced the old responses-only seeding.
+    assert out["connections"][cid]["disabled_models"] == []
 
 
 # --- timeout_seconds ---
