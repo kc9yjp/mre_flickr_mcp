@@ -189,21 +189,51 @@ def _messages_to_responses_input(messages: list[dict]) -> list[dict]:
     ``function_call``/``function_call_output`` items rather than living
     inside a message, per the Responses API shape."""
     items: list[dict] = []
-    for m in messages:
+    idx = 0
+    while idx < len(messages):
+        m = messages[idx]
         role = m.get("role")
         content = m.get("content")
+
         if role in ("system", "user"):
             items.append({"role": role, "content": _content_to_input_parts(content)})
+
         elif role == "assistant":
-            for call in m.get("tool_calls") or []:
-                items.append({
-                    "type": "function_call",
-                    "call_id": call["id"],
-                    "name": call["function"]["name"],
-                    "arguments": call["function"]["arguments"],
-                })
-            if content:
-                items.append({"role": "assistant", "content": [{"type": "output_text", "text": content}]})
+            tool_calls = m.get("tool_calls") or []
+            if tool_calls:
+                for call in tool_calls:
+                    items.append({
+                        "type": "function_call",
+                        "call_id": call["id"],
+                        "name": call["function"]["name"],
+                        "arguments": call["function"]["arguments"],
+                    })
+                    if idx + 1 < len(messages):
+                        next_msg = messages[idx + 1]
+                        if (
+                            next_msg.get("role") == "tool"
+                            and next_msg.get("tool_call_id") == call["id"]
+                        ):
+                            next_content = next_msg.get("content")
+                            if isinstance(next_content, str):
+                                output = next_content
+                            else:
+                                output = next(
+                                    (p["text"] for p in (next_content or []) if p.get("type") == "text"),
+                                    "",
+                                )
+                            items.append({
+                                "type": "function_call_output",
+                                "call_id": next_msg.get("tool_call_id", ""),
+                                "output": output,
+                            })
+                            idx += 1
+                if content:
+                    items.append({"role": "assistant", "content": [{"type": "output_text", "text": content}]})
+            else:
+                if content:
+                    items.append({"role": "assistant", "content": [{"type": "output_text", "text": content}]})
+
         elif role == "tool":
             if isinstance(content, str):
                 output = content
@@ -214,6 +244,8 @@ def _messages_to_responses_input(messages: list[dict]) -> list[dict]:
                 "call_id": m.get("tool_call_id", ""),
                 "output": output,
             })
+
+        idx += 1
     return items
 
 
