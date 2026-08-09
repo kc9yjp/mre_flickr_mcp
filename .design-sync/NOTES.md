@@ -28,6 +28,58 @@ was run fresh inside the container for both `frontend/` and `.ds-sync/`
 that don't run in Linux). Re-syncing needs the same container setup —
 recreate it if `design-sync-node` isn't already running.
 
+**On a Linux box with native Node the container is unnecessary** — a
+claude.ai/code session runs the whole sync directly (Node 22 at
+`/opt/node22`). The Docker recipe above is a *Windows-host* workaround, not
+a requirement of this sync. Two environment facts that matter there:
+Chromium is pre-cached at `PLAYWRIGHT_BROWSERS_PATH=/opt/pw-browsers`
+(build `chromium-1194`), which pins **`playwright@1.56.0`** — install that
+exact version into `.ds-sync/`, since a mismatched release fails with
+`browserType.launch: Executable doesn't exist`. And a fresh clone needs the
+fork symlink recreated (`ln -sfn ../.ds-sync/node_modules
+.design-sync/node_modules`) because `overrides/source-kit.mjs` imports
+`ts-morph` by bare name.
+
+## Converter invocation (read before re-running — the build hard-fails without this)
+
+`frontend/` IS the DS package (`flickr-workbench`), so the converter's
+default `PKG_DIR = <node-modules>/<pkg>` points at
+`frontend/node_modules/flickr-workbench`, which npm never creates (a package
+doesn't self-install). Without it the build dies immediately:
+
+```
+Error: ENOENT: ... open '.../frontend/node_modules/flickr-workbench/package.json'
+    at projectFor (lib/dts.mjs) ← exportedNames ← package-build.mjs
+```
+
+Fix — create the self-link after every `npm ci` (it lives inside gitignored
+`node_modules`, so it does NOT survive a fresh install or clone):
+
+```sh
+ln -sfn .. frontend/node_modules/flickr-workbench
+```
+
+It does double duty: it's also how esbuild resolves the previews' own
+`import { … } from "flickr-workbench"`.
+
+**Do NOT "fix" this by passing `--entry`.** `--entry` looks like the
+documented answer for a package that isn't in `node_modules` (skill §7), and
+it does resolve `PKG_DIR` — but in the package shape `resolveDistEntry()`
+returns the override *as the bundle entry*, which silently bypasses the
+synth-from-`src/` path this repo depends on and bundles one file instead of
+sweeping all 21. There is no dist here; the entry must stay synthesized.
+
+The full re-sync command, from the repo root (no `--entry`):
+
+```sh
+node .ds-sync/resync.mjs --config .design-sync/config.json \
+  --node-modules frontend/node_modules --out ./ds-bundle \
+  --remote .design-sync/.cache/remote-sync.json
+```
+
+A healthy run prints `[NO_DIST] no built entry — synthesizing from 21 src
+files` — that line is expected here, not a failure to chase.
+
 ## Why 14 components are excluded (`componentSrcMap: null`)
 
 - `App`, `MobileLayout` — app shells that mount the full panel set
@@ -100,6 +152,12 @@ arguably reimplementation. Left as future work only if requested.
 None currently — final validate run was fully clean (0 bad, 0 thin, 0
 variantsIdentical) after the fixes above.
 
+- `[RENDER_SKIPPED] render check did not run` — **expected on a no-change
+  re-sync**, not a regression. The driver scopes the render check by what
+  ships: nothing to upload → skipped entirely (the `[SYNC_STALE]` and
+  file-shape checks still run, and validate still exits 0). Force the full
+  visual pass with `--render-sample 0` if you actually want the screenshots.
+
 ## Re-sync risks
 
 - **The `componentSrcMap` exclusion list is manual and content-based**, not
@@ -122,5 +180,9 @@ variantsIdentical) after the fixes above.
   should be revisited.
 - **Docker container `design-sync-node` is not persistent infrastructure**
   — it's a manually-started container for this sync session. A future
-  re-sync needs to recreate it (see "Environment" above) unless it's still
-  running.
+  re-sync on the Windows host needs to recreate it (see "Environment"
+  above) unless it's still running; on a native-Node Linux host, skip it.
+- **The `flickr-workbench` self-link is machine state, not repo state** —
+  it lives in gitignored `node_modules` and is destroyed by every `npm ci`
+  and every fresh clone, while the failure it prevents looks like a
+  converter bug rather than a missing symlink. See "Converter invocation".
