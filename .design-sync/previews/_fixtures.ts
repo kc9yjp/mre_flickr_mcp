@@ -14,6 +14,18 @@
 
 type Json = unknown;
 
+// ── clock ─────────────────────────────────────────────────────────────────
+// Every timestamp is relative to render time. Absolute epochs go stale: the
+// panels render them through format.ts's relativeTime(), so a hard-coded 2024
+// date shows up as "680 d ago" on a card captured in 2026.
+const MIN = 60;
+const HOUR = 60 * MIN;
+const DAY = 24 * HOUR;
+const NOW = Math.floor(Date.now() / 1000);
+const ago = (secs: number) => NOW - secs;
+const ymd = (secs: number) => new Date((NOW - secs) * 1000).toISOString().slice(0, 10);
+const stamp = (secs: number) => new Date((NOW - secs) * 1000).toISOString().slice(0, 16).replace("T", " ");
+
 /** Apply a theme before first paint — see conventions.md. The bare `:root`
  * fallback is Slate's DARK palette, which is near-invisible on the preview
  * card's white background, so every screen preview must call this. */
@@ -65,9 +77,9 @@ const photo = (i: number) => {
     id,
     title,
     description,
-    date_taken: "2024-09-1" + (i % 9) + " 06:4" + (i % 9) + ":00",
-    date_uploaded: 1727000000 - i * 86400,
-    last_updated: 1727600000 - i * 3600,
+    date_taken: ymd(i * 3 * DAY + 40 * DAY) + " 06:4" + (i % 9) + ":00",
+    date_uploaded: ago(i * 3 * DAY + 39 * DAY),
+    last_updated: ago(i * HOUR + 3 * HOUR),
     url_photopage: `https://www.flickr.com/photos/photo516/${id}/`,
     url_original: url_medium,
     url_medium,
@@ -76,7 +88,7 @@ const photo = (i: number) => {
     favorites,
     comments,
     is_public: 1,
-    synced_at: 1727600000,
+    synced_at: ago(2 * HOUR),
   };
 };
 
@@ -99,8 +111,8 @@ export const STATS = {
   total_groups: 96,
   total_albums: 48,
   total_contacts: 512,
-  date_range: { earliest: "2006-04-11", latest: "2024-09-18" },
-  last_synced: 1727598000,
+  date_range: { earliest: "2006-04-11", latest: ymd(40 * DAY) },
+  last_synced: ago(2 * HOUR),
   top_tags: [
     { tag: "landscape", count: 812 },
     { tag: "outerbanks", count: 604 },
@@ -127,9 +139,9 @@ export const STATS = {
 
 const syncRow = (type: string, over: Record<string, Json> = {}) => ({
   type,
-  last: 1727598000,
+  last: ago(2 * HOUR),
   duration: "1m 12s",
-  next: 1727641200,
+  next: NOW + 10 * HOUR,
   running: false,
   phase: null,
   total: 4187,
@@ -318,7 +330,7 @@ const queueRow = (i: number, over: Record<string, Json> = {}) => {
     group_name: ["Coastal North Carolina", "Sunrise & Sunset", "Landscape Lovers", "Nikon Shooters"][i % 4],
     group_url: "https://www.flickr.com/groups/coastalnc/",
     retry_at: null,
-    queued_at: "2024-09-18 06:12",
+    queued_at: stamp(3 * HOUR + i * 7 * MIN),
     error_msg: "",
     completed_at: null,
     ...over,
@@ -331,14 +343,14 @@ export const QUEUE = {
   errors: [
     queueRow(3, {
       error_msg: "Photo limit reached for this pool (posted 2 of 2 today)",
-      retry_at: "2024-09-19 06:00",
+      retry_at: stamp(-9 * HOUR),
     }),
     queueRow(4, { error_msg: "Group requires 25 faves; photo has 19", retry_at: null }),
   ],
   successes: [
-    queueRow(5, { completed_at: "2024-09-18 06:31" }),
-    queueRow(6, { completed_at: "2024-09-18 06:30" }),
-    queueRow(7, { completed_at: "2024-09-17 18:04" }),
+    queueRow(5, { completed_at: stamp(2 * HOUR) }),
+    queueRow(6, { completed_at: stamp(2 * HOUR + 11 * MIN) }),
+    queueRow(7, { completed_at: stamp(19 * HOUR) }),
   ],
 };
 
@@ -384,10 +396,77 @@ export const SETTINGS = {
 
 export const CONVERSATIONS = {
   conversations: [
-    { id: "c1", title: "Tag gaps in the 2024 OBX set", created_at: 1727500000, updated_at: 1727598400, provider: "local", model: "qwen2.5vl:7b" },
-    { id: "c2", title: "Which groups for Lighthouse at Manteo?", created_at: 1727400000, updated_at: 1727411000, provider: "local", model: "qwen2.5vl:7b" },
-    { id: "c3", title: "Replies for last week's comments", created_at: 1727200000, updated_at: 1727260000, provider: "workstation", model: "llama3.1:70b" },
+    { id: "c1", title: "Tag gaps in the OBX set", created_at: ago(4 * HOUR), updated_at: ago(9 * MIN), provider: "local", model: "qwen2.5vl:7b" },
+    { id: "c2", title: "Which groups for Lighthouse at Manteo?", created_at: ago(2 * DAY), updated_at: ago(2 * DAY - 20 * MIN), provider: "local", model: "qwen2.5vl:7b" },
+    { id: "c3", title: "Replies for last week's comments", created_at: ago(6 * DAY), updated_at: ago(6 * DAY - 40 * MIN), provider: "workstation", model: "llama3.1:70b" },
   ],
+};
+
+// ── a real chat thread ────────────────────────────────────────────────────
+// Chat is the workbench's primary screen, and an empty one tells a designer
+// nothing. This is the wire format the backend returns (see api.ts's
+// WireMessage): plain turns plus a tool call and its result, which is what
+// makes the workbench's chat look like itself rather than a generic chatbot.
+export const CHAT_THREAD = {
+  provider: "local",
+  model: "qwen2.5vl:7b",
+  messages: [
+    {
+      role: "user",
+      content: "Which of my Outer Banks photos are missing tags? Just the public ones.",
+    },
+    {
+      role: "assistant",
+      content: null,
+      tool_calls: [
+        {
+          id: "call_1",
+          function: {
+            name: "search_photos",
+            arguments: '{"query":"outerbanks","incomplete_metadata":true,"limit":5}',
+          },
+        },
+      ],
+    },
+    {
+      role: "tool",
+      tool_call_id: "call_1",
+      content:
+        "4 photos matched:\n" +
+        "- 53806332107  Pier Pilings — 0 tags\n" +
+        "- 53805774890  Marsh Grass, Evening — 1 tag\n" +
+        "- 53810992288  Main Street Crossing — 2 tags\n" +
+        "- 53809877745  Oak Park Sunset — 2 tags",
+    },
+    {
+      role: "assistant",
+      content:
+        "Four public OBX photos are thin on tags:\n\n" +
+        "| Photo | Tags | Suggested additions |\n" +
+        "| --- | --- | --- |\n" +
+        "| **Pier Pilings** | none | `pier`, `longexposure`, `lowtide`, `monochrome` |\n" +
+        "| **Marsh Grass, Evening** | 1 | `marsh`, `dusk`, `wind`, `saltmarsh` |\n" +
+        "| **Main Street Crossing** | 2 | `street`, `smalltown`, `afternoon` |\n" +
+        "| **Oak Park Sunset** | 2 | `goldenhour`, `park`, `shadows` |\n\n" +
+        "*Pier Pilings* is the outlier — it has 1,180 views with no tags at all, so it is " +
+        "almost certainly under-served by search. Want me to apply the suggested tags?",
+    },
+  ],
+};
+
+export const SESSION_STATS = {
+  turns: 4,
+  prompt_tokens: 18420,
+  completion_tokens: 2310,
+  total_tokens: 20730,
+  total_latency_ms: 14200,
+  last_prompt_tokens: 9840,
+  context_window: 32768,
+};
+
+export const MODELS = {
+  models: ["qwen2.5vl:7b", "llama3.1:8b", "mistral-small:24b"],
+  all_models: ["qwen2.5vl:7b", "llama3.1:8b", "mistral-small:24b", "tiny-draft-1b"],
 };
 
 export const ALBUMS = {
@@ -430,6 +509,8 @@ const DEFAULT_ROUTES: Record<string, Json> = {
   "/api/photos": PHOTO_PAGE,
   "/api/albums": ALBUMS,
   "/api/chat/conversations": CONVERSATIONS,
+  "/api/chat/stats": SESSION_STATS,
+  "/api/llm-models": MODELS,
   "/api/extension": { installed: false, version: null },
 };
 
@@ -437,7 +518,7 @@ const DEFAULT_ROUTES: Record<string, Json> = {
 const PATTERN_ROUTES: [RegExp, Json][] = [
   [/^\/api\/photos\/[^/]+$/, PHOTO_DETAIL],
   [/^\/api\/albums\/[^/]+\/photos$/, LIVE_PAGE],
-  [/^\/api\/chat\/conversations\/[^/]+$/, { messages: [], stats: null }],
+  [/^\/api\/chat\/conversations\/[^/]+$/, CHAT_THREAD],
   [/^\/api\/users\/[^/]+\/photos$/, LIVE_PAGE],
   [/^\/api\/users\/[^/]+\/albums$/, ALBUMS],
 ];
@@ -472,6 +553,48 @@ export function stubApi(extra: Record<string, Json> = {}): void {
       headers: { "Content-Type": "application/json" },
     });
   }) as typeof fetch;
+}
+
+/**
+ * Set a <select>'s value the way a user would, so React's onChange fires.
+ * React installs its own value setter to track changes, so assigning
+ * `el.value` alone updates the DOM without ever notifying the component.
+ */
+export function selectOption(el: HTMLSelectElement | null | undefined, value: string): void {
+  if (!el) return;
+  const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")?.set;
+  if (setter) setter.call(el, value);
+  else el.value = value;
+  el.dispatchEvent(new Event("change", { bubbles: true }));
+}
+
+/**
+ * Retry `fn` until it returns true (or the tries run out).
+ *
+ * A panel's own data arrives asynchronously, so anything a preview wants to
+ * drive through the real UI — picking a conversation, opening a photo — has
+ * to wait for the control to actually exist. Setting a <select> to a value
+ * whose <option> has not rendered yet is a silent no-op.
+ */
+export function whenReady(fn: () => boolean, tries = 40, delay = 50): void {
+  let n = 0;
+  const tick = () => {
+    if (fn() || ++n >= tries) return;
+    setTimeout(tick, delay);
+  };
+  setTimeout(tick, delay);
+}
+
+/** Seed the connection/model the app remembers between sessions, so Chat's
+ * model selector isn't blank on first paint. Key matches Chat.tsx's
+ * LAST_MODEL_KEY. */
+export function rememberModel(connection = "local", model = "qwen2.5vl:7b"): void {
+  try {
+    localStorage.setItem("chat-last-model-v1", JSON.stringify({ connection, model }));
+  } catch {
+    // localStorage unavailable in the preview sandbox — the selector just
+    // starts empty, which is a valid state, so this is not worth failing on.
+  }
 }
 
 /** theme() + stubApi() in one call — what a screen preview almost always wants. */
