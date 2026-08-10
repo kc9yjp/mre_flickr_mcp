@@ -13,6 +13,7 @@
   --warn: #e0a34e;
   --danger: #ef8a76;
   --on-danger: #2a1410;
+  --on-accent: #2a1410;
   --user-bubble: #33507a;
   --surface-subtle: rgba(255, 255, 255, 0.04);
   color-scheme: dark;
@@ -30,6 +31,7 @@
   --warn: #ffb86c;
   --danger: #ff6e6e;
   --on-danger: #282a36;
+  --on-accent: #282a36;
   --user-bubble: #44475a;
   --surface-subtle: rgba(255, 255, 255, 0.04);
   color-scheme: dark;
@@ -47,6 +49,7 @@
   --warn: #b7791f;
   --danger: #c0392b;
   --on-danger: #ffffff;
+  --on-accent: #ffffff;
   --user-bubble: #dbe9fc;
   --surface-subtle: rgba(0, 0, 0, 0.035);
   color-scheme: light;
@@ -64,6 +67,7 @@
   --warn: #a5761b;
   --danger: #a63a2b;
   --on-danger: #ffffff;
+  --on-accent: #ffffff;
   --user-bubble: #e8d4a6;
   --surface-subtle: rgba(0, 0, 0, 0.045);
   color-scheme: light;
@@ -81,6 +85,7 @@
   --warn: #a06a1a;
   --danger: #b23a2e;
   --on-danger: #ffffff;
+  --on-accent: #ffffff;
   --user-bubble: #cfe0f2;
   --surface-subtle: rgba(0, 0, 0, 0.04);
   color-scheme: light;
@@ -1384,6 +1389,19 @@ select:focus {
   font-size: 0.8125rem;
 }
 
+/* Solid variant of .btn-primary, for the one confirming action in a card
+   (e.g. Save) where an outline button would blend in next to Cancel/Reset. */
+.btn-filled {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--on-accent);
+  font-weight: 600;
+}
+
+.btn-filled:hover:not(:disabled) {
+  filter: brightness(1.06);
+}
+
 .confirm-inline {
   display: flex;
   align-items: center;
@@ -1892,8 +1910,110 @@ select:focus {
   display: block;
   width: 100%;
   box-sizing: border-box;
+  font: inherit;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.8125rem;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px;
   resize: vertical;
+}
+
+.prompt-text:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+/* --- Prompts panel ---
+   Category groups reuse the accordion-card vocabulary from the Models &
+   Connections panel above (.llm-conn-header-main, .llm-chevron,
+   .llm-conn-body, .llm-kind-badge, .llm-active-card, .llm-add-card) —
+   these are the pieces that don't already exist there. */
+
+.prompt-group {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin-bottom: 24px;
+}
+
+.prompt-group-title-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.prompt-group-name {
+  font-size: 1.125rem;
+  font-weight: 700;
+}
+
+/* Sits on the page background rather than a card, so (unlike
+   .llm-kind-badge) it needs the raised surface for contrast. */
+.prompt-group-placement {
+  font-size: 0.71875rem;
+  font-weight: 600;
+  color: var(--ink-secondary);
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 2px 10px;
+}
+
+.prompt-group-desc {
+  font-size: 0.8125rem;
+  color: var(--ink-muted);
+}
+
+.prompt-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-left: 20px;
+}
+
+.prompt-card-code {
+  font-size: 0.6875rem;
+  color: var(--ink-muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.prompt-card-desc {
+  margin-top: 4px;
+  font-size: 0.78125rem;
+  color: var(--ink-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.prompt-var-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 12px;
+}
+
+.prompt-var-token {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.78125rem;
+  padding: 4px 9px;
+  border-radius: 6px;
+  color: var(--accent);
+}
+
+.prompt-var-desc {
+  flex: 1;
+  min-width: 120px;
+  font-size: 0.78125rem;
+  color: var(--ink-muted);
 }
 
 /* --- Command palette --- */
