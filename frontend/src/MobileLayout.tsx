@@ -1,10 +1,14 @@
-// Two-pane layout for viewports under 768px: a persistent Chat pane plus a
-// single-select content pane, replacing the desktop dockview grid.
+// Mobile Shell v2: a compact topbar (title + panel/theme/user dropdowns,
+// mirroring the desktop topbar) above a single-select content pane, with
+// Chat pinned to a fixed-height footer — replacing the desktop dockview grid
+// for viewports under 768px. Chat no longer repositions between top and
+// bottom (that toggle existed in Shell v1); it always docks at the bottom.
 
 import { useEffect, useState } from "react";
 import { Me } from "./api";
 import * as bus from "./bus";
 import { CommandPalette } from "./CommandPalette";
+import { PanelMenu } from "./PanelMenu";
 import { Chat } from "./panels/Chat";
 import { PhotoBrowser } from "./panels/PhotoBrowser";
 import { PhotoViewer } from "./panels/PhotoViewer";
@@ -30,8 +34,7 @@ const PANELS = [
 
 type PanelId = (typeof PANELS)[number]["id"];
 
-const PANEL_KEY    = "mobile-panel-v1";
-const POSITION_KEY = "mobile-chat-position-v1";
+const PANEL_KEY = "mobile-panel-v1";
 
 const PANEL_COMPONENTS: Record<PanelId, React.FC> = {
   photos: PhotoBrowser,
@@ -57,83 +60,40 @@ export function MobileLayout({ me }: { me: Me | null }) {
     setVisited((prev) => (prev.has(panel) ? prev : new Set(prev).add(panel)));
   }, [panel]);
 
-  const [chatBottom, setChatBottom] = useState(() => {
-    return localStorage.getItem(POSITION_KEY) !== "top";
-  });
-
   const switchPanel = (id: PanelId) => {
     if (!PANELS.some((p) => p.id === id)) return;
-    setPanel(id as PanelId);
+    setPanel(id);
     localStorage.setItem(PANEL_KEY, id);
   };
 
   useEffect(() => bus.on("switchPanel", (id) => switchPanel(id as PanelId)), []);
 
-  const togglePosition = () => {
-    setChatBottom((b) => {
-      const next = !b;
-      localStorage.setItem(POSITION_KEY, next ? "bottom" : "top");
-      return next;
-    });
-  };
-
-  const chatPane = (
-    <div className="mobile-chat-pane">
-      <Chat />
-    </div>
-  );
-
-  const contentPane = (
-    <div className="mobile-content-pane">
-      <div className="mobile-panel-bar">
-        <select
-          value={panel}
-          onChange={(e) => switchPanel(e.target.value as PanelId)}
-          className="mobile-panel-select"
-        >
-          {PANELS.map((p) => (
-            <option key={p.id} value={p.id}>{p.label}</option>
-          ))}
-        </select>
-        <div className="topbar-right">
-          <button
-            className="icon-btn"
-            onClick={togglePosition}
-            title={chatBottom ? "Move chat to top" : "Move chat to bottom"}
-          >
-            {chatBottom ? "⬆" : "⬇"}
-          </button>
-          <ThemeMenu />
-          <UserMenu me={me} className="mobile-user" />
-        </div>
-      </div>
-      <div className="mobile-content-scroll">
-        {PANELS.filter((p) => visited.has(p.id)).map((p) => {
-          const Component = PANEL_COMPONENTS[p.id];
-          return (
-            <div key={p.id} style={{ display: panel === p.id ? "block" : "none" }}>
-              <Component />
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-
   return (
     <div className="mobile-layout">
       <CommandPalette />
-      {chatBottom ? (
-        <>
-          {contentPane}
-          {chatPane}
-        </>
-      ) : (
-        <>
-          {chatPane}
-          {contentPane}
-        </>
-      )}
+      <header className="topbar mobile-topbar">
+        <span className="topbar-title">Mr. E's Photo Workbench</span>
+        <div className="topbar-right">
+          <PanelMenu panels={PANELS} active={panel} onSelect={switchPanel} />
+          <ThemeMenu />
+          <UserMenu me={me} className="mobile-user" />
+        </div>
+      </header>
+      <div className="mobile-content-pane">
+        <div className="mobile-content-scroll">
+          {PANELS.filter((p) => visited.has(p.id)).map((p) => {
+            const Component = PANEL_COMPONENTS[p.id];
+            return (
+              <div key={p.id} style={{ display: panel === p.id ? "block" : "none" }}>
+                <Component />
+              </div>
+            );
+          })}
+        </div>
+      </div>
+      <div className="mobile-chat-pane">
+        <Chat />
+      </div>
     </div>
   );
 }

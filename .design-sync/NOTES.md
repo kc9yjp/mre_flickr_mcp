@@ -28,15 +28,25 @@ was run fresh inside the container for both `frontend/` and `.ds-sync/`
 that don't run in Linux). Re-syncing needs the same container setup —
 recreate it if `design-sync-node` isn't already running.
 
-**On a Linux box with native Node the container is unnecessary** — a
-claude.ai/code session runs the whole sync directly (Node 22 at
-`/opt/node22`). The Docker recipe above is a *Windows-host* workaround, not
-a requirement of this sync. Two environment facts that matter there:
-Chromium is pre-cached at `PLAYWRIGHT_BROWSERS_PATH=/opt/pw-browsers`
-(build `chromium-1194`), which pins **`playwright@1.56.0`** — install that
-exact version into `.ds-sync/`, since a mismatched release fails with
-`browserType.launch: Executable doesn't exist`. And a fresh clone needs the
-fork symlink recreated (`ln -sfn ../.ds-sync/node_modules
+**On a Linux box with native Node the container is unnecessary** — some
+claude.ai/code sessions run the whole sync directly (Node 22 at
+`/opt/node22`, Chromium pre-cached at `PLAYWRIGHT_BROWSERS_PATH=/opt/pw-browsers`
+build `chromium-1194`, pinning **`playwright@1.56.0`**). That's
+environment-specific, though — **not guaranteed on every Linux host**. On
+this repo's regular Linux dev box (the one CLAUDE.md describes — no local
+Node at all) there's no `/opt/node22` either, so the container recipe above
+is still the right path — just swap `docker` for **`podman`** (this machine
+has `podman`/`podman-compose`, not `docker`; see the project's `podman`
+memory note): `podman run -d --name design-sync-node -v
+"$(pwd):/repo" -w /repo node:22-bookworm sleep infinity` then `podman exec -w
+/repo design-sync-node <cmd>` — otherwise identical to the Docker recipe
+(no `MSYS_NO_PATHCONV` needed; that was Git-Bash/Windows-only). No Chromium
+cache exists in a fresh container either way — `npx playwright install
+--with-deps chromium` inside `.ds-sync/` (~200MB, confirm with the user
+first) installs whatever version matches the staged `playwright` dep
+(`.ds-sync/node_modules/playwright-core/package.json`), no version pinning
+needed since nothing pre-existing constrains it. A fresh clone still needs
+the fork symlink recreated (`ln -sfn ../.ds-sync/node_modules
 .design-sync/node_modules`) because `overrides/source-kit.mjs` imports
 `ts-morph` by bare name.
 
@@ -187,7 +197,7 @@ container. Its preview wraps it in `<div style={{ height: "100vh" }}>`.
   value — near-white text on the preview card's forced-white background,
   reading as nearly invisible. `daylight` was picked (not `slate`) precisely
   because the card background is always white.
-- **`FlickrLinkMenu`/`ThemeMenu`/`UserMenu` "Open" stories**: these
+- **`FlickrLinkMenu`/`ThemeMenu`/`UserMenu`/`PanelMenu` "Open" stories**: these
   components' dropdown panels are `position: absolute; right: 0` relative to
   their own `position: relative` wrapper. In the real app that wrapper sits
   inside `.topbar-right` (`display: flex`, right-aligned near the edge of a
@@ -196,9 +206,13 @@ container. Its preview wraps it in `<div style={{ height: "100vh" }}>`.
   panel either escapes off the right edge (no width constraint) or clips off
   the left edge (button flush left, panel has no room to its left). Fixed
   by wrapping in `<div className="topbar-right" style={{display:"flex",
-  justifyContent:"flex-end", width:340}}>`. These three also need
+  justifyContent:"flex-end", width:340}}>`. These four also need
   `cardMode: "column"` (`[GRID_OVERFLOW]`) since the fixed 340px width
-  exceeds a normal grid cell.
+  exceeds a normal grid cell. `PanelMenu` (added with Mobile Shell v2 —
+  `frontend/src/PanelMenu.tsx`, a single-select sibling of the desktop View
+  dropdown, replacing `MobileLayout`'s old native `<select>` panel switcher)
+  reuses this exact recipe, including the "Open" story's after-mount
+  `.view-dropdown-toggle` click.
 - **`CommandPalette`**: `cardMode: "single", viewport: "560x460"` — it's a
   `position: fixed; inset: 0` overlay, needs a bounded viewport rather than
   escaping the card. Its "Open"/"Filtered" stories dispatch a real
@@ -217,6 +231,28 @@ variantsIdentical) after the fixes above.
   ships: nothing to upload → skipped entirely (the `[SYNC_STALE]` and
   file-shape checks still run, and validate still exits 0). Force the full
   visual pass with `--render-sample 0` if you actually want the screenshots.
+
+## Package shape: a big MobileLayout rewrite still verified as "unchanged"
+
+Mobile Shell v2 (2026-08-10) rewrote `MobileLayout.tsx` substantially — new
+topbar, `PanelMenu` dropdown instead of a native `<select>`, Chat pinned to a
+fixed-height footer instead of a repositionable pane — yet the re-sync
+reported `MobileLayout` as `unchanged` in the **verification** partition (no
+recapture, no regrade). This is correct, not a bug: package shape's
+`sourceKeyFor` (`lib/sync-hashes.mjs`) never includes `srcSha` (that field is
+storybook-only — see the `shape === 'storybook'` guard in
+`package-build.mjs`), so a component's sourceKey only tracks its **owned
+preview file** (`.design-sync/previews/<Name>.tsx`) plus global/component CSS
+slices, never its implementation. The **upload** partition caught the real
+change correctly (`bundle: true`, since `bundleSha12` changed) — the redesign
+shipped in `_ds_bundle.js` regardless, matching "never scope uploads by the
+verification partition." Confirmed by screenshot: `general__MobileLayout.png`
+after this sync shows the new `Stats ▾ / Theme ▾ / Mr. E ▾` header, not the
+old select+icon bar. **Lesson for future re-syncs**: after a large
+implementation-only edit to a component with an *existing* preview, don't
+trust `verification.unchanged` as proof the card still looks right — spot
+check its `_screenshots/<group>__<Name>.png` (or `.review.html`) directly,
+since package shape has no mechanism to flag it for you.
 
 ## Re-sync risks
 
@@ -251,10 +287,12 @@ variantsIdentical) after the fixes above.
   themes, chosen only because the preview card background is hardcoded
   white. If the product's card background ever becomes theme-aware, this
   should be revisited.
-- **Docker container `design-sync-node` is not persistent infrastructure**
-  — it's a manually-started container for this sync session. A future
-  re-sync on the Windows host needs to recreate it (see "Environment"
-  above) unless it's still running; on a native-Node Linux host, skip it.
+- **The `design-sync-node` container (Docker or podman) is not persistent
+  infrastructure** — it's a manually-started container for this sync
+  session. A future re-sync on a host with no native Node needs to recreate
+  it (see "Environment" above, `podman` on this repo's regular Linux dev
+  box) unless it's still running; on a host with `/opt/node22` or another
+  native Node install, skip it.
 - **The `flickr-workbench` self-link is machine state, not repo state** —
   it lives in gitignored `node_modules` and is destroyed by every `npm ci`
   and every fresh clone, while the failure it prevents looks like a

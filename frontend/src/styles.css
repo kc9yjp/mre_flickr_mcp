@@ -1252,7 +1252,7 @@ select:focus {
 .mobile-chat-pane {
   display: flex;
   flex-direction: column;
-  flex: 0 0 45%;
+  flex: 0 0 300px;
   min-height: 0;
   border-top: 1px solid var(--border);
 }
@@ -1272,36 +1272,42 @@ select:focus {
   min-height: 0;
 }
 
-.mobile-panel-bar {
-  display: flex;
-  align-items: center;
+.mobile-topbar {
+  padding: 0 8px;
   gap: 4px;
-  padding: 4px 6px;
-  background: var(--surface-raised);
-  border-bottom: 1px solid var(--border);
-  flex: none;
 }
 
-.mobile-panel-bar .topbar-right {
-  gap: 4px;
-  flex: none;
-}
-
-.mobile-panel-select {
+.mobile-topbar .topbar-title {
+  font-size: 0.8125rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
   flex: 1;
   min-width: 0;
-  padding: 4px 6px;
-  font-size: 0.8125rem;
 }
 
-.mobile-panel-bar .icon-btn {
-  padding: 3px 5px;
-  font-size: 0.8125rem;
+.mobile-topbar .topbar-right {
+  gap: 4px;
+  flex: none;
 }
 
-.mobile-panel-bar .view-dropdown-toggle {
+.mobile-topbar .view-dropdown-toggle {
   padding: 3px 7px;
   font-size: 0.75rem;
+}
+
+.mobile-topbar .panel-menu .view-dropdown-toggle {
+  max-width: 110px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: block;
+}
+
+.panel-menu .view-dropdown-menu {
+  left: auto;
+  right: 0;
+  min-width: 170px;
 }
 
 .mobile-user {

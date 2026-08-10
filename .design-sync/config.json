@@ -11,6 +11,7 @@
     "FlickrLinkMenu": { "cardMode": "column" },
     "ThemeMenu": { "cardMode": "column" },
     "UserMenu": { "cardMode": "column" },
+    "PanelMenu": { "cardMode": "column" },
 
     "App": { "cardMode": "single", "viewport": "1280x820" },
     "MobileLayout": { "cardMode": "single", "viewport": "390x780" },
