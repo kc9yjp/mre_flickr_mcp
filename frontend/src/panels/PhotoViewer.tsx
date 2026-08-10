@@ -6,7 +6,6 @@
 import { useEffect, useState } from "react";
 import { getJSON, PhotoDetail } from "../api";
 import * as bus from "../bus";
-import { FlickrLinkMenu } from "../FlickrLinkMenu";
 import { compactNumber } from "../format";
 import { PhotoId } from "../PhotoId";
 import { SafeHtml } from "../safeHtml";
@@ -26,6 +25,7 @@ export function PhotoViewer() {
   const [detail, setDetail] = useState<PhotoDetail | null>(null);
   const [error, setError] = useState("");
   const [src, setSrc] = useState<string | null>(null);
+  const [linkCopied, setLinkCopied] = useState(false);
 
   useEffect(() => bus.on("viewPhoto", setPhotoId), []);
 
@@ -55,6 +55,14 @@ export function PhotoViewer() {
     (c) => c.category_id === (detail?.is_own ? "own_photo" : "other_photo"),
   );
 
+  const copyLink = () => {
+    if (!detail) return;
+    navigator.clipboard.writeText(detail.url_photopage).then(() => {
+      setLinkCopied(true);
+      window.setTimeout(() => setLinkCopied(false), 1500);
+    });
+  };
+
   if (!photoId) {
     return (
       <div className="panel photo-viewer">
@@ -83,26 +91,52 @@ export function PhotoViewer() {
     <div className="panel photo-viewer">
       <div className="photo-detail">
         <div className="detail-toolbar">
-          <button onClick={() => bus.emit("openPanel", "photos")}>◀ Photo Browser</button>
-          <FlickrLinkMenu url={detail.url_photopage} />
-        </div>
-        {photoCommands.length > 0 && (
-          <div className="detail-workflows">
-            {photoCommands.map((c) => (
-              <button
-                key={c.id}
-                title="Runs in the Chat panel"
-                onClick={() => bus.emit("runCommand", {
-                  title: c.label,
-                  text: c.prompt.replaceAll("{photo_id}", detail.id),
-                  promptId: c.prompt_id,
-                })}
-              >
-                ▶ {c.label}
-              </button>
-            ))}
+          <button
+            type="button"
+            className="icon-btn"
+            title="Back to Photo Browser"
+            onClick={() => bus.emit("openPanel", "photos")}
+          >
+            ◀
+          </button>
+          {photoCommands.length > 0 && (
+            <div className="detail-workflows">
+              {photoCommands.map((c) => (
+                <button
+                  key={c.id}
+                  className="workflow-pill"
+                  title="Runs in the Chat panel"
+                  onClick={() => bus.emit("runCommand", {
+                    title: c.label,
+                    text: c.prompt.replaceAll("{photo_id}", detail.id),
+                    promptId: c.prompt_id,
+                  })}
+                >
+                  ▶ {c.label}
+                </button>
+              ))}
+            </div>
+          )}
+          <div className="detail-toolbar-right">
+            <a
+              className="icon-btn"
+              href={detail.url_photopage}
+              target="flickr_photo"
+              rel="noreferrer"
+              title="Open on Flickr"
+            >
+              ↗
+            </a>
+            <button
+              type="button"
+              className="icon-btn"
+              onClick={copyLink}
+              title={linkCopied ? "Copied!" : "Copy link"}
+            >
+              {linkCopied ? "✓" : "⧉"}
+            </button>
           </div>
-        )}
+        </div>
         {src && (
           <img
             className="detail-image"
@@ -139,44 +173,52 @@ export function PhotoViewer() {
           {detail.in_keeper_list && <span>keeper</span>}
         </div>
 
-        <dl className="detail-meta">
-          <dt>Taken</dt>
-          <dd>{detail.date_taken || "unknown"}</dd>
-          <dt>Tags</dt>
-          <dd>
-            {detail.tags
-              ? detail.tags.split(" ").map((t) => (
-                  <span key={t} className="chip">
-                    {t}
-                  </span>
-                ))
-              : "none"}
-          </dd>
+        <div className="detail-meta-list">
+          <div className="detail-meta-block">
+            <div className="detail-meta-label">Taken</div>
+            <div className="detail-meta-value">{detail.date_taken || "unknown"}</div>
+          </div>
+          <div className="detail-meta-block">
+            <div className="detail-meta-label">Tags</div>
+            <div className="detail-meta-value">
+              {detail.tags
+                ? detail.tags.split(" ").map((t) => (
+                    <span key={t} className="chip">
+                      {t}
+                    </span>
+                  ))
+                : "none"}
+            </div>
+          </div>
           {detail.is_own && (
             <>
-              <dt>Groups</dt>
-              <dd>
-                {detail.groups.length
-                  ? detail.groups.map((g) => (
-                      <span key={g.id} className="chip">
-                        {g.name}
-                      </span>
-                    ))
-                  : "none"}
-              </dd>
-              <dt>Albums</dt>
-              <dd>
-                {detail.albums.length
-                  ? detail.albums.map((a) => (
-                      <span key={a.id} className="chip">
-                        {a.title}
-                      </span>
-                    ))
-                  : "none"}
-              </dd>
+              <div className="detail-meta-block">
+                <div className="detail-meta-label">Groups</div>
+                <div className="detail-meta-value">
+                  {detail.groups.length
+                    ? detail.groups.map((g) => (
+                        <span key={g.id} className="chip">
+                          {g.name}
+                        </span>
+                      ))
+                    : "none"}
+                </div>
+              </div>
+              <div className="detail-meta-block">
+                <div className="detail-meta-label">Albums</div>
+                <div className="detail-meta-value">
+                  {detail.albums.length
+                    ? detail.albums.map((a) => (
+                        <span key={a.id} className="chip">
+                          {a.title}
+                        </span>
+                      ))
+                    : "none"}
+                </div>
+              </div>
             </>
           )}
-        </dl>
+        </div>
       </div>
     </div>
   );

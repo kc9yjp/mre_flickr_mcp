@@ -588,8 +588,15 @@ select:focus {
 .photo-detail .detail-toolbar {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 10px;
   margin-bottom: 10px;
+}
+
+.detail-toolbar-right {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 4px;
 }
 
 .photo-detail h2 {
@@ -659,13 +666,22 @@ select:focus {
   flex: 1;
 }
 
-.detail-meta dt {
-  color: var(--ink-muted);
-  margin-top: 8px;
+.detail-meta-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-width: 42em;
 }
 
-.detail-meta dd {
-  margin: 4px 0 0;
+.detail-meta-label {
+  color: var(--ink-muted);
+  font-size: 0.6875rem;
+  margin-bottom: 3px;
+}
+
+.detail-meta-value {
+  color: var(--ink);
+  font-size: 0.84375rem;
 }
 
 .chip {
@@ -1284,10 +1300,30 @@ select:focus {
 /* --- Photo detail workflows --- */
 
 .detail-workflows {
+  flex: 1;
+  min-width: 0;
   display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-bottom: 10px;
+  flex-wrap: nowrap;
+  justify-content: center;
+  gap: 8px;
+  overflow-x: auto;
+}
+
+.workflow-pill {
+  flex: none;
+  white-space: nowrap;
+  font-size: 0.78125rem;
+  padding: 7px 13px;
+  border-radius: 8px;
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--ink-secondary);
+  cursor: pointer;
+}
+
+.workflow-pill:hover {
+  color: var(--ink);
+  border-color: var(--ink-secondary);
 }
 
 /* --- Mobile layout --- */
