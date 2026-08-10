@@ -222,6 +222,27 @@ body {
   font-weight: 600;
 }
 
+.topbar-left {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+}
+
+.topbar-nav {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+}
+
+/* Theme's dropdown panel defaults to right-aligned (built for sitting at the
+   right edge of the topbar, and reused there by MobileLayout) — flip it to
+   open rightward from the left nav group instead. */
+.topbar-nav .theme-menu-panel {
+  left: 0;
+  right: auto;
+}
+
 .topbar-right {
   display: flex;
   align-items: center;
@@ -290,10 +311,44 @@ body {
   display: inline-block;
 }
 
+.user-menu-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px 3px 3px;
+  min-width: 0;
+}
+
+.user-avatar {
+  flex: none;
+  width: 19px;
+  height: 19px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--surface);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.625rem;
+  font-weight: 700;
+}
+
+.user-menu-label {
+  min-width: 0;
+}
+
+.user-menu-header {
+  padding: 6px 10px 8px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 4px;
+  font-size: 0.8125rem;
+  color: var(--ink);
+}
+
 .user-menu-panel {
   left: auto;
   right: 0;
-  min-width: 120px;
+  min-width: 150px;
 }
 
 .flickr-link-menu .view-dropdown-menu {
@@ -1315,11 +1370,13 @@ select:focus {
 }
 
 .mobile-user .view-dropdown-toggle {
+  max-width: 100%;
+}
+
+.mobile-user .user-menu-label {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  display: block;
-  max-width: 100%;
 }
 
 .mobile-content-scroll {

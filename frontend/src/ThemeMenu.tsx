@@ -1,11 +1,23 @@
 // Topbar dropdown for picking a color theme and text size. Used by both the
 // desktop workbench and the mobile layout so the setting is reachable either way.
+//
+// Open state is controlled when the caller passes `open`/`onOpenChange` (the
+// desktop shell does this to hover-swap with the View menu — see App.tsx),
+// and falls back to owning it internally otherwise (MobileLayout's usage).
 
 import { useEffect, useRef, useState } from "react";
 import { THEMES, FONT_SIZES, getStoredTheme, getStoredFontSize, applyTheme, applyFontSize } from "./theme";
 
-export function ThemeMenu() {
-  const [open, setOpen] = useState(false);
+export function ThemeMenu({
+  open: controlledOpen,
+  onOpenChange,
+}: {
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+} = {}) {
+  const [uncontrolledOpen, setUncontrolledOpen] = useState(false);
+  const open = controlledOpen ?? uncontrolledOpen;
+  const setOpen = onOpenChange ?? setUncontrolledOpen;
   const [theme, setTheme] = useState(getStoredTheme);
   const [fontSize, setFontSize] = useState(getStoredFontSize);
   const ref = useRef<HTMLDivElement>(null);
@@ -32,7 +44,7 @@ export function ThemeMenu() {
     <div className="theme-menu" ref={ref}>
       <button
         className="view-dropdown-toggle"
-        onClick={() => setOpen((o) => !o)}
+        onClick={() => setOpen(!open)}
         title="Theme and text size"
       >
         Theme ▾

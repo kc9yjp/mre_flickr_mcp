@@ -79,15 +79,20 @@ export default function App() {
   const isMobile = useIsMobile();
   const [me, setMe] = useState<Me | null>(null);
   const [openPanels, setOpenPanels] = useState<Set<string>>(new Set(PANEL_ORDER));
-  const [viewOpen, setViewOpen] = useState(false);
-  const viewRef = useRef<HTMLDivElement>(null);
+  // View and Theme live in the same left-hand nav group and are mutually
+  // exclusive, so one flag tracks "which of the two is open" — this is also
+  // what makes the hover-swap below (hovering the other button while one is
+  // already open) a one-line state change instead of two dropdowns racing
+  // to close each other.
+  const [openMenu, setOpenMenu] = useState<"view" | "theme" | null>(null);
+  const navRef = useRef<HTMLDivElement>(null);
   const saveTimer = useRef<number | undefined>(undefined);
   const dockApi = useRef<DockviewApi | null>(null);
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
-      if (viewRef.current && !viewRef.current.contains(e.target as Node)) {
-        setViewOpen(false);
+      if (navRef.current && !navRef.current.contains(e.target as Node)) {
+        setOpenMenu(null);
       }
     };
     document.addEventListener("mousedown", handler);
@@ -96,7 +101,7 @@ export default function App() {
 
   const handlePanelClick = useCallback((id: string) => {
     if (dockApi.current) openOrFocusPanel(dockApi.current, id);
-    setViewOpen(false);
+    setOpenMenu(null);
   }, []);
 
   const emitHashFocus = useCallback(() => {
@@ -169,28 +174,40 @@ export default function App() {
   return (
     <div className="workbench">
       <header className="topbar">
-        <span className="topbar-title">Mr. E's Photo Workbench</span>
-        <div className="topbar-right">
-          <div className="view-dropdown" ref={viewRef}>
-            <button
-              className="view-dropdown-toggle"
-              onClick={() => setViewOpen((o) => !o)}
-              title={`Show/hide panels (${paletteShortcut})`}
+        <div className="topbar-left">
+          <span className="topbar-title">Mr. E's Photo Workbench</span>
+          <nav className="topbar-nav" ref={navRef}>
+            <div
+              className="view-dropdown"
+              onMouseEnter={() => setOpenMenu((m) => (m === "theme" ? "view" : m))}
             >
-              View ▾
-            </button>
-            {viewOpen && (
-              <div className="view-dropdown-menu">
-                {PANEL_ORDER.map((id) => (
-                  <button key={id} onClick={() => handlePanelClick(id)}>
-                    <span className="view-check">{openPanels.has(id) ? "✓" : " "}</span>
-                    {PANEL_SPECS[id].title}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-          <ThemeMenu />
+              <button
+                className="view-dropdown-toggle"
+                onClick={() => setOpenMenu((m) => (m === "view" ? null : "view"))}
+                title={`Show/hide panels (${paletteShortcut})`}
+              >
+                View ▾
+              </button>
+              {openMenu === "view" && (
+                <div className="view-dropdown-menu">
+                  {PANEL_ORDER.map((id) => (
+                    <button key={id} onClick={() => handlePanelClick(id)}>
+                      <span className="view-check">{openPanels.has(id) ? "✓" : " "}</span>
+                      {PANEL_SPECS[id].title}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+            <div onMouseEnter={() => setOpenMenu((m) => (m === "view" ? "theme" : m))}>
+              <ThemeMenu
+                open={openMenu === "theme"}
+                onOpenChange={(o) => setOpenMenu(o ? "theme" : null)}
+              />
+            </div>
+          </nav>
+        </div>
+        <div className="topbar-right">
           <UserMenu me={me} />
         </div>
       </header>
