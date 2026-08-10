@@ -693,8 +693,8 @@ async def run_turn(
 
                 if args is not None and (photo_ids := _list_photo_ids(name, ui_text)):
                     yield {"type": "photo_list", "photo_ids": photo_ids}
-                elif args is not None and (nsid := _user_photos_nsid(name, ui_text)):
-                    yield {"type": "user_photos", "nsid": nsid}
+                elif args is not None and (user_photos_nsid := _user_photos_nsid(name, ui_text)):
+                    yield {"type": "user_photos", "nsid": user_photos_nsid}
                 elif args is not None and (photo_id := _focus_photo_id(name, args)):
                     yield {"type": "focus", "photo_id": photo_id}
         else:

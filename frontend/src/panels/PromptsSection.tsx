@@ -1,7 +1,10 @@
 // Editor for user-defined and built-in prompts and the template variables
 // ({photo_id}, {user_nsid}) they can reference. Categories are fixed by the
 // system (not user-editable) — each one pins its prompts' workflow buttons
-// to a specific page, shown here as a badge rather than a picker.
+// to a specific page, shown here as a badge on the category's group header
+// rather than a picker. Prompts within a group are accordion cards (mirrors
+// the connection/model cards in ModelsPage): click a row to expand it into
+// an editor, click again (or Save/Reset) to collapse it.
 
 import { FormEvent, useEffect, useRef, useState } from "react";
 import { Prompt, PromptCategory, PromptVariable, PromptsData, getJSON, postJSON } from "../api";
@@ -18,6 +21,10 @@ const CATEGORY_PLACEMENT: Record<string, string> = {
 
 function placementFor(categoryId: string): string {
   return CATEGORY_PLACEMENT[categoryId] ?? "Chat / Command Palette";
+}
+
+function contextLabel(context: Prompt["context"]): string {
+  return context === "photo" ? "Photo" : "Global";
 }
 
 interface ParsedPrompt {
@@ -106,12 +113,18 @@ function parseExportedMarkdown(content: string): ParsedExport {
   return { categories, prompts };
 }
 
+interface PromptDraft {
+  name: string;
+  description: string;
+  text: string;
+}
+
 export function PromptsSection() {
   const [data, setData] = useState<PromptsData | null>(null);
   const [error, setError] = useState("");
   const [status, setStatus] = useState("");
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [draft, setDraft] = useState<Partial<Prompt>>({});
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
+  const [drafts, setDrafts] = useState<Record<string, PromptDraft>>({});
   const [pendingEditId, setPendingEditId] = useState<string | null>(null);
   const [showAddPrompt, setShowAddPrompt] = useState(false);
   const [newPrompt, setNewPrompt] = useState({
@@ -138,9 +151,37 @@ export function PromptsSection() {
     setTimeout(() => setStatus(""), 3000);
   };
 
-  const startEdit = (p: Prompt) => {
-    setEditingId(p.id);
-    setDraft({ name: p.name, description: p.description, category_id: p.category_id, text: p.text });
+  // Opens a prompt's card, (re)seeding its draft from the saved values —
+  // any unsaved edits from a previous expand are discarded, matching a
+  // plain accordion (there's no separate Cancel for an open card; closing
+  // it and reopening resets the draft).
+  const openPrompt = (p: Prompt) => {
+    setDrafts((d) => ({ ...d, [p.id]: { name: p.name, description: p.description, text: p.text } }));
+    setExpandedIds((s) => new Set(s).add(p.id));
+  };
+
+  const toggleExpand = (p: Prompt) => {
+    if (expandedIds.has(p.id)) {
+      setExpandedIds((s) => {
+        const next = new Set(s);
+        next.delete(p.id);
+        return next;
+      });
+    } else {
+      openPrompt(p);
+    }
+  };
+
+  const collapse = (id: string) => {
+    setExpandedIds((s) => {
+      const next = new Set(s);
+      next.delete(id);
+      return next;
+    });
+  };
+
+  const setDraftField = (id: string, patch: Partial<PromptDraft>) => {
+    setDrafts((d) => ({ ...d, [id]: { ...d[id], ...patch } }));
   };
 
   // A message sent from a workflow prompt (in Chat) can request this panel
@@ -156,14 +197,16 @@ export function PromptsSection() {
   useEffect(() => {
     if (!pendingEditId || !data) return;
     const p = data.prompts.find((x) => x.id === pendingEditId);
-    if (p) startEdit(p);
+    if (p) openPrompt(p);
     setPendingEditId(null);
   }, [pendingEditId, data]);
 
   const saveEdit = async (id: string) => {
+    const draft = drafts[id];
+    if (!draft) return;
     try {
       await postJSON(`/api/prompts/${id}`, draft);
-      setEditingId(null);
+      collapse(id);
       flash("Saved.");
       await load();
     } catch (e) {
@@ -174,6 +217,7 @@ export function PromptsSection() {
   const resetPrompt = async (id: string) => {
     try {
       await postJSON(`/api/prompts/${id}/reset`, {});
+      collapse(id);
       flash("Reset to default.");
       await load();
     } catch (e) {
@@ -204,6 +248,7 @@ export function PromptsSection() {
   const deletePrompt = async (id: string) => {
     try {
       await postJSON(`/api/prompts/${id}/delete`, {});
+      collapse(id);
       flash("Deleted.");
       await load();
     } catch (e) {
@@ -319,25 +364,14 @@ export function PromptsSection() {
 
   return (
     <div>
+      <p className="hint">
+        Built-in and custom prompts the assistant can use, grouped by where they show up. Categories are
+        fixed by the system — add, edit, or reset individual prompts below.
+      </p>
       {status && <p className="hint">{status}</p>}
       {error && <p className="error">{error}</p>}
 
-      <h3>Categories</h3>
-      <p className="hint">
-        Fixed by the system — each category decides which page its prompts' buttons appear on.
-      </p>
-      <div className="settings-item">
-        {data.categories.map((c: PromptCategory) => (
-          <div key={c.id} className="settings-row">
-            <strong>{c.name}</strong>
-            <span className="hint">{c.description}</span>
-            <span className="hint">→ {placementFor(c.id)}</span>
-          </div>
-        ))}
-      </div>
-
-      <h3>Prompts</h3>
-      <div className="settings-row">
+      <div className="settings-row" style={{ marginBottom: 20 }}>
         <button onClick={exportMarkdown}>Export as Markdown</button>
         <button onClick={() => importInputRef.current?.click()}>Import from Markdown</button>
         <button className="btn-danger-sm" onClick={resetAllPrompts}>Reset all to default</button>
@@ -353,146 +387,199 @@ export function PromptsSection() {
           }}
         />
       </div>
-      {data.categories.map((cat) => {
+
+      {data.categories.map((cat: PromptCategory) => {
         const prompts = data.prompts.filter((p) => p.category_id === cat.id);
         if (prompts.length === 0) return null;
         return (
-          <div key={cat.id} className="settings-item">
-            <label className="settings-label">{cat.name} <span className="hint">— {placementFor(cat.id)}</span></label>
-            {prompts.map((p) => (
-              <div key={p.id} className="settings-item">
-                {editingId === p.id ? (
-                  <>
-                    <div className="settings-row">
-                      <input
-                        value={draft.name ?? ""}
-                        onChange={(e) => setDraft((d) => ({ ...d, name: e.target.value }))}
-                      />
-                      <select
-                        value={draft.category_id ?? ""}
-                        onChange={(e) => setDraft((d) => ({ ...d, category_id: e.target.value }))}
-                      >
-                        {data.categories.map((c) => (
-                          <option key={c.id} value={c.id}>{c.name}</option>
-                        ))}
-                      </select>
-                    </div>
-                    <input
-                      placeholder="Description"
-                      value={draft.description ?? ""}
-                      onChange={(e) => setDraft((d) => ({ ...d, description: e.target.value }))}
-                    />
-                    <textarea
-                      className="prompt-text"
-                      rows={5}
-                      placeholder="Prompt text — Markdown supported, use {photo_id} / {user_nsid} where needed"
-                      value={draft.text ?? ""}
-                      onChange={(e) => setDraft((d) => ({ ...d, text: e.target.value }))}
-                    />
-                    <div className="settings-row">
-                      <button className="btn-sm" onClick={() => saveEdit(p.id)}>Save</button>
-                      <button className="btn-sm" onClick={() => setEditingId(null)}>Cancel</button>
-                    </div>
-                  </>
-                ) : (
-                  <div className="settings-row">
-                    <strong>{p.name}</strong>
-                    <span className="hint">({p.code})</span>
-                    <span className="hint">{p.description}</span>
-                    <button className="btn-sm" onClick={() => startEdit(p)}>Edit</button>
-                    {p.builtin ? (
-                      <button className="btn-sm" onClick={() => resetPrompt(p.id)}>Reset to default</button>
-                    ) : (
-                      <button className="btn-danger-sm" onClick={() => deletePrompt(p.id)}>Delete</button>
+          <div key={cat.id} className="prompt-group">
+            <div>
+              <div className="prompt-group-title-row">
+                <span className="prompt-group-name">{cat.name}</span>
+                <span className="prompt-group-placement">→ {placementFor(cat.id)}</span>
+              </div>
+              {cat.description && <div className="prompt-group-desc">{cat.description}</div>}
+            </div>
+
+            <div className="prompt-list">
+              {prompts.map((p) => {
+                const expanded = expandedIds.has(p.id);
+                const draft = drafts[p.id];
+                return (
+                  <div key={p.id} className="llm-model-card">
+                    <button
+                      type="button"
+                      className="llm-conn-header-main"
+                      onClick={() => toggleExpand(p)}
+                    >
+                      <div className="llm-conn-title">
+                        <div className="llm-conn-name-row">
+                          <span className="llm-conn-name">{p.name}</span>
+                          <span className="prompt-card-code">{p.code}</span>
+                          <span className="llm-kind-badge">{contextLabel(p.context)}</span>
+                        </div>
+                        <div className="prompt-card-desc">{p.description}</div>
+                      </div>
+                      <span className={`llm-chevron${expanded ? " expanded" : ""}`}>›</span>
+                    </button>
+
+                    {expanded && draft && (
+                      <div className="llm-model-body">
+                        <div className="llm-field-grid">
+                          <label className="llm-field">
+                            Display name
+                            <input
+                              value={draft.name}
+                              onChange={(e) => setDraftField(p.id, { name: e.target.value })}
+                            />
+                          </label>
+                          <label className="llm-field">
+                            Description
+                            <input
+                              value={draft.description}
+                              onChange={(e) => setDraftField(p.id, { description: e.target.value })}
+                            />
+                          </label>
+                        </div>
+                        <label className="llm-field">
+                          Prompt text
+                          <textarea
+                            className="prompt-text"
+                            rows={6}
+                            placeholder="Markdown supported — use {photo_id} / {user_nsid} where needed"
+                            value={draft.text}
+                            onChange={(e) => setDraftField(p.id, { text: e.target.value })}
+                          />
+                        </label>
+                        <div className="llm-row-end">
+                          {p.builtin ? (
+                            <button type="button" className="btn-sm" onClick={() => resetPrompt(p.id)}>
+                              Reset to default
+                            </button>
+                          ) : (
+                            <button type="button" className="btn-danger-sm" onClick={() => deletePrompt(p.id)}>
+                              Delete
+                            </button>
+                          )}
+                          <button type="button" className="btn-sm btn-filled" onClick={() => saveEdit(p.id)}>
+                            Save
+                          </button>
+                        </div>
+                      </div>
                     )}
                   </div>
-                )}
-              </div>
-            ))}
+                );
+              })}
+            </div>
           </div>
         );
       })}
 
       {!showAddPrompt ? (
-        <button onClick={() => setShowAddPrompt(true)}>Add prompt</button>
+        <button type="button" className="llm-add-custom-btn" onClick={() => setShowAddPrompt(true)}>
+          + Add prompt
+        </button>
       ) : (
-        <form onSubmit={createPrompt} className="settings-item">
-          <div className="settings-row">
-            <input
-              placeholder="code (unique, e.g. suggest-tags)"
-              value={newPrompt.code}
-              onChange={(e) => setNewPrompt((p) => ({ ...p, code: e.target.value }))}
-            />
-            <input
-              placeholder="Display name"
-              value={newPrompt.name}
-              onChange={(e) => setNewPrompt((p) => ({ ...p, name: e.target.value }))}
-            />
-            <select
-              value={newPrompt.category_id}
-              onChange={(e) => setNewPrompt((p) => ({ ...p, category_id: e.target.value }))}
-            >
-              {data.categories.map((c) => <option key={c.id} value={c.id}>{c.name} — {placementFor(c.id)}</option>)}
-            </select>
+        <form onSubmit={createPrompt} className="llm-conn-card llm-add-card">
+          <div className="llm-field-grid">
+            <label className="llm-field">
+              Code (unique)
+              <input
+                placeholder="e.g. suggest-tags"
+                value={newPrompt.code}
+                onChange={(e) => setNewPrompt((p) => ({ ...p, code: e.target.value }))}
+              />
+            </label>
+            <label className="llm-field">
+              Display name
+              <input
+                value={newPrompt.name}
+                onChange={(e) => setNewPrompt((p) => ({ ...p, name: e.target.value }))}
+              />
+            </label>
+            <label className="llm-field">
+              Category
+              <select
+                value={newPrompt.category_id}
+                onChange={(e) => setNewPrompt((p) => ({ ...p, category_id: e.target.value }))}
+              >
+                {data.categories.map((c) => <option key={c.id} value={c.id}>{c.name} — {placementFor(c.id)}</option>)}
+              </select>
+            </label>
           </div>
-          <input
-            placeholder="Description"
-            value={newPrompt.description}
-            onChange={(e) => setNewPrompt((p) => ({ ...p, description: e.target.value }))}
-          />
-          <textarea
-            className="prompt-text"
-            rows={5}
-            placeholder="Prompt text — Markdown supported, use {photo_id} / {user_nsid} where needed"
-            value={newPrompt.text}
-            onChange={(e) => setNewPrompt((p) => ({ ...p, text: e.target.value }))}
-          />
-          <div className="settings-row">
-            <button type="submit" disabled={!newPrompt.code.trim() || !newPrompt.name.trim() || !newPrompt.text.trim()}>
+          <label className="llm-field">
+            Description
+            <input
+              value={newPrompt.description}
+              onChange={(e) => setNewPrompt((p) => ({ ...p, description: e.target.value }))}
+            />
+          </label>
+          <label className="llm-field">
+            Prompt text
+            <textarea
+              className="prompt-text"
+              rows={5}
+              placeholder="Markdown supported — use {photo_id} / {user_nsid} where needed"
+              value={newPrompt.text}
+              onChange={(e) => setNewPrompt((p) => ({ ...p, text: e.target.value }))}
+            />
+          </label>
+          <div className="llm-row-end">
+            <button type="button" onClick={() => setShowAddPrompt(false)}>Cancel</button>
+            <button
+              type="submit"
+              className="btn-filled"
+              disabled={!newPrompt.code.trim() || !newPrompt.name.trim() || !newPrompt.text.trim()}
+            >
               Save prompt
             </button>
-            <button type="button" onClick={() => setShowAddPrompt(false)}>Cancel</button>
           </div>
         </form>
       )}
 
-      <h3>Substitution variables</h3>
-      <p className="hint">Click a variable to copy it, then paste it into a prompt's text.</p>
-      <div className="settings-item">
-        {data.variables.map((v: PromptVariable) => (
-          <div key={v.code} className="settings-row">
-            <button type="button" onClick={() => copyVar(v.code)}><code>{"{" + v.code + "}"}</code></button>
-            <strong>{v.label}</strong>
-            <span className="hint">{v.description}</span>
-            {!v.builtin && (
-              <button className="btn-danger-sm" onClick={() => deleteVariable(v.code)}>Delete</button>
-            )}
-          </div>
-        ))}
-        <form onSubmit={createVariable} className="settings-row">
-          <input
-            placeholder="code (e.g. group_id)"
-            value={newVariable.code}
-            onChange={(e) => setNewVariable((v) => ({ ...v, code: e.target.value }))}
-          />
-          <input
-            placeholder="Label"
-            value={newVariable.label}
-            onChange={(e) => setNewVariable((v) => ({ ...v, label: e.target.value }))}
-          />
-          <input
-            placeholder="Description"
-            value={newVariable.description}
-            onChange={(e) => setNewVariable((v) => ({ ...v, description: e.target.value }))}
-          />
-          <button type="submit" disabled={!newVariable.code.trim() || !newVariable.label.trim()}>
-            Add variable
-          </button>
-        </form>
-        <p className="hint">
-          Only variables with matching backend support (currently <code>{"{photo_id}"}</code> and{" "}
-          <code>{"{user_nsid}"}</code>) are actually substituted — others are documentation only.
-        </p>
+      <div className="llm-active-card" style={{ marginTop: 24 }}>
+        <div>
+          <div className="llm-section-label">Substitution variables</div>
+          <p className="hint" style={{ margin: "4px 0 0" }}>
+            Reference for writing prompts — click one to copy it, then paste it into a prompt's text. Only{" "}
+            <code>{"{photo_id}"}</code> and <code>{"{user_nsid}"}</code> are actually substituted by the
+            backend; the rest are documentation only.
+          </p>
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {data.variables.map((v: PromptVariable) => (
+            <div key={v.code} className="prompt-var-row">
+              <button type="button" className="prompt-var-token" onClick={() => copyVar(v.code)}>
+                {"{" + v.code + "}"}
+              </button>
+              <strong>{v.label}</strong>
+              <span className="prompt-var-desc">{v.description}</span>
+              {!v.builtin && (
+                <button className="btn-danger-sm" onClick={() => deleteVariable(v.code)}>Delete</button>
+              )}
+            </div>
+          ))}
+          <form onSubmit={createVariable} className="settings-row">
+            <input
+              placeholder="code (e.g. group_id)"
+              value={newVariable.code}
+              onChange={(e) => setNewVariable((v) => ({ ...v, code: e.target.value }))}
+            />
+            <input
+              placeholder="Label"
+              value={newVariable.label}
+              onChange={(e) => setNewVariable((v) => ({ ...v, label: e.target.value }))}
+            />
+            <input
+              placeholder="Description"
+              value={newVariable.description}
+              onChange={(e) => setNewVariable((v) => ({ ...v, description: e.target.value }))}
+            />
+            <button type="submit" disabled={!newVariable.code.trim() || !newVariable.label.trim()}>
+              Add variable
+            </button>
+          </form>
+        </div>
       </div>
     </div>
   );
