@@ -53,7 +53,7 @@ export function PhotoId({
         onClick={sendToChat}
         title={`Send photo ID ${id} to chat`}
       >
-        💬
+        ➤
       </button>
     </span>
   );
