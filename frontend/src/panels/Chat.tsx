@@ -809,9 +809,14 @@ export function Chat() {
     bus.emit("openPanel", "models");
   }, []);
 
-  const openPromptsPanel = useCallback(() => {
-    bus.emit("openPanel", "prompts");
-  }, []);
+  // Models & Prompts are both already reachable from the View ▾ menu, so
+  // they don't also need dedicated buttons here — except when there's no
+  // model configured at all, where sending a message can't work regardless;
+  // that gets an explicit "go set one up" prompt in place of the composer
+  // (see hasAnyModel below) rather than a permanent toolbar button.
+  const hasAnyModel = !!llmCfg && Object.entries(llmCfg.connections).some(
+    ([cid, conn]) => !conn.paused && (modelsByConnection[cid]?.length ?? 0) > 0,
+  );
 
   return (
     <div className="panel chat">
@@ -888,20 +893,6 @@ export function Chat() {
         >
           {autoApprove ? "🔓" : "🔒"}
         </button>
-        <button
-          onClick={openModelsPanel}
-          title="Open models &amp; providers panel"
-          className="icon-btn"
-        >
-          ⚙
-        </button>
-        <button
-          onClick={openPromptsPanel}
-          title="Open prompts panel"
-          className="icon-btn"
-        >
-          📝
-        </button>
         {activeId && (
           <button onClick={deleteConversation} title="Delete conversation" className="icon-btn">
             🗑
@@ -914,10 +905,18 @@ export function Chat() {
             <ErrorBanner message={error} onCancelTurn={cancelTurn} onContinue={continueTurn} />
           </div>
         )}
-        {msgs.length === 0 && !error && (
+        {!hasAnyModel && !error && (
+          <div className="no-model-notice">
+            <p className="hint">No model is configured yet — add a connection to start chatting.</p>
+            <button type="button" className="btn-sm" onClick={openModelsPanel}>
+              Open Models panel
+            </button>
+          </div>
+        )}
+        {hasAnyModel && msgs.length === 0 && !error && (
           <p className="hint">
             Ask about your photos, or use a workflow button from the Commands panel or a
-            photo's detail view. Configure providers via the ⚙ panel first.
+            photo's detail view.
           </p>
         )}
         {msgs.map((m, i) => (
@@ -1070,7 +1069,14 @@ export function Chat() {
           ref={inputRef}
           value={input}
           rows={2}
-          placeholder={streaming ? "Add info to the running turn…" : "Message the workbench agent…"}
+          disabled={!hasAnyModel}
+          placeholder={
+            !hasAnyModel
+              ? "No model configured — see the notice above"
+              : streaming
+                ? "Add info to the running turn…"
+                : "Message the workbench agent…"
+          }
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === "Enter" && !e.shiftKey) {
@@ -1101,7 +1107,7 @@ export function Chat() {
             </button>
           </>
         ) : (
-          <button type="submit" disabled={!input.trim()}>
+          <button type="submit" disabled={!input.trim() || !hasAnyModel}>
             Send
           </button>
         )}
