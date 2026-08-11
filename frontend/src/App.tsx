@@ -25,7 +25,6 @@ import { Settings } from "./panels/Settings";
 import { MobileLayout } from "./MobileLayout";
 import { useIsMobile } from "./useIsMobile";
 import { CommandPalette, paletteShortcut } from "./CommandPalette";
-import { ThemeMenu } from "./ThemeMenu";
 import { UserMenu } from "./UserMenu";
 import { PANEL_SPECS, PANEL_ORDER, openOrFocusPanel } from "./panelDefs";
 
@@ -68,14 +67,9 @@ function defaultLayout(api: DockviewApi) {
     id: "chat",
     component: "chat",
     title: "Chat",
-    position: { referencePanel: "summary", direction: "below" },
+    position: { referencePanel: "summary", direction: "within" },
   });
-  api.addPanel({
-    id: "command",
-    component: "command",
-    title: "Commands",
-    position: { referencePanel: "chat", direction: "within" },
-  });
+  
   api.getPanel("chat")?.api.setActive();
 }
 
@@ -90,12 +84,7 @@ export default function App() {
   const isMobile = useIsMobile();
   const [me, setMe] = useState<Me | null>(null);
   const [openPanels, setOpenPanels] = useState<Set<string>>(new Set(PANEL_ORDER));
-  // View and Theme live in the same left-hand nav group and are mutually
-  // exclusive, so one flag tracks "which of the two is open" — this is also
-  // what makes the hover-swap below (hovering the other button while one is
-  // already open) a one-line state change instead of two dropdowns racing
-  // to close each other.
-  const [openMenu, setOpenMenu] = useState<"view" | "theme" | null>(null);
+  const [viewMenuOpen, setViewMenuOpen] = useState(false);
   const navRef = useRef<HTMLDivElement>(null);
   const saveTimer = useRef<number | undefined>(undefined);
   const dockApi = useRef<DockviewApi | null>(null);
@@ -103,7 +92,7 @@ export default function App() {
   useEffect(() => {
     const handler = (e: MouseEvent) => {
       if (navRef.current && !navRef.current.contains(e.target as Node)) {
-        setOpenMenu(null);
+        setViewMenuOpen(false);
       }
     };
     document.addEventListener("mousedown", handler);
@@ -112,7 +101,7 @@ export default function App() {
 
   const handlePanelClick = useCallback((id: string) => {
     if (dockApi.current) openOrFocusPanel(dockApi.current, id);
-    setOpenMenu(null);
+    setViewMenuOpen(false);
   }, []);
 
   const emitHashFocus = useCallback(() => {
@@ -188,18 +177,15 @@ export default function App() {
         <div className="topbar-left">
           <span className="topbar-title">Mr. E's Photo Workbench</span>
           <nav className="topbar-nav" ref={navRef}>
-            <div
-              className="view-dropdown"
-              onMouseEnter={() => setOpenMenu((m) => (m === "theme" ? "view" : m))}
-            >
+            <div className="view-dropdown">
               <button
                 className="view-dropdown-toggle"
-                onClick={() => setOpenMenu((m) => (m === "view" ? null : "view"))}
+                onClick={() => setViewMenuOpen((o) => !o)}
                 title={`Show/hide panels (${paletteShortcut})`}
               >
                 View ▾
               </button>
-              {openMenu === "view" && (
+              {viewMenuOpen && (
                 <div className="view-dropdown-menu">
                   {PANEL_ORDER.map((id) => (
                     <button key={id} onClick={() => handlePanelClick(id)}>
@@ -209,12 +195,6 @@ export default function App() {
                   ))}
                 </div>
               )}
-            </div>
-            <div onMouseEnter={() => setOpenMenu((m) => (m === "view" ? "theme" : m))}>
-              <ThemeMenu
-                open={openMenu === "theme"}
-                onOpenChange={(o) => setOpenMenu(o ? "theme" : null)}
-              />
             </div>
           </nav>
         </div>

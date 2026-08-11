@@ -1,4 +1,4 @@
-// Mobile Shell v2: a compact topbar (title + panel/theme/user dropdowns,
+// Mobile Shell v2: a compact topbar (title + panel/user dropdowns,
 // mirroring the desktop topbar) above a single-select content pane, with
 // Chat pinned to a fixed-height footer — replacing the desktop dockview grid
 // for viewports under 768px. Chat no longer repositions between top and
@@ -18,7 +18,6 @@ import { Sync } from "./panels/Sync";
 import { Queue } from "./panels/Queue";
 import { Setup } from "./panels/Setup";
 import { Settings } from "./panels/Settings";
-import { ThemeMenu } from "./ThemeMenu";
 import { UserMenu } from "./UserMenu";
 
 const PANELS = [
@@ -75,7 +74,6 @@ export function MobileLayout({ me }: { me: Me | null }) {
         <span className="topbar-title">Mr. E's Photo Workbench</span>
         <div className="topbar-right">
           <PanelMenu panels={PANELS} active={panel} onSelect={switchPanel} />
-          <ThemeMenu />
           <UserMenu me={me} className="mobile-user" />
         </div>
       </header>

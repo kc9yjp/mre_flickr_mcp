@@ -235,14 +235,6 @@ body {
   gap: 1px;
 }
 
-/* Theme's dropdown panel defaults to right-aligned (built for sitting at the
-   right edge of the topbar, and reused there by MobileLayout) — flip it to
-   open rightward from the left nav group instead. */
-.topbar-nav .theme-menu-panel {
-  left: 0;
-  right: auto;
-}
-
 .topbar-right {
   display: flex;
   align-items: center;
@@ -349,6 +341,10 @@ body {
   left: auto;
   right: 0;
   min-width: 150px;
+}
+
+.user-menu-submenu-toggle {
+  justify-content: space-between;
 }
 
 .flickr-link-menu .view-dropdown-menu {
@@ -1401,18 +1397,10 @@ select:focus {
   min-width: 170px;
 }
 
-.mobile-user {
-  max-width: 26vw;
-}
-
-.mobile-user .view-dropdown-toggle {
-  max-width: 100%;
-}
-
+/* Avatar-only on mobile — the name/caret label takes too much of the
+   already-tight topbar, and the avatar alone is enough of a tap target. */
 .mobile-user .user-menu-label {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  display: none;
 }
 
 .mobile-content-scroll {
@@ -2273,29 +2261,22 @@ select:focus {
   color: var(--danger);
 }
 
-/* --- Theme menu --- */
+/* --- Theme picker (nested inside UserMenu's dropdown as a sub-item —
+   see .user-menu-submenu-toggle) --- */
 
-.theme-menu {
-  position: relative;
-}
-
-.theme-menu-panel {
-  position: absolute;
-  top: calc(100% + 4px);
-  right: 0;
-  background: var(--surface-raised);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 10px;
+/* Its buttons live inside .view-dropdown-menu, so every selector here is
+   qualified under .theme-picker to out-specificity ".view-dropdown-menu
+   button" rather than get clobbered by it. */
+.theme-picker {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  min-width: 220px;
-  z-index: 100;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  padding: 2px 10px 8px;
+  margin-bottom: 2px;
+  border-bottom: 1px solid var(--border);
 }
 
-.theme-menu-section-label {
+.theme-picker .theme-menu-section-label {
   color: var(--ink-muted);
   font-size: 0.6875rem;
   text-transform: uppercase;
@@ -2303,17 +2284,17 @@ select:focus {
   margin-top: 4px;
 }
 
-.theme-menu-section-label:first-child {
+.theme-picker .theme-menu-section-label:first-child {
   margin-top: 0;
 }
 
-.theme-swatch-grid {
+.theme-picker .theme-swatch-grid {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
   gap: 6px;
 }
 
-.theme-swatch {
+.theme-picker .theme-swatch {
   display: flex;
   align-items: center;
   gap: 4px;
@@ -2323,7 +2304,7 @@ select:focus {
   border: 1px solid var(--border);
 }
 
-.theme-swatch.active {
+.theme-picker .theme-swatch.active {
   border-color: var(--accent);
 }
 
@@ -2338,19 +2319,19 @@ select:focus {
 .theme-swatch-paper    { background: #f7f1e3; color: #2b2417; }
 .theme-swatch-mist     { background: #eef2f6; color: #1c232b; }
 
-.font-size-row {
+.theme-picker .font-size-row {
   display: flex;
   flex-wrap: wrap;
   gap: 4px;
 }
 
-.font-size-btn {
+.theme-picker .font-size-btn {
   flex: 1;
   padding: 4px 8px;
   font-size: 0.75rem;
 }
 
-.font-size-btn.active {
+.theme-picker .font-size-btn.active {
   border-color: var(--accent);
   color: var(--accent);
 }
