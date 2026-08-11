@@ -852,6 +852,17 @@ select:focus {
   animation: pulse 2s ease-in-out infinite;
 }
 
+/* Auto-approve OFF (🔒) — `color` has no effect on multi-color emoji glyphs,
+   so `filter` (which does) dims the icon itself, not just the (invisible on
+   an emoji) text color, reinforcing the locked/unlocked shape difference. */
+.icon-btn.auto-approve-off {
+  filter: grayscale(1) opacity(0.55);
+}
+
+.icon-btn.auto-approve-off:hover {
+  filter: grayscale(0.4) opacity(0.8);
+}
+
 .chat-messages {
   flex: 1;
   overflow-y: auto;

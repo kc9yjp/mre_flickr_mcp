@@ -889,7 +889,7 @@ export function Chat() {
         <button
           onClick={() => setAutoApprove((a) => !a)}
           title={autoApprove ? "Auto-approve ON — writes execute immediately" : "Auto-approve OFF — writes wait for your confirmation"}
-          className={autoApprove ? "icon-btn active" : "icon-btn"}
+          className={autoApprove ? "icon-btn active" : "icon-btn auto-approve-off"}
         >
           {autoApprove ? "🔓" : "🔒"}
         </button>
