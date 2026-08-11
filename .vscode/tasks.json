@@ -91,6 +91,52 @@
         "kind": "build",
         "isDefault": false
       }
+    },
+    {
+      "label": "Podman: Start Mock UI Preview",
+      "type": "shell",
+      "command": "podman rm -f mre_flickr_mcp_frontend-dev_1 2>/dev/null; COMPOSE_PROFILES=dev podman-compose up -d frontend-dev && echo 'Starting at http://localhost:5173/app/ — first run needs a few seconds for npm ci + vite (see \"Podman: View Mock UI Preview Logs\")'",
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "showReuseMessage": false
+      },
+      "problemMatcher": [],
+      "group": {
+        "kind": "build",
+        "isDefault": false
+      }
+    },
+    {
+      "label": "Podman: Stop Mock UI Preview",
+      "type": "shell",
+      "command": "podman-compose stop frontend-dev",
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "showReuseMessage": false
+      },
+      "problemMatcher": [],
+      "group": {
+        "kind": "build",
+        "isDefault": false
+      }
+    },
+    {
+      "label": "Podman: View Mock UI Preview Logs",
+      "type": "shell",
+      "command": "podman logs -f mre_flickr_mcp_frontend-dev_1",
+      "isBackground": true,
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "showReuseMessage": false
+      },
+      "problemMatcher": [],
+      "group": {
+        "kind": "build",
+        "isDefault": false
+      }
     }
   ]
 }

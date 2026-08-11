@@ -53,6 +53,8 @@ docker image rm flickr-frontend-check   # cleanup, it's just a verification buil
 
 A full `docker compose build` also rebuilds it (as the first stage) and copies `frontend/dist` into the final image — see `Dockerfile`.
 
+**Interface-design work without a running backend:** see [MOCK_PREVIEW.md](MOCK_PREVIEW.md) — a live Vite dev server (or static build) against fake, in-memory API data instead of the real Python server. VS Code task "Podman: Start Mock UI Preview", or `COMPOSE_PROFILES=dev podman-compose up -d frontend-dev` → `http://localhost:5173/app/`.
+
 ## Web UI
 
 Visit `http://localhost:8000` after starting the container:

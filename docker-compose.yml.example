@@ -33,6 +33,25 @@ services:
     stdin_open: true
     profiles: [stdio]
 
+  # Live Vite dev server against fake/mocked API data (see
+  # frontend/src/mock/mockApi.ts) — no Python backend, no .env, no Flickr
+  # OAuth needed. For interface-design work only. Node isn't installed on
+  # the host, so this runs the plain node:22-alpine image directly rather
+  # than reusing the Dockerfile's frontend build stage. Start with:
+  #   podman-compose --profile dev up frontend-dev
+  # then open http://localhost:5173/app/ (the /app/ base path matches
+  # vite.config.ts, same as the real server's mount point).
+  frontend-dev:
+    image: node:22-alpine
+    working_dir: /build
+    command: sh -c "npm ci && npm run dev:mock -- --host 0.0.0.0"
+    volumes:
+      - ./frontend:/build
+      - frontend-node-modules:/build/node_modules
+    ports:
+      - "5173:5173"
+    profiles: [dev]
+
   # Standalone Chroma — only needed if you want the vector store queryable
   # from outside the server process. The default (embedded) mode keeps Chroma
   # in-process under data/{username}/chroma and needs no service at all.
@@ -54,3 +73,4 @@ volumes:
   flickr-creds:
   flickr-data:
   chroma-data:
+  frontend-node-modules:

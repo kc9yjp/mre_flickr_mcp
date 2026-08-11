@@ -178,6 +178,7 @@ playwright/.auth/
 # Workbench frontend
 frontend/node_modules/
 frontend/tsconfig.tsbuildinfo
+frontend/dist-mock/
 
 # tailscale config
 tailscale/serve-config.json
