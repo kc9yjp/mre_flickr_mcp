@@ -1,9 +1,10 @@
 // Summary panel: collection stat tiles (photos, views, groups, albums,
-// contacts) and the top-20 tag list.
+// contacts) and the top-20 tag list. Sync status/history has its own
+// dedicated Sync panel — not duplicated here.
 
 import { useEffect, useRef, useState } from "react";
 import { getJSON, Stats, SyncStatus } from "../api";
-import { compactNumber, relativeTime, syncStatusLabel } from "../format";
+import { compactNumber } from "../format";
 
 function Tile({ label, value }: { label: string; value: string }) {
   return (
@@ -16,9 +17,9 @@ function Tile({ label, value }: { label: string; value: string }) {
 
 export function Summary() {
   const [stats, setStats] = useState<Stats | null>(null);
-  const [sync, setSync] = useState<SyncStatus | null>(null);
   const [error, setError] = useState("");
   const timer = useRef<number | undefined>(undefined);
+  const wasRunningRef = useRef(false);
 
   useEffect(() => {
     let alive = true;
@@ -28,16 +29,17 @@ export function Summary() {
         .then((s) => alive && setStats(s))
         .catch((e) => alive && setError(e.message));
 
-    // Poll sync status: 5s while a sync runs, 30s when idle (matches app.js).
+    // Poll sync status purely to catch a running→idle transition and
+    // refresh the stat tiles once a sync (triggered from the Sync panel,
+    // Command panel, etc.) finishes elsewhere — no table rendered here,
+    // see the Sync panel for that. 5s while a sync runs, 30s when idle.
     const poll = async () => {
-      let running = false;
+      let running = wasRunningRef.current;
       try {
         const status = await getJSON<SyncStatus>("/api/sync/status");
         if (!alive) return;
-        setSync((prev) => {
-          if (prev?.running && !status.running) loadStats(); // sync just finished
-          return status;
-        });
+        if (wasRunningRef.current && !status.running) loadStats(); // sync just finished
+        wasRunningRef.current = status.running;
         running = status.running;
       } catch {
         // transient poll failure — keep last known state
@@ -79,41 +81,6 @@ export function Summary() {
           </span>
         ))}
       </div>
-      <h3>Sync</h3>
-      {sync ? (
-        <table className="sync-table">
-          <thead>
-            <tr>
-              <th>Type</th>
-              <th>Total</th>
-              <th>Pending summaries</th>
-              <th>Last</th>
-              <th>Duration</th>
-              <th>Status</th>
-            </tr>
-          </thead>
-          <tbody>
-            {sync.rows.map((r) => (
-              <tr key={r.type}>
-                <td>{r.type}</td>
-                <td>{r.total != null ? compactNumber(r.total) : "—"}</td>
-                <td>{r.pending_summary != null ? compactNumber(r.pending_summary) : "—"}</td>
-                <td>{relativeTime(r.last)}</td>
-                <td>{r.duration ?? "—"}</td>
-                <td>
-                  {r.running ? (
-                    <span className="badge-running">{syncStatusLabel(r.running, r.phase)}</span>
-                  ) : (
-                    "idle"
-                  )}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      ) : (
-        <p>Loading…</p>
-      )}
     </div>
   );
 }
