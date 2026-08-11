@@ -3,7 +3,7 @@
 // system (not user-editable) — each one pins its prompts' workflow buttons
 // to a specific page, shown here as a badge on the category's group header
 // rather than a picker. Prompts within a group are accordion cards (mirrors
-// the connection/model cards in ModelsPage): click a row to expand it into
+// the connection/model cards in Models): click a row to expand it into
 // an editor, click again (or Save/Reset) to collapse it.
 
 import { FormEvent, useEffect, useRef, useState } from "react";

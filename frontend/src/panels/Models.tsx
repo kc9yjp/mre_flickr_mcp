@@ -79,7 +79,7 @@ function Switch({
   );
 }
 
-export function ModelsPage() {
+export function Models() {
   const [cfg, setCfg] = useState<LLMSettings | null>(null);
   const [presets, setPresets] = useState<Record<string, ConnectionPreset> | null>(null);
   const [status, setStatus] = useState("");

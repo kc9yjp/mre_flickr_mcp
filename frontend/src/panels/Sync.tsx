@@ -7,7 +7,7 @@ import { formatDuration, relativeTime, syncStatusLabel } from "../format";
 
 const SYNC_TYPES = ["photos", "contacts", "groups", "albums"] as const;
 
-export function SyncPage() {
+export function Sync() {
   const [sync, setSync] = useState<SyncStatus | null>(null);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");

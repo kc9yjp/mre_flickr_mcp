@@ -14,17 +14,17 @@ import { PhotoBrowser } from "./panels/PhotoBrowser";
 import { PhotoViewer } from "./panels/PhotoViewer";
 import { Summary } from "./panels/Summary";
 import { Command } from "./panels/Command";
-import { SyncPage } from "./panels/SyncPage";
-import { QueuePage } from "./panels/QueuePage";
-import { SetupPage } from "./panels/SetupPage";
-import { SettingsPage } from "./panels/SettingsPage";
+import { Sync } from "./panels/Sync";
+import { Queue } from "./panels/Queue";
+import { Setup } from "./panels/Setup";
+import { Settings } from "./panels/Settings";
 import { ThemeMenu } from "./ThemeMenu";
 import { UserMenu } from "./UserMenu";
 
 const PANELS = [
   { id: "summary",  label: "Stats" },
   { id: "photos",   label: "Photos" },
-  { id: "photo-viewer", label: "Photo Viewer" },
+  { id: "photoViewer", label: "Photo Viewer" },
   { id: "sync",     label: "Sync" },
   { id: "queue",    label: "Queue" },
   { id: "commands", label: "Commands" },
@@ -38,13 +38,13 @@ const PANEL_KEY = "mobile-panel-v1";
 
 const PANEL_COMPONENTS: Record<PanelId, React.FC> = {
   photos: PhotoBrowser,
-  "photo-viewer": PhotoViewer,
+  photoViewer: PhotoViewer,
   summary: Summary,
   commands: Command,
-  sync: SyncPage,
-  queue: QueuePage,
-  setup: SetupPage,
-  settings: SettingsPage,
+  sync: Sync,
+  queue: Queue,
+  setup: Setup,
+  settings: Settings,
 };
 
 export function MobileLayout({ me }: { me: Me | null }) {

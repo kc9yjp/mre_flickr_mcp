@@ -12,7 +12,7 @@ interface Setting {
   value: string;
 }
 
-export function SettingsPage() {
+export function Settings() {
   const [settings, setSettings] = useState<Setting[]>([]);
   const [values, setValues] = useState<Record<string, string>>({});
   const [msg, setMsg] = useState("");

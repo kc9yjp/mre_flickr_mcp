@@ -2,7 +2,7 @@
 
 import { PromptsSection } from "./PromptsSection";
 
-export function PromptsPage() {
+export function Prompts() {
   return (
     <div className="panel">
       <h2>Prompts</h2>

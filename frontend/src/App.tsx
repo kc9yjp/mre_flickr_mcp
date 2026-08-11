@@ -16,12 +16,12 @@ import { PhotoViewer } from "./panels/PhotoViewer";
 import { Summary } from "./panels/Summary";
 import { Command } from "./panels/Command";
 import { Chat } from "./panels/Chat";
-import { ModelsPage } from "./panels/ModelsPage";
-import { PromptsPage } from "./panels/PromptsPage";
-import { SyncPage } from "./panels/SyncPage";
-import { QueuePage } from "./panels/QueuePage";
-import { SetupPage } from "./panels/SetupPage";
-import { SettingsPage } from "./panels/SettingsPage";
+import { Models } from "./panels/Models";
+import { Prompts } from "./panels/Prompts";
+import { Sync } from "./panels/Sync";
+import { Queue } from "./panels/Queue";
+import { Setup } from "./panels/Setup";
+import { Settings } from "./panels/Settings";
 import { MobileLayout } from "./MobileLayout";
 import { useIsMobile } from "./useIsMobile";
 import { CommandPalette, paletteShortcut } from "./CommandPalette";
@@ -29,28 +29,39 @@ import { ThemeMenu } from "./ThemeMenu";
 import { UserMenu } from "./UserMenu";
 import { PANEL_SPECS, PANEL_ORDER, openOrFocusPanel } from "./panelDefs";
 
-const LAYOUT_KEY = "workbench-layout-v1";
+// v2: bumped when the "photo-viewer" panel id was renamed to "photoViewer" so
+// any layout saved under the old id (which the components map no longer
+// resolves) is discarded in favor of a fresh defaultLayout() instead of
+// risking a broken restore.
+const LAYOUT_KEY = "workbench-layout-v2";
 
 const components: Record<string, React.FC<IDockviewPanelProps>> = {
   photos: PhotoBrowser,
-  "photo-viewer": PhotoViewer,
+  photoViewer: PhotoViewer,
   summary: Summary,
   command: Command,
   chat: Chat,
-  models: ModelsPage,
-  prompts: PromptsPage,
-  sync: SyncPage,
-  queue: QueuePage,
-  setup: SetupPage,
-  settings: SettingsPage,
+  models: Models,
+  prompts: Prompts,
+  sync: Sync,
+  queue: Queue,
+  setup: Setup,
+  settings: Settings,
 };
 
 function defaultLayout(api: DockviewApi) {
   api.addPanel({ id: "photos", component: "photos", title: "Photo Browser" });
   api.addPanel({
+    id: "photoViewer",
+    component: "photoViewer",
+    title: "Photo Viewer",
+    position: { referencePanel: "photos", direction: "within" },
+    inactive: true, // keep Photo Browser as the visible tab initially
+  });
+  api.addPanel({
     id: "summary",
     component: "summary",
-    title: "Summary",
+    title: "Flickr Summary",
     position: { referencePanel: "photos", direction: "right" },
   });
   api.addPanel({
@@ -138,8 +149,8 @@ export default function App() {
   // both hash deep-links (emitHashFocus) and in-app grid clicks, on desktop
   // (dockApi) and mobile (switchPanel) alike.
   useEffect(() => bus.on("viewPhoto", () => {
-    if (dockApi.current) openOrFocusPanel(dockApi.current, "photo-viewer");
-    bus.emit("switchPanel", "photo-viewer");
+    if (dockApi.current) openOrFocusPanel(dockApi.current, "photoViewer");
+    bus.emit("switchPanel", "photoViewer");
   }), []);
 
   const onReady = (event: DockviewReadyEvent) => {

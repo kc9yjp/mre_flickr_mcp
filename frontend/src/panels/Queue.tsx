@@ -4,7 +4,7 @@
 import { useEffect, useState } from "react";
 import { QueueData, getJSON, postJSON } from "../api";
 
-export function QueuePage() {
+export function Queue() {
   const [data, setData] = useState<QueueData | null>(null);
   const [error, setError] = useState("");
   const [msg, setMsg] = useState("");

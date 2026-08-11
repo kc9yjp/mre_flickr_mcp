@@ -28,7 +28,7 @@ function CopyButton({ text }: { text: string }) {
   );
 }
 
-export function SetupPage() {
+export function Setup() {
   const [data, setData] = useState<SetupData | null>(null);
   const [error, setError] = useState("");
   const [tab, setTab] = useState<string>("claude_code");
