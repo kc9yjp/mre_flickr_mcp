@@ -14,24 +14,25 @@ import { PhotoBrowser } from "./panels/PhotoBrowser";
 import { PhotoViewer } from "./panels/PhotoViewer";
 import { Summary } from "./panels/Summary";
 import { Command } from "./panels/Command";
+import { Models } from "./panels/Models";
+import { Prompts } from "./panels/Prompts";
 import { Sync } from "./panels/Sync";
 import { Queue } from "./panels/Queue";
 import { Setup } from "./panels/Setup";
 import { Settings } from "./panels/Settings";
 import { UserMenu } from "./UserMenu";
+import { PANEL_SPECS, PANEL_ORDER, PanelId as AllPanelId } from "./panelDefs";
 
-const PANELS = [
-  { id: "summary",  label: "Stats" },
-  { id: "photos",   label: "Photos" },
-  { id: "photoViewer", label: "Photo Viewer" },
-  { id: "sync",     label: "Sync" },
-  { id: "queue",    label: "Queue" },
-  { id: "commands", label: "Commands" },
-  { id: "setup",    label: "Setup" },
-  { id: "settings", label: "Settings" },
-] as const;
+// Ids, titles, and order all come from panelDefs.ts — the same registry the
+// desktop View menu and the Ctrl/Cmd-K command palette use — so there's one
+// definition of "what panels exist" for the whole app. Chat is the one
+// panel excluded here: it's pinned to the fixed footer below and always
+// visible, so it has no place in a switchable list.
+type PanelId = Exclude<AllPanelId, "chat">;
 
-type PanelId = (typeof PANELS)[number]["id"];
+const PANELS = PANEL_ORDER
+  .filter((id): id is PanelId => id !== "chat")
+  .map((id) => ({ id, label: PANEL_SPECS[id].title }));
 
 const PANEL_KEY = "mobile-panel-v1";
 
@@ -39,7 +40,9 @@ const PANEL_COMPONENTS: Record<PanelId, React.FC> = {
   photos: PhotoBrowser,
   photoViewer: PhotoViewer,
   summary: Summary,
-  commands: Command,
+  command: Command,
+  models: Models,
+  prompts: Prompts,
   sync: Sync,
   queue: Queue,
   setup: Setup,

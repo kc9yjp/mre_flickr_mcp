@@ -32,7 +32,10 @@ import { PANEL_SPECS, PANEL_ORDER, openOrFocusPanel } from "./panelDefs";
 // any layout saved under the old id (which the components map no longer
 // resolves) is discarded in favor of a fresh defaultLayout() instead of
 // risking a broken restore.
-const LAYOUT_KEY = "workbench-layout-v2";
+// v3: bumped when defaultLayout()'s arrangement switched to the chat-centric
+// hub (chat right of photoViewer, summary nested within chat) so a layout
+// saved under the old arrangement doesn't linger.
+const LAYOUT_KEY = "workbench-layout-v3";
 
 const components: Record<string, React.FC<IDockviewPanelProps>> = {
   photos: PhotoBrowser,
@@ -48,28 +51,24 @@ const components: Record<string, React.FC<IDockviewPanelProps>> = {
   settings: Settings,
 };
 
+// Both titles and positions come from PANEL_SPECS (the single source of
+// truth also used by the View menu, the command palette, and
+// openOrFocusPanel) — defaultLayout() only decides which panels start open
+// (photos, photoViewer, chat, summary; everything else stays closed until
+// opened from the View menu) and adds them in dependency order so each
+// referencePanel already exists by the time it's needed.
 function defaultLayout(api: DockviewApi) {
-  api.addPanel({ id: "photos", component: "photos", title: "Photo Browser" });
-  api.addPanel({
-    id: "photoViewer",
-    component: "photoViewer",
-    title: "Photo Viewer",
-    position: { referencePanel: "photos", direction: "within" },
-    inactive: true, // keep Photo Browser as the visible tab initially
-  });
-  api.addPanel({
-    id: "summary",
-    component: "summary",
-    title: "Flickr Summary",
-    position: { referencePanel: "photos", direction: "right" },
-  });
-  api.addPanel({
-    id: "chat",
-    component: "chat",
-    title: "Chat",
-    position: { referencePanel: "summary", direction: "within" },
-  });
-  
+  for (const id of ["photos", "photoViewer", "chat", "summary"] as const) {
+    const spec = PANEL_SPECS[id];
+    api.addPanel({
+      id,
+      component: id,
+      title: spec.title,
+      position: spec.position,
+      inactive: id === "photoViewer", // keep Photo Browser as the visible tab initially
+    });
+  }
+
   api.getPanel("chat")?.api.setActive();
 }
 
