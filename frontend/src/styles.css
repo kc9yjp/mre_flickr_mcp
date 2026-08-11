@@ -1341,14 +1341,11 @@ select:focus {
   flex-direction: column;
   flex: 0 0 300px;
   min-height: 0;
-  border-top: 1px solid var(--border);
 }
 
 @media (orientation: landscape) {
   .mobile-chat-pane {
     flex: 0 0 40%;
-    border-top: none;
-    border-right: 1px solid var(--border);
   }
 }
 
@@ -1357,6 +1354,57 @@ select:focus {
   display: flex;
   flex-direction: column;
   min-height: 0;
+}
+
+/* Drag handle between the top content pane and the pinned-bottom chat pane
+   (see MobileLayout.tsx) — lets the user resize how much of the screen each
+   gets. touch-action: none stops the browser from treating the drag as a
+   page scroll instead of a resize. Its border does the job the chat pane's
+   own border-top/border-right used to (the divider line between the two). */
+.mobile-resize-handle {
+  flex: 0 0 auto;
+  width: 100%;
+  height: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  touch-action: none;
+  cursor: row-resize;
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+}
+
+.mobile-resize-handle-grip {
+  width: 36px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--border);
+}
+
+.mobile-resize-handle:hover .mobile-resize-handle-grip,
+.mobile-resize-handle:active .mobile-resize-handle-grip,
+.mobile-resize-handle:focus-visible .mobile-resize-handle-grip {
+  background: var(--ink-secondary);
+}
+
+.mobile-resize-handle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+@media (orientation: landscape) {
+  .mobile-resize-handle {
+    width: 16px;
+    height: 100%;
+    cursor: col-resize;
+    border-top: none;
+    border-left: 1px solid var(--border);
+  }
+
+  .mobile-resize-handle-grip {
+    width: 4px;
+    height: 36px;
+  }
 }
 
 .mobile-topbar {
