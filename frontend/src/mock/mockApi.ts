@@ -169,7 +169,10 @@ const LLM: LLMSettings = {
 const CATEGORIES: PromptCategory[] = [
   { id: "own_photo", name: "My Photos", description: "Shown on your own photos in the viewer.", sort_order: 1, builtin: true },
   { id: "other_photo", name: "Other Photos", description: "Shown when viewing someone else's photo.", sort_order: 2, builtin: true },
-  { id: "global", name: "Global", description: "Always available from the Chat panel.", sort_order: 3, builtin: true },
+  // category_id "collection" (context "global") — matches the real app's
+  // default-prompts.md; this is what PhotoBrowser.tsx filters on to show
+  // its row of example-prompt buttons under "My Photos".
+  { id: "collection", name: "My Collection", description: "Shown on the Photo Browser panel, runs against your whole library.", sort_order: 3, builtin: true },
 ];
 const VARIABLES: PromptVariable[] = [
   { code: "photo_id", label: "Photo ID", description: "The currently focused photo's id.", resolved_by: "focused photo", builtin: true },
@@ -189,7 +192,9 @@ const PROMPTS: Prompt[] = [
   makePrompt(1, "p1", "suggest_metadata", "Suggest metadata", "own_photo", "photo", "Suggest a title, description, and tags for photo {photo_id}."),
   makePrompt(2, "p2", "find_groups", "Find matching groups", "own_photo", "photo", "Find groups this photo {photo_id} would fit well in."),
   makePrompt(3, "p3", "compliment", "Suggest a comment", "other_photo", "photo", "Write a genuine, specific comment for photo {photo_id}."),
-  makePrompt(4, "p4", "weekly_review", "Weekly review", "global", "global", "Summarize this week's activity across my photos."),
+  makePrompt(4, "p4", "reply_to_comments", "Reply to comments", "collection", "global", "Find recent comments on my photos I haven't replied to yet and draft replies."),
+  makePrompt(5, "p5", "review_weak_photos", "Review weak photos", "collection", "global", "Find weak photos (low views, no favorites or comments) and suggest improving or hiding them."),
+  makePrompt(6, "p6", "unearth_private", "Unearth private photos", "collection", "global", "Review private photos from oldest to newest and decide which ones to publish."),
 ];
 const promptsData = (): PromptsData => ({ categories: CATEGORIES, prompts: PROMPTS, variables: VARIABLES });
 const COMMANDS: WorkflowCommand[] = PROMPTS.map((p) => ({
