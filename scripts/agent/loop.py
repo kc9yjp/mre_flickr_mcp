@@ -693,7 +693,7 @@ async def run_turn(
                             "name": name,
                             "arguments": raw_args,
                             "photo": None,
-                            "group": None,
+                            "groups": None,
                             "warning": None,
                         }
                         decision = await _await_confirmation(confirm_id, future)
@@ -742,18 +742,28 @@ async def run_turn(
                         await asyncio.to_thread(_photo_preview_sync, user, target_id)
                         if target_id else None
                     )
-                    group_id = str(args.get("group_id", ""))
-                    group = (
-                        await asyncio.to_thread(_group_preview_sync, user, group_id)
-                        if group_id else None
-                    )
+                    # add_to_group takes a list (group_ids); every other
+                    # group tool takes a single group_id — normalize both
+                    # into one id list so the card can show every group name.
+                    raw_group_ids = args.get("group_ids")
+                    if isinstance(raw_group_ids, list):
+                        group_ids = [str(g) for g in raw_group_ids if str(g).strip()]
+                    else:
+                        single = str(args.get("group_id", "") or "")
+                        group_ids = [single] if single else []
+                    groups = [
+                        g for g in await asyncio.gather(
+                            *(asyncio.to_thread(_group_preview_sync, user, gid) for gid in group_ids)
+                        )
+                        if g
+                    ] or None
                     yield {
                         "type": "confirm_request",
                         "confirm_id": confirm_id,
                         "name": name,
                         "arguments": raw_args,
                         "photo": photo,
-                        "group": group,
+                        "groups": groups,
                         "warning": _omission_warning(omitted_fields) if omitted_fields else None,
                     }
                     decision = await _await_confirmation(confirm_id, future)

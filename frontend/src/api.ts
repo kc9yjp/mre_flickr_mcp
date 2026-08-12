@@ -361,7 +361,7 @@ export type StreamEvent =
       name: string;
       arguments: string;
       photo: { id: string; title: string; thumb_url: string | null } | null;
-      group: { id: string; name: string } | null;
+      groups: { id: string; name: string }[] | null;
       warning: string | null;
     }
   | {

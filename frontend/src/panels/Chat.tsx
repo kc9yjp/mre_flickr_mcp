@@ -49,7 +49,7 @@ interface PendingConfirm {
   name: string;
   arguments: string;
   photo: { id: string; title: string; thumb_url: string | null } | null;
-  group: { id: string; name: string } | null;
+  groups: { id: string; name: string }[] | null;
   warning: string | null;
 }
 
@@ -984,9 +984,10 @@ export function Chat() {
                 </span>
               </div>
             )}
-            {confirm.group && (
+            {confirm.groups && (
               <p className="hint">
-                Group: {confirm.group.name || "(unknown)"} — {confirm.group.id}
+                {confirm.groups.length === 1 ? "Group: " : "Groups: "}
+                {confirm.groups.map((g) => g.name || "(unknown)").join(", ")}
               </p>
             )}
             <pre>{prettyArgs(confirm.arguments)}</pre>
