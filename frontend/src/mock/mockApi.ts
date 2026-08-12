@@ -356,6 +356,7 @@ function registerRoutes() {
     total_latency_ms: 15400, last_prompt_tokens: 1290, context_window: 128000,
   } satisfies SessionStats));
   on("POST", "/api/chat/confirm", () => json({ ok: true }));
+  on("POST", "/api/chat/answer", () => json({ ok: true }));
   on("POST", "/api/chat/cancel", () => json({ ok: false }));
   on("POST", "/api/chat/inject", () => json({ ok: true }));
   on("POST", "/api/chat/conversations/:id/compact", () => json({ ok: true, summary: "(mock) conversation compacted." }));
