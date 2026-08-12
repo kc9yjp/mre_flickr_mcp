@@ -2298,74 +2298,89 @@ select:focus {
   color: var(--ink-secondary);
 }
 
-/* --- Session Stats (collapsible strip at the bottom of the Chat panel) --- */
+/* --- Session Stats (single-line strip at the bottom of the Chat panel,
+   identical on mobile and desktop — see Chat.tsx) --- */
 
 .chat-stats-bar {
   display: flex;
-  flex-direction: column;
-  gap: 4px;
+  justify-content: center;
   padding: 2px 8px 8px;
   font-size: 0.75rem;
   flex: none;
 }
 
-/* Mobile-only: the always-visible compact summary line that expands/
-   collapses the full .stats-grid below it (see Chat.tsx) — styled to read
-   as a plain hint line with a clickable affordance, not a heavy button. */
-.stats-toggle {
+/* One line, centered as a group. Never wider than the panel: the row
+   itself doesn't scroll or overflow — .stat-item below divides exactly
+   into the available width instead. */
+.stats-grid {
   display: flex;
+  flex-wrap: nowrap;
+  justify-content: center;
+  align-items: stretch;
+  gap: 3px;
+  width: 100%;
+  max-width: 100%;
+}
+
+/* Each stat is a button so its label can be tapped open on truncation (see
+   .stat-revealed below) — reset it back to plain text first. flex-basis 0 +
+   equal grow/shrink makes all eight boxes split the row's width evenly —
+   same width as each other, growing on bigger screens and shrinking on
+   small ones, but the row as a whole never exceeds the space available.
+   max-width just stops them ballooning on very wide screens. */
+.stat-item {
+  display: flex;
+  flex-direction: column;
   align-items: center;
-  justify-content: space-between;
-  gap: 6px;
-  background: transparent;
+  justify-content: flex-start;
+  flex: 1 1 0;
+  min-width: 0;
+  max-width: 92px;
+  box-sizing: border-box;
+  padding: 2px 4px 1px;
   border: none;
-  padding: 2px 0;
-  color: var(--ink-secondary);
-  font-size: 0.75rem;
-  text-align: left;
+  border-radius: 4px;
+  background: var(--surface-subtle);
+  font: inherit;
   cursor: pointer;
 }
 
-.stats-toggle:hover {
-  color: var(--ink);
-}
-
-.stats-toggle-caret {
-  flex: none;
-  color: var(--ink-muted);
-}
-
-.stats-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
-  gap: 3px;
-}
-
-.stat-item {
-  display: flex;
-  flex-direction: row;
-  align-items: baseline;
-  gap: 4px;
-  padding: 2px 5px;
-  border-radius: 4px;
-  background: var(--surface-subtle);
-}
-
+/* Truncated to one line by default — the box may not be wide enough on
+   small screens to show the full label. Tapping the stat (Chat.tsx toggles
+   .stat-revealed for ~1.5s) lets it wrap and show in full instead.
+   margin-top: auto pushes it down to sit at the bottom of the box, below
+   whatever space the value on top doesn't use. */
 .stat-label {
+  display: block;
+  width: 100%;
+  margin-top: auto;
   color: var(--ink-muted);
-  font-size: 0.625rem;
+  font-size: 0.5rem;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: center;
 }
 
-.stat-label::after {
-  content: ":";
+.stat-item.stat-revealed .stat-label {
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
 }
 
+/* Value sits at the top of the box, label underneath. Also truncated to one
+   line — min-width: 0 above means the box can shrink past its content's
+   natural width on very narrow screens. */
 .stat-value {
+  display: block;
+  width: 100%;
   color: var(--accent);
   font-weight: 600;
   font-size: 0.75rem;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: center;
 }
 
 /* Flag the Context Used stat when the window is filling up, matching the

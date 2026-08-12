@@ -23,7 +23,6 @@ import * as bus from "../bus";
 import { classifyFlickrUrl, FlickrRoute } from "../flickrUrl";
 import { compactNumber, formatLatency } from "../format";
 import { Markdown } from "../markdown";
-import { useIsMobile } from "../useIsMobile";
 
 interface ToolCard {
   id: string;
@@ -321,15 +320,23 @@ export function Chat() {
   useEffect(refreshConversations, [refreshConversations]);
 
   // Polled session stats, both for the context-used% shown next to the
-  // Compact button and for the stats strip at the bottom. The strip is
-  // collapsible only on mobile, where screen space is scarce; it's always
-  // open otherwise.
-  const isMobile = useIsMobile();
+  // Compact button and for the one-line stats strip at the bottom, which is
+  // identical on mobile and desktop — narrow viewports just hide the labels
+  // via CSS, leaving bare values, since there isn't room to show both.
   const [stats, setStats] = useState<SessionStats | null>(null);
-  // Defaults closed on mobile (crowds the screen; toggle it back on with the
-  // ⋯ button) — irrelevant to desktop, where statsVisible ignores this flag.
-  const [statsOpen, setStatsOpen] = useState(false);
-  const statsVisible = statsOpen || !isMobile;
+  // Which stat's label was last tapped, so it can be shown briefly even
+  // when the viewport is too narrow to display labels all the time. Cleared
+  // on a timer — see revealStatLabel below.
+  const [revealedStat, setRevealedStat] = useState<string | null>(null);
+  const revealTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const revealStatLabel = useCallback((key: string) => {
+    setRevealedStat(key);
+    if (revealTimeoutRef.current) clearTimeout(revealTimeoutRef.current);
+    revealTimeoutRef.current = setTimeout(() => setRevealedStat(null), 1500);
+  }, []);
+  useEffect(() => () => {
+    if (revealTimeoutRef.current) clearTimeout(revealTimeoutRef.current);
+  }, []);
   useEffect(() => {
     const refresh = () => {
       const id = activeIdRef.current;
@@ -1194,62 +1201,34 @@ export function Chat() {
         )}
        </form>
         <div className="chat-stats-bar">
-          {!stats || stats.turns === 0 ? (
-            <span className="hint">No turns yet in this conversation.</span>
-          ) : isMobile ? (
-            // Nothing hidden by default — a compact one-line summary is
-            // always visible, and it's the tap target for the full
-            // grid below (no separate, unlabeled "⋯" glyph to decode).
-            <button
-              type="button"
-              className="stats-toggle"
-              onClick={() => setStatsOpen((o) => !o)}
-              aria-expanded={statsOpen}
-              title={statsOpen ? "Hide detailed stats" : "Show detailed stats"}
-            >
-              {compactNumber(stats.turns)} turns · {compactNumber(stats.total_tokens)} tokens ·{" "}
-              {contextUse?.percent ?? 0}% context
-              <span className="stats-toggle-caret">{statsOpen ? "▴" : "▾"}</span>
-            </button>
-          ) : null}
-          {statsVisible && stats && stats.turns > 0 && (
-            <div className="stats-grid">
-              <div className="stat-item">
-                <span className="stat-label">Turns</span>
-                <span className="stat-value">{compactNumber(stats.turns)}</span>
-              </div>
-              <div className="stat-item">
-                <span className="stat-label">Tokens</span>
-                <span className="stat-value">{compactNumber(stats.total_tokens)}</span>
-              </div>
-              <div className="stat-item">
-                <span className="stat-label">Prompt</span>
-                <span className="stat-value">{compactNumber(stats.prompt_tokens)}</span>
-              </div>
-              <div className="stat-item">
-                <span className="stat-label">Completion</span>
-                <span className="stat-value">{compactNumber(stats.completion_tokens)}</span>
-              </div>
-              <div className="stat-item">
-                <span className="stat-label">Avg Latency</span>
-                <span className="stat-value">{formatLatency(avgLatencyMs)}</span>
-              </div>
-              <div className="stat-item">
-                <span className="stat-label">Avg Tokens/Turn</span>
-                <span className="stat-value">{compactNumber(avgTokensPerTurn)}</span>
-              </div>
-              <div className={`stat-item${contextUse && contextUse.level !== "ok" ? ` context-${contextUse.level}` : ""}`}>
-                <span className="stat-label">
-                  Context Used{contextUse?.level === "critical" ? " · at risk" : ""}
-                </span>
-                <span className="stat-value">{contextUse?.percent ?? 0}%</span>
-              </div>
-              <div className="stat-item">
-                <span className="stat-label">Total Latency</span>
-                <span className="stat-value">{formatLatency(stats.total_latency_ms)}</span>
-              </div>
-            </div>
-          )}
+          <div className="stats-grid">
+            {[
+              { key: "turns", label: "Turns", value: compactNumber(stats?.turns ?? 0) },
+              { key: "tokens", label: "Tokens", value: compactNumber(stats?.total_tokens ?? 0) },
+              { key: "prompt", label: "Prompt", value: compactNumber(stats?.prompt_tokens ?? 0) },
+              { key: "completion", label: "Completion", value: compactNumber(stats?.completion_tokens ?? 0) },
+              { key: "avg-latency", label: "Avg Latency", value: formatLatency(avgLatencyMs) },
+              { key: "avg-tokens", label: "Avg Tokens/Turn", value: compactNumber(avgTokensPerTurn) },
+              {
+                key: "context",
+                label: `Context Used${contextUse?.level === "critical" ? " · at risk" : ""}`,
+                value: `${contextUse?.percent ?? 0}%`,
+                extraClass: contextUse && contextUse.level !== "ok" ? ` context-${contextUse.level}` : "",
+              },
+              { key: "total-latency", label: "Total Latency", value: formatLatency(stats?.total_latency_ms ?? 0) },
+            ].map(({ key, label, value, extraClass }) => (
+              <button
+                key={key}
+                type="button"
+                className={`stat-item${extraClass ?? ""}${revealedStat === key ? " stat-revealed" : ""}`}
+                onClick={() => revealStatLabel(key)}
+                title={label}
+              >
+                <span className="stat-value">{value}</span>
+                <span className="stat-label">{label}</span>
+              </button>
+            ))}
+          </div>
         </div>
         </>
       )}
