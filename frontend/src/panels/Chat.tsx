@@ -1116,58 +1116,61 @@ export function Chat() {
         )}
        </form>
         <div className="chat-stats-bar">
-          {isMobile && (
+          {!stats || stats.turns === 0 ? (
+            <span className="hint">No turns yet in this conversation.</span>
+          ) : isMobile ? (
+            // Nothing hidden by default — a compact one-line summary is
+            // always visible, and it's the tap target for the full
+            // grid below (no separate, unlabeled "⋯" glyph to decode).
             <button
               type="button"
-              className="icon-btn"
+              className="stats-toggle"
               onClick={() => setStatsOpen((o) => !o)}
-              title={statsOpen ? "Hide session stats" : "Show session stats"}
               aria-expanded={statsOpen}
+              title={statsOpen ? "Hide detailed stats" : "Show detailed stats"}
             >
-              ⋯
+              {compactNumber(stats.turns)} turns · {compactNumber(stats.total_tokens)} tokens ·{" "}
+              {contextUse?.percent ?? 0}% context
+              <span className="stats-toggle-caret">{statsOpen ? "▴" : "▾"}</span>
             </button>
-          )}
-          {statsVisible && (
-            stats && stats.turns > 0 ? (
-              <div className="stats-grid">
-                <div className="stat-item">
-                  <span className="stat-label">Turns</span>
-                  <span className="stat-value">{compactNumber(stats.turns)}</span>
-                </div>
-                <div className="stat-item">
-                  <span className="stat-label">Tokens</span>
-                  <span className="stat-value">{compactNumber(stats.total_tokens)}</span>
-                </div>
-                <div className="stat-item">
-                  <span className="stat-label">Prompt</span>
-                  <span className="stat-value">{compactNumber(stats.prompt_tokens)}</span>
-                </div>
-                <div className="stat-item">
-                  <span className="stat-label">Completion</span>
-                  <span className="stat-value">{compactNumber(stats.completion_tokens)}</span>
-                </div>
-                <div className="stat-item">
-                  <span className="stat-label">Avg Latency</span>
-                  <span className="stat-value">{formatLatency(avgLatencyMs)}</span>
-                </div>
-                <div className="stat-item">
-                  <span className="stat-label">Avg Tokens/Turn</span>
-                  <span className="stat-value">{compactNumber(avgTokensPerTurn)}</span>
-                </div>
-                <div className={`stat-item${contextUse && contextUse.level !== "ok" ? ` context-${contextUse.level}` : ""}`}>
-                  <span className="stat-label">
-                    Context Used{contextUse?.level === "critical" ? " · at risk" : ""}
-                  </span>
-                  <span className="stat-value">{contextUse?.percent ?? 0}%</span>
-                </div>
-                <div className="stat-item">
-                  <span className="stat-label">Total Latency</span>
-                  <span className="stat-value">{formatLatency(stats.total_latency_ms)}</span>
-                </div>
+          ) : null}
+          {statsVisible && stats && stats.turns > 0 && (
+            <div className="stats-grid">
+              <div className="stat-item">
+                <span className="stat-label">Turns</span>
+                <span className="stat-value">{compactNumber(stats.turns)}</span>
               </div>
-            ) : (
-              <span className="hint">No turns yet in this conversation.</span>
-            )
+              <div className="stat-item">
+                <span className="stat-label">Tokens</span>
+                <span className="stat-value">{compactNumber(stats.total_tokens)}</span>
+              </div>
+              <div className="stat-item">
+                <span className="stat-label">Prompt</span>
+                <span className="stat-value">{compactNumber(stats.prompt_tokens)}</span>
+              </div>
+              <div className="stat-item">
+                <span className="stat-label">Completion</span>
+                <span className="stat-value">{compactNumber(stats.completion_tokens)}</span>
+              </div>
+              <div className="stat-item">
+                <span className="stat-label">Avg Latency</span>
+                <span className="stat-value">{formatLatency(avgLatencyMs)}</span>
+              </div>
+              <div className="stat-item">
+                <span className="stat-label">Avg Tokens/Turn</span>
+                <span className="stat-value">{compactNumber(avgTokensPerTurn)}</span>
+              </div>
+              <div className={`stat-item${contextUse && contextUse.level !== "ok" ? ` context-${contextUse.level}` : ""}`}>
+                <span className="stat-label">
+                  Context Used{contextUse?.level === "critical" ? " · at risk" : ""}
+                </span>
+                <span className="stat-value">{contextUse?.percent ?? 0}%</span>
+              </div>
+              <div className="stat-item">
+                <span className="stat-label">Total Latency</span>
+                <span className="stat-value">{formatLatency(stats.total_latency_ms)}</span>
+              </div>
+            </div>
           )}
         </div>
         </>

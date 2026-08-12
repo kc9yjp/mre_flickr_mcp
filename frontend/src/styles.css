@@ -525,8 +525,12 @@ select:focus {
 }
 
 .photo-id-copy {
-  padding: 1px 3px;
-  font-size: 0.75rem;
+  /* .icon-btn is a fixed 28×28 box (sized for the chat toolbar) — way too
+     big for this compact caption-row context, and what was making these
+     look oversized/misaligned next to the small stats text beside them. */
+  width: 18px;
+  height: 18px;
+  font-size: 0.6875rem;
 }
 
 .thumb-stats {
@@ -1143,7 +1147,7 @@ select:focus {
 .chat-input {
   display: flex;
   gap: 6px;
-  padding: 8px;
+  padding: 8px 8px 4px;
   border-top: 1px solid var(--border);
   flex: none;
 }
@@ -2280,21 +2284,43 @@ select:focus {
 
 .chat-stats-bar {
   display: flex;
-  align-items: flex-start;
-  gap: 6px;
-  padding: 4px 8px 8px;
+  flex-direction: column;
+  gap: 4px;
+  padding: 2px 8px 8px;
   font-size: 0.75rem;
   flex: none;
 }
 
-.chat-stats-bar .stats-grid {
-  flex: 1;
+/* Mobile-only: the always-visible compact summary line that expands/
+   collapses the full .stats-grid below it (see Chat.tsx) — styled to read
+   as a plain hint line with a clickable affordance, not a heavy button. */
+.stats-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  background: transparent;
+  border: none;
+  padding: 2px 0;
+  color: var(--ink-secondary);
+  font-size: 0.75rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.stats-toggle:hover {
+  color: var(--ink);
+}
+
+.stats-toggle-caret {
+  flex: none;
+  color: var(--ink-muted);
 }
 
 .stats-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
-  gap: 4px;
+  gap: 3px;
 }
 
 .stat-item {
@@ -2302,7 +2328,7 @@ select:focus {
   flex-direction: row;
   align-items: baseline;
   gap: 4px;
-  padding: 3px 6px;
+  padding: 2px 5px;
   border-radius: 4px;
   background: var(--surface-subtle);
 }
