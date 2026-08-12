@@ -3,9 +3,10 @@
 // search. Clicking a photo opens it in the separate Photo Viewer panel.
 // Clearing any non-default mode always returns to My Photos.
 
-import { FormEvent, useCallback, useEffect, useState } from "react";
+import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import {
   Album,
+  ApiError,
   getJSON,
   getGroupInfo,
   getGroupPhotos,
@@ -18,8 +19,10 @@ import {
   lookupUser,
   Photo,
   PhotoPage,
+  postJSON,
   searchFlickrPhotos,
   searchGroups,
+  SyncStatus,
   UserProfile,
 } from "../api";
 import * as bus from "../bus";
@@ -109,6 +112,19 @@ export function PhotoBrowser() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [photoListLabel, setPhotoListLabel] = useState<string | null>(null);
+
+  // My Photos' refresh checks Flickr for new photos (a background sync) before
+  // reloading the local list, rather than just re-querying the same cached
+  // rows — see refresh() below. syncingPhotos drives the button's disabled
+  // state while that sync + poll loop is in flight.
+  const [syncingPhotos, setSyncingPhotos] = useState(false);
+  const aliveRef = useRef(true);
+  useEffect(() => {
+    aliveRef.current = true;
+    return () => {
+      aliveRef.current = false;
+    };
+  }, []);
 
   // My Photos
   const [filters, setFilters] = useState<Filters>(DEFAULT_FILTERS);
@@ -536,13 +552,56 @@ export function PhotoBrowser() {
     }
   };
 
+  // Poll /api/sync/status until the photos sync finishes, then reload the
+  // local list — the sync writes into the same DB `load` reads from, so new
+  // photos only show up once the background job actually lands, not right
+  // after it's triggered.
+  const pollPhotoSync = useCallback(() => {
+    const check = async () => {
+      let running = false;
+      try {
+        running = (await getJSON<SyncStatus>("/api/sync/status")).running;
+      } catch {
+        // Treat a failed status poll as "done" rather than spinning forever.
+      }
+      if (!aliveRef.current) return;
+      if (running) {
+        window.setTimeout(check, 2000);
+        return;
+      }
+      setSyncingPhotos(false);
+      load(filters, 0);
+    };
+    check();
+  }, [filters, load]);
+
+  // My Photos' refresh checks Flickr for new photos first (an incremental
+  // sync) rather than just re-querying the same cached rows the panel
+  // already has. A 409 means a sync — from here, the Sync panel, or the
+  // background refresh task — is already running; just ride that one out
+  // instead of erroring.
+  const refreshMinePhotos = async () => {
+    setSyncingPhotos(true);
+    setError("");
+    try {
+      await postJSON("/api/sync/photos");
+    } catch (e) {
+      if (!(e instanceof ApiError && e.status === 409)) {
+        setSyncingPhotos(false);
+        setError(e instanceof Error ? e.message : String(e));
+        return;
+      }
+    }
+    pollPhotoSync();
+  };
+
   // Re-fetch whatever's currently on screen from the top, same mode dispatch
   // as loadMore above but reloading page 1 instead of appending. A workflow
   // photo list (photoListLabel) has no query to re-run — its ids aren't kept
   // in state past the initial load — so refresh is a no-op there.
   const refresh = () => {
     if (mode === "mine" && !photoListLabel) {
-      load(filters, 0);
+      refreshMinePhotos();
     } else if (mode === "albums" && selectedAlbum) {
       setPage(1);
       loadAlbumPhotos(selectedAlbum, 1);
@@ -565,10 +624,16 @@ export function PhotoBrowser() {
     <div className="panel photo-browser">
       <button
         type="button"
-        className="icon-btn panel-refresh-btn"
+        className={syncingPhotos ? "icon-btn panel-refresh-btn active" : "icon-btn panel-refresh-btn"}
         onClick={refresh}
-        disabled={loading}
-        title="Refresh"
+        disabled={loading || syncingPhotos}
+        title={
+          mode === "mine" && !photoListLabel
+            ? syncingPhotos
+              ? "Checking Flickr for new photos…"
+              : "Check Flickr for new photos"
+            : "Refresh"
+        }
       >
         ↻
       </button>
