@@ -541,6 +541,15 @@ select:focus {
   line-height: 1;
 }
 
+/* .photo-id already has gap: 0, so the two 15px boxes sit edge-to-edge —
+   any tighter has to pull the second button in on top of that, via
+   negative margin, rather than shrinking the box itself (which would also
+   shrink the glyph and click target). Half the box width overlaps them by
+   half, halving the visual distance between the two glyphs. */
+.photo-id-copy + .photo-id-copy {
+  margin-left: -7px;
+}
+
 .thumb-stats {
   color: var(--ink-muted);
   font-size: 0.75rem;
