@@ -837,21 +837,6 @@ export function Chat() {
       {llmCfg && (
         <>
           <div className="chat-header">
-        <select
-          value={activeId ?? ""}
-          onChange={(e) => (e.target.value ? openConversation(e.target.value) : newConversation())}
-        >
-          <option value="">＋ New conversation</option>
-          {conversations.map((c) => (
-            <option key={c.id} value={c.id}>
-              {c.title}
-            </option>
-          ))}
-        </select>
-        <button onClick={newConversation} title="New conversation" className="icon-btn">
-          ＋
-        </button>
-
         {/* Connection + model selector — one flat "Connection: model" list */}
         <select
           value={connectionModel}
@@ -872,19 +857,29 @@ export function Chat() {
             ));
           })}
         </select>
-        {(() => {
-          const { connectionId } = parseSelector(connectionModel);
-          const cid = connectionId || llmCfg?.active_connection || "";
-          return cid ? (
-            <button
-              onClick={() => refreshConnectionModels(cid)}
-              title="Refresh model list"
-              className="icon-btn"
-            >
-              ↻
-            </button>
-          ) : null;
-        })()}
+
+        <select
+          value={activeId ?? ""}
+          onChange={(e) => (e.target.value ? openConversation(e.target.value) : newConversation())}
+        >
+          <option value="">＋ New conversation</option>
+          {conversations.map((c) => (
+            <option key={c.id} value={c.id}>
+              {c.title}
+            </option>
+          ))}
+        </select>
+        <button onClick={newConversation} title="New conversation" className="icon-btn">
+          ＋
+        </button>
+        <button
+          onClick={deleteConversation}
+          title="Delete conversation"
+          className="icon-btn"
+          disabled={!activeId}
+        >
+          🗑
+        </button>
 
         <button
           onClick={() => setAutoApprove((a) => !a)}
@@ -893,11 +888,19 @@ export function Chat() {
         >
           {autoApprove ? "🔓" : "🔒"}
         </button>
-        {activeId && (
-          <button onClick={deleteConversation} title="Delete conversation" className="icon-btn">
-            🗑
-          </button>
-        )}
+        {(() => {
+          const { connectionId } = parseSelector(connectionModel);
+          const cid = connectionId || llmCfg?.active_connection || "";
+          return cid ? (
+            <button
+              onClick={() => refreshConnectionModels(cid)}
+              title="Refresh model list"
+              className="icon-btn push-right"
+            >
+              ↻
+            </button>
+          ) : null;
+        })()}
       </div>
       <div className="chat-messages" ref={scrollRef}>
         {error && (

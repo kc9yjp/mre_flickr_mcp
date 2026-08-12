@@ -768,7 +768,7 @@ select:focus {
 
 .chat-header {
   display: flex;
-  gap: 6px;
+  gap: 4px;
   padding: 8px;
   border-bottom: 1px solid var(--border);
   flex: none;
@@ -829,11 +829,20 @@ select:focus {
 }
 
 .icon-btn {
+  /* Fixed, centered box rather than padding-around-content sizing — color
+     emoji glyphs (🗑 🔒) have different intrinsic metrics than plain-text
+     symbols (+ ↻), so content-sized buttons end up different heights and
+     look unaligned as a row. A fixed box + centering makes every button
+     the same size no matter what glyph is inside it. */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
   background: transparent;
   border: 1px solid transparent;
   color: var(--ink-muted);
   border-radius: 4px;
-  padding: 3px 6px;
   font-size: 0.9375rem;
   cursor: pointer;
   flex: none;
@@ -857,6 +866,12 @@ select:focus {
    an emoji) text color, reinforcing the locked/unlocked shape difference. */
 .icon-btn.auto-approve-off {
   filter: grayscale(1) opacity(0.55);
+}
+
+/* Pins a flex-row button to the far right without needing a dedicated
+   spacer element — everything before it stays left-packed. */
+.push-right {
+  margin-left: auto;
 }
 
 .icon-btn.auto-approve-off:hover {
@@ -1490,7 +1505,8 @@ select:focus {
 }
 
 .mobile-chat-pane .icon-btn {
-  padding: 3px 5px;
+  width: 24px;
+  height: 24px;
 }
 
 /* --- Sync page --- */
