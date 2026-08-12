@@ -536,8 +536,42 @@ export function PhotoBrowser() {
     }
   };
 
+  // Re-fetch whatever's currently on screen from the top, same mode dispatch
+  // as loadMore above but reloading page 1 instead of appending. A workflow
+  // photo list (photoListLabel) has no query to re-run — its ids aren't kept
+  // in state past the initial load — so refresh is a no-op there.
+  const refresh = () => {
+    if (mode === "mine" && !photoListLabel) {
+      load(filters, 0);
+    } else if (mode === "albums" && selectedAlbum) {
+      setPage(1);
+      loadAlbumPhotos(selectedAlbum, 1);
+    } else if (mode === "user" && userSubMode === "photos" && userProfile) {
+      setPage(1);
+      loadUserPhotosPage(userProfile.nsid, 1);
+    } else if (mode === "user" && userSubMode === "albums" && selectedUserAlbum && userProfile) {
+      setPage(1);
+      loadUserAlbumPhotosPage(userProfile.nsid, selectedUserAlbum.id, 1);
+    } else if (mode === "group" && groupInfo) {
+      setPage(1);
+      loadGroupPhotosPage(groupInfo.id, 1);
+    } else if (mode === "search" && activeSearchQuery) {
+      setPage(1);
+      loadSearchPhotosPage(activeSearchQuery, 1);
+    }
+  };
+
   return (
     <div className="panel photo-browser">
+      <button
+        type="button"
+        className="icon-btn panel-refresh-btn"
+        onClick={refresh}
+        disabled={loading}
+        title="Refresh"
+      >
+        ↻
+      </button>
       <div className="browse-modes">
         {MODES.map((m) => (
           <button

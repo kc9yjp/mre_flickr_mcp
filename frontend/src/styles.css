@@ -560,11 +560,25 @@ select:focus {
   margin-bottom: 8px;
 }
 
+.photo-browser {
+  position: relative;
+}
+
+.panel-refresh-btn {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 5;
+}
+
 .browse-modes {
   display: flex;
   flex-wrap: wrap;
   gap: 4px;
   margin-bottom: 8px;
+  /* Reserves room so the mode tabs wrap before reaching the corner refresh
+     button instead of rendering underneath it. */
+  padding-right: 36px;
 }
 
 .browse-mode {
