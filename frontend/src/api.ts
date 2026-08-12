@@ -364,6 +364,12 @@ export type StreamEvent =
       group: { id: string; name: string } | null;
       warning: string | null;
     }
+  | {
+      type: "question_request";
+      question_id: string;
+      question: string;
+      options: string[] | null;
+    }
   | { type: "tool_result"; id: string; name: string; text: string }
   | { type: "focus"; photo_id: string }
   | { type: "photo_list"; photo_ids: string[] }

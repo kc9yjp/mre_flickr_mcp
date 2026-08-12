@@ -53,6 +53,12 @@ interface PendingConfirm {
   warning: string | null;
 }
 
+interface PendingQuestion {
+  question_id: string;
+  question: string;
+  options: string[] | null;
+}
+
 // Content is usually a plain string, but a stored tool result can be
 // multimodal (an image-fetching tool ran with vision on) — a list of
 // {type:"text"|"image_url", ...} parts. React can't render that list
@@ -272,6 +278,8 @@ export function Chat() {
   const [streaming, setStreaming] = useState(false);
   const [confirm, setConfirm] = useState<PendingConfirm | null>(null);
   const [denyReason, setDenyReason] = useState<string | null>(null);
+  const [question, setQuestion] = useState<PendingQuestion | null>(null);
+  const [questionAnswer, setQuestionAnswer] = useState("");
   const [error, setError] = useState("");
   const [autoApprove, setAutoApprove] = useState(false);
   // Messages typed while a turn is streaming, waiting to be sent as a fresh
@@ -428,7 +436,7 @@ export function Chat() {
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
-  }, [msgs, confirm]);
+  }, [msgs, confirm, question]);
 
   // Shared streaming plumbing for both a normal send() and a Continue-button
   // resume of a turn that hit loop.py's MAX_ITERATIONS cap. Callers push
@@ -495,9 +503,17 @@ export function Chat() {
                 setConfirm(event);
               }
               break;
+            case "question_request":
+              // Same "always actionable even if stale" reasoning as
+              // confirm_request above — an unanswered question just times
+              // out server-side and stalls that (invisible) turn.
+              setQuestion(event);
+              break;
             case "tool_result":
               setConfirm(null);
               setDenyReason(null);
+              setQuestion(null);
+              setQuestionAnswer("");
               if (stale()) break;
               patchLast((m) => ({
                 ...m,
@@ -586,6 +602,8 @@ export function Chat() {
       if (!stale()) {
         setConfirm(null);
         setDenyReason(null);
+        setQuestion(null);
+        setQuestionAnswer("");
       }
       refreshConversations();
     }
@@ -765,6 +783,18 @@ export function Chat() {
     setDenyReason(null);
     try {
       await postJSON("/api/chat/confirm", { confirm_id: confirm.confirm_id, approve, reason });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  const answerQuestion = async (answer: string) => {
+    if (!question) return;
+    const questionId = question.question_id;
+    setQuestion(null);
+    setQuestionAnswer("");
+    try {
+      await postJSON("/api/chat/answer", { question_id: questionId, answer });
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
@@ -1006,7 +1036,54 @@ export function Chat() {
             )}
           </div>
         )}
-        {streaming && !confirm && (
+        {question && (
+          <div className="confirm-card question-card">
+            <p>{question.question}</p>
+            {question.options && question.options.length > 0 ? (
+              <div className="confirm-actions question-options">
+                {question.options.map((opt) => (
+                  <button key={opt} type="button" onClick={() => answerQuestion(opt)}>
+                    {opt}
+                  </button>
+                ))}
+                <button
+                  type="button"
+                  className="cancel-chat-btn"
+                  onClick={cancelTurn}
+                  title="Stop the whole turn instead of answering"
+                >
+                  Cancel chat
+                </button>
+              </div>
+            ) : (
+              <form
+                className="deny-reason confirm-actions"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  answerQuestion(questionAnswer);
+                }}
+              >
+                <input
+                  autoFocus
+                  type="text"
+                  placeholder="Your answer…"
+                  value={questionAnswer}
+                  onChange={(e) => setQuestionAnswer(e.target.value)}
+                />
+                <button type="submit">Send</button>
+                <button
+                  type="button"
+                  className="cancel-chat-btn"
+                  onClick={cancelTurn}
+                  title="Stop the whole turn instead of answering"
+                >
+                  Cancel chat
+                </button>
+              </form>
+            )}
+          </div>
+        )}
+        {streaming && !confirm && !question && (
           <div className="streaming-row">
             <div className="streaming-indicator" aria-label="Working" role="status">
               <span className="dot" />

@@ -200,6 +200,24 @@ async def chat_confirm(request: Request):
     return JSONResponse({"ok": True})
 
 
+async def chat_answer(request: Request):
+    user = _session_user(request)
+    if not user:
+        return _unauthorized()
+    try:
+        body = await request.json()
+    except ValueError:
+        return JSONResponse({"error": "invalid JSON body"}, status_code=400)
+    ok = loop.resolve_question(
+        str(body.get("question_id", "")),
+        str(body.get("answer", "")),
+        username=user["username"],
+    )
+    if not ok:
+        return JSONResponse({"error": "unknown or expired question"}, status_code=404)
+    return JSONResponse({"ok": True})
+
+
 async def chat_conversations(request: Request):
     user = _session_user(request)
     if not user:
@@ -611,6 +629,7 @@ def api_routes() -> list[Route]:
         Route("/api/chat/cancel",  endpoint=chat_cancel, methods=["POST"]),
         Route("/api/chat/inject",  endpoint=chat_inject, methods=["POST"]),
         Route("/api/chat/confirm", endpoint=chat_confirm, methods=["POST"]),
+        Route("/api/chat/answer",  endpoint=chat_answer, methods=["POST"]),
         Route("/api/chat/conversations", endpoint=chat_conversations),
         Route("/api/chat/conversations/{id}", endpoint=chat_conversation_detail),
         Route("/api/chat/conversations/{id}/delete", endpoint=chat_conversation_delete, methods=["POST"]),

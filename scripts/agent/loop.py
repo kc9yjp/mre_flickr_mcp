@@ -6,6 +6,7 @@
     {"type": "delta", "text": ...}                       content tokens
     {"type": "tool_call", "id", "name", "arguments"}     model wants a tool
     {"type": "confirm_request", "confirm_id", "name", "arguments"}
+    {"type": "question_request", "question_id", "question", "options"}
     {"type": "tool_result", "id", "name", "text"}
     {"type": "focus", "photo_id"}                        drive the photo viewer
     {"type": "photo_list", "photo_ids"}                  populate the grid
@@ -42,7 +43,7 @@ from agent.wire import coerce_null_content as _coerce_null_content
 from agent.wire import wire_messages as _wire_messages
 
 MAX_ITERATIONS = 15
-CONFIRM_TIMEOUT = 300  # seconds to wait for the user's approve/deny
+CONFIRM_TIMEOUT = 300  # seconds to wait for the user's approve/deny/answer
 RESULT_CHAR_CAP = 20_000
 DEFAULT_CONTEXT_WINDOW = 128_000
 AUTO_COMPACT_THRESHOLD = 0.8  # fraction of context_window that triggers auto-compact
@@ -65,6 +66,36 @@ _REMEMBER_TOOL: dict = {
                 }
             },
             "required": ["guidance"],
+        },
+    },
+}
+
+_ASK_USER_TOOL: dict = {
+    "type": "function",
+    "function": {
+        "name": "ask_user",
+        "description": (
+            "Ask the user a question and wait for their answer before continuing. "
+            "Use this for clarification, a preference, or a decision that isn't a "
+            "yes/no on a specific write action (those already pause for approval "
+            "automatically) — e.g. picking between two title options, or what tags "
+            "to use. Provide `options` for a multiple-choice question (shown as "
+            "buttons), or omit it for free-text input."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "question": {
+                    "type": "string",
+                    "description": "The question to show the user.",
+                },
+                "options": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Optional choices to present as buttons. Omit for free text.",
+                },
+            },
+            "required": ["question"],
         },
     },
 }
@@ -113,6 +144,9 @@ _injections: dict[str, list[str]] = {}
 
 # confirm_id -> (owning username, Future resolved with True (approve) / False (deny))
 _pending_confirms: dict[str, tuple[str, asyncio.Future]] = {}
+
+# question_id -> (owning username, Future resolved with the user's answer text)
+_pending_questions: dict[str, tuple[str, asyncio.Future]] = {}
 
 # session key -> conversation_id of that session's currently in-flight turn
 # (at most one, per the turn lock). Lets a conversation delete find and cancel
@@ -281,6 +315,46 @@ async def _await_confirmation(confirm_id: str, future: asyncio.Future) -> dict:
         return {"approve": False, "reason": None}
     finally:
         _pending_confirms.pop(confirm_id, None)
+
+
+def resolve_question(question_id: str, answer: str, username: str | None = None) -> bool:
+    """Resolve a pending ask_user question. Returns False if unknown.
+
+    Mirrors resolve_confirm's ownership check: question_id is an unguessable
+    UUID, but without this any authenticated user who learned/leaked another
+    user's question_id could answer that user's pending question.
+    """
+    entry = _pending_questions.get(question_id)
+    if entry is None:
+        return False
+    owner, future = entry
+    if future.done():
+        return False
+    if username is not None and username != owner:
+        logging.warning(
+            "chat_answer: refusing question_id %s — owned by %s, requested by %s",
+            question_id, owner, username,
+        )
+        return False
+    future.set_result((answer or "").strip())
+    return True
+
+
+def _register_question(question_id: str, username: str) -> asyncio.Future:
+    """Create the pending future BEFORE the question_request event is emitted,
+    so an immediate /api/chat/answer can never race the generator."""
+    future: asyncio.Future = asyncio.get_running_loop().create_future()
+    _pending_questions[question_id] = (username, future)
+    return future
+
+
+async def _await_answer(question_id: str, future: asyncio.Future) -> str:
+    try:
+        return await asyncio.wait_for(future, timeout=CONFIRM_TIMEOUT)
+    except asyncio.TimeoutError:
+        return ""
+    finally:
+        _pending_questions.pop(question_id, None)
 
 
 async def _execute_tool(user: dict, name: str, args: dict) -> list:
@@ -496,7 +570,7 @@ async def run_turn(
     username = user["username"]
     nsid = user["nsid"]
     vision = bool(cfg.get("vision", False))
-    tools = schema.to_openai_tools() + [_REMEMBER_TOOL]
+    tools = schema.to_openai_tools() + [_REMEMBER_TOOL, _ASK_USER_TOOL]
     session_key = (username, session_id)
     _active_conversations[session_key] = conversation_id
 
@@ -630,6 +704,26 @@ async def run_turn(
                             text = f"User declined: {name} was not executed."
                             if decision["reason"]:
                                 text += f" Reason: {decision['reason']}"
+                    args = None
+
+                elif args is not None and name == "ask_user":
+                    question = (args.get("question") or "").strip()
+                    options = args.get("options")
+                    if not isinstance(options, list) or not all(isinstance(o, str) for o in options):
+                        options = None
+                    if not question:
+                        text = "Nothing to ask (empty question)."
+                    else:
+                        question_id = uuid.uuid4().hex
+                        future = _register_question(question_id, username)
+                        yield {
+                            "type": "question_request",
+                            "question_id": question_id,
+                            "question": question,
+                            "options": options,
+                        }
+                        answer = await _await_answer(question_id, future)
+                        text = f"User answered: {answer}" if answer else "(no response — timed out)"
                     args = None
 
                 elif args is not None and name not in mcp_tools._HANDLERS:

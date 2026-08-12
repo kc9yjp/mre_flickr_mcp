@@ -1144,6 +1144,10 @@ select:focus {
   padding: 4px 6px;
 }
 
+.question-options {
+  flex-wrap: wrap;
+}
+
 .chat-input {
   display: flex;
   gap: 6px;
