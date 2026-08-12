@@ -29,7 +29,6 @@ import * as bus from "../bus";
 import { compactNumber } from "../format";
 import { PhotoId } from "../PhotoId";
 import { SafeHtml } from "../safeHtml";
-import { useWorkflowCommands } from "../useWorkflowCommands";
 
 const PAGE_SIZE = 60;
 
@@ -104,8 +103,6 @@ function Thumb({ photo, onClick }: { photo: Photo; onClick: () => void }) {
 const GROUP_ID_RE = /^\d+@N\d+$/;
 
 export function PhotoBrowser() {
-  const collectionCommands = useWorkflowCommands("global").filter((c) => c.category_id === "collection");
-
   const [mode, setMode] = useState<Mode>("mine");
   const [photos, setPhotos] = useState<Photo[]>([]);
   const [total, setTotal] = useState(0);
@@ -653,20 +650,6 @@ export function PhotoBrowser() {
           </button>
         )}
       </div>
-
-      {mode === "mine" && collectionCommands.length > 0 && (
-        <div className="detail-workflows">
-          {collectionCommands.map((c) => (
-            <button
-              key={c.id}
-              title="Runs in the Chat panel"
-              onClick={() => bus.emit("runCommand", { title: c.label, text: c.prompt, promptId: c.prompt_id })}
-            >
-              ▶ {c.label}
-            </button>
-          ))}
-        </div>
-      )}
 
       {mode === "mine" &&
         (photoListLabel ? (

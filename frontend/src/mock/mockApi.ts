@@ -170,9 +170,9 @@ const CATEGORIES: PromptCategory[] = [
   { id: "own_photo", name: "My Photos", description: "Shown on your own photos in the viewer.", sort_order: 1, builtin: true },
   { id: "other_photo", name: "Other Photos", description: "Shown when viewing someone else's photo.", sort_order: 2, builtin: true },
   // category_id "collection" (context "global") — matches the real app's
-  // default-prompts.md; this is what PhotoBrowser.tsx filters on to show
-  // its row of example-prompt buttons under "My Photos".
-  { id: "collection", name: "My Collection", description: "Shown on the Photo Browser panel, runs against your whole library.", sort_order: 3, builtin: true },
+  // default-prompts.md; these show up as global commands on the Commands
+  // panel and command palette, not tied to any one photo.
+  { id: "collection", name: "My Collection", description: "Runs against your whole library, from the Commands panel.", sort_order: 3, builtin: true },
 ];
 const VARIABLES: PromptVariable[] = [
   { code: "photo_id", label: "Photo ID", description: "The currently focused photo's id.", resolved_by: "focused photo", builtin: true },
