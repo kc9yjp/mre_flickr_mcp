@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block content %}
+
+<h1>Authorize connector</h1>
+
+<div class="card card-hero">
+  <div class="hero-icon">&#128273;</div>
+  <p class="hero-text">
+    <strong>{{ client_name }}</strong> wants to access this Flickr MCP server
+    as <strong>{{ username }}</strong>.
+  </p>
+  <p>It will be able to use every MCP tool this server exposes — search and
+    update your photos, albums, and groups — the same as any client using
+    your personal API key.</p>
+  <form method="POST" action="/oauth/authorize">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <input type="hidden" name="client_id" value="{{ client_id }}">
+    <input type="hidden" name="redirect_uri" value="{{ redirect_uri }}">
+    <input type="hidden" name="state" value="{{ state }}">
+    <input type="hidden" name="code_challenge" value="{{ code_challenge }}">
+    <input type="hidden" name="code_challenge_method" value="{{ code_challenge_method }}">
+    <input type="hidden" name="scope" value="{{ scope }}">
+    <div class="modal-actions">
+      <button type="submit" name="decision" value="allow" class="btn">Allow &rarr;</button>
+      <button type="submit" name="decision" value="deny" class="btn btn-secondary">Deny</button>
+    </div>
+  </form>
+</div>
+
+{% endblock %}

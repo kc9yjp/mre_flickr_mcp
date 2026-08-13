@@ -12,10 +12,13 @@ successful login.  Sessions last 30 days.  Logging out only clears the session
 — credentials and the database are preserved so the user can re-authenticate
 without a full re-sync.
 
-The ``ApiKeyMiddleware`` maps incoming MCP API keys to their owner's NSID via
-the in-memory ``_api_key_registry``.  The ``_SSEHandler`` then sets the
-``db._current_user`` ContextVar so all tool handlers and ``_api_get``/``_api_post``
-resolve the correct per-user paths transparently.
+The ``ApiKeyMiddleware`` maps incoming MCP bearer credentials to their
+owner's NSID — either a static ``mcp_api_key`` via the in-memory
+``_api_key_registry``, or a short-lived OAuth access token via
+``oauth2.resolve_access_token`` (see ``oauth2.py`` for the connector-facing
+OAuth 2.1 authorization server this coexists with). The ``_SSEHandler`` then
+sets the ``db._current_user`` ContextVar so all tool handlers and
+``_api_get``/``_api_post`` resolve the correct per-user paths transparently.
 """
 
 import asyncio
@@ -48,6 +51,7 @@ from mcp_tools import (
     SYNC_SCRIPT, _active_syncs, _background_refresh, _get_user_lock, _run_sync_script,
     _sync_phase, _sync_progress, cancel_sync, server,
 )
+import oauth2
 
 import secrets
 from starlette.middleware.sessions import SessionMiddleware
@@ -341,6 +345,15 @@ async def route_oauth_callback(request: Request):
                                    extra_args=user_args, username=username, nsid=user_nsid)
 
     asyncio.create_task(_post_login_sync())
+
+    # If login was triggered from an in-progress OAuth-connector authorize
+    # request (oauth2.route_authorize stashed it before bouncing here),
+    # resume that instead of landing on the dashboard. Only ever a path this
+    # server itself generated, so no open-redirect risk.
+    next_url = request.session.pop("post_login_redirect", None)
+    if next_url and next_url.startswith("/oauth/authorize?"):
+        return RedirectResponse(next_url, status_code=303)
+
     return RedirectResponse("/?msg=ok", status_code=303)
 
 
@@ -572,13 +585,17 @@ class _StreamableHTTPHandler:
 
 
 class ApiKeyMiddleware(BaseHTTPMiddleware):
-    """Validate MCP API keys and attach the resolved user NSID to request state.
+    """Validate MCP bearer credentials and attach the resolved user NSID to
+    request state.
 
     Every request to ``/sse``, ``/messages``, or ``/mcp`` must carry a valid
-    API key via the ``X-API-Key`` header or ``Authorization: Bearer`` header.
-    The key is looked up in ``_api_key_registry`` (populated at startup and on
-    each login) and the matched NSID is stored in ``request.state.user_nsid``
-    for the transport handlers to consume.
+    credential via the ``X-API-Key`` header or ``Authorization: Bearer``
+    header — either the static, permanent ``mcp_api_key`` (looked up in
+    ``_api_key_registry``, populated at startup and on each login) used by
+    Claude Code's ``.mcp.json``, or a short-lived OAuth access token issued by
+    ``oauth2.py`` for a Desktop/claude.ai connector (looked up via
+    ``oauth2.resolve_access_token``). Either way the matched NSID is stored in
+    ``request.state.user_nsid`` for the transport handlers to consume.
     """
 
     async def dispatch(self, request: Request, call_next):
@@ -589,9 +606,20 @@ class ApiKeyMiddleware(BaseHTTPMiddleware):
                 auth = request.headers.get("Authorization", "")
                 if auth.startswith("Bearer "):
                     key = auth[7:]
-            if not key or key not in _api_key_registry:
-                return Response("Unauthorized", status_code=401)
-            request.state.user_nsid = _api_key_registry[key]
+            nsid = _api_key_registry.get(key) if key else None
+            if nsid is None and key:
+                nsid = oauth2.resolve_access_token(key)
+            if nsid is None:
+                # RFC 9728: point the client at the protected-resource metadata
+                # so Desktop/claude.ai can discover the OAuth flow instead of
+                # just failing — the static-key path has no such discovery,
+                # but advertising it costs nothing for clients that use it.
+                issuer = str(request.base_url).rstrip("/")
+                return Response(
+                    "Unauthorized", status_code=401,
+                    headers={"WWW-Authenticate": f'Bearer resource_metadata="{issuer}/.well-known/oauth-protected-resource"'},
+                )
+            request.state.user_nsid = nsid
         return await call_next(request)
 
 
@@ -600,6 +628,14 @@ class CSRFMiddleware(BaseHTTPMiddleware):
         if request.method == "POST":
             path = request.url.path
             if path.startswith("/sse") or path.startswith("/messages") or path == "/mcp":
+                return await call_next(request)
+
+            # oauth2.py's client-registration and token/revocation endpoints
+            # are called by the MCP client itself, not the browser — there's
+            # no session cookie and thus no CSRF token to check. (The consent
+            # form at POST /oauth/authorize *is* a real browser submission and
+            # goes through the normal form-CSRF branch below.)
+            if path in oauth2.NO_CSRF_PATHS:
                 return await call_next(request)
 
             # JSON API routes send the token as a header; checking it here
@@ -660,6 +696,7 @@ async def main_sse():
     from agent import routes as agent_routes
 
     _load_api_key_registry()
+    oauth2.load_token_registry()
 
     sse = SseServerTransport("/messages/")
     middleware = [
@@ -683,6 +720,7 @@ async def main_sse():
             Route("/login/start",    endpoint=route_login_start),
             Route("/oauth/callback", endpoint=route_oauth_callback),
             Route("/logout",         endpoint=route_logout, methods=["POST"]),
+            *oauth2.oauth_routes(),
             *webapi.api_routes(),
             *agent_routes.api_routes(),
             Route("/sse",            endpoint=_SSEHandler(sse)),

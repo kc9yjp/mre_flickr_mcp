@@ -93,6 +93,7 @@ scripts/
   db.py             — SQLite connection helpers, per-user path resolution, settings registry
   flickr_api.py      — OAuth 1.0a signing, credential storage, _api_get/_api_post
   flickr_oauth.py     — legacy terminal OAuth flow (superseded by web.py's browser flow)
+  oauth2.py           — OAuth 2.1 authorization server for MCP connectors (Desktop/claude.ai)
   flickr_sync.py     — photo sync + schema/migrations (init_db, _MIGRATIONS)
   vector_search.py   — optional semantic group search (Chroma + /v1/embeddings), off by default
   sync_contacts.py, sync_groups.py, sync_albums.py, sync_engagement.py
@@ -105,7 +106,7 @@ scripts/
 frontend/            — Workbench SPA (React + TypeScript + Vite + dockview)
   src/App.tsx, MobileLayout.tsx, CommandPalette.tsx, panelDefs.ts, api.ts, bus.ts
   src/panels/         — one component per dockable panel
-templates/            — Jinja2 templates for the surviving server-rendered pages (login, base)
+templates/            — Jinja2 templates for the surviving server-rendered pages (login, base, oauth_authorize)
 static/                — favicon, legacy CSS (mostly superseded by frontend/src/styles.css)
 tests/                 — pytest suite (~140 tests): tools, web, webapi, agent, transport, stdio
 data/{username}/       — per-user SQLite: flickr.db, chat.db (Docker volume: flickr-data)
@@ -133,10 +134,12 @@ A `contextvars.ContextVar` (`db._current_user`) carries the active user
 through a request without threading it through every function signature:
 
 - The **MCP path**: `ApiKeyMiddleware` (in `web.py`) validates the
-  `X-API-Key`/`Authorization: Bearer` header against an in-memory registry
-  (`_api_key_registry`, populated at startup and refreshed after every
-  login) and stashes the resolved NSID on `request.state.user_nsid`. The
-  `_SSEHandler` / `_StreamableHTTPHandler` then read that state and call
+  `X-API-Key`/`Authorization: Bearer` header against either the static-key
+  in-memory registry (`_api_key_registry`, populated at startup and
+  refreshed after every login) or, if that misses, an OAuth access token via
+  `oauth2.resolve_access_token` (see "OAuth 2.1 connector auth" below) — and
+  stashes the resolved NSID on `request.state.user_nsid`. The `_SSEHandler` /
+  `_StreamableHTTPHandler` then read that state and call
   `_db_current_user.set(...)` for the lifetime of the connection.
 - The **browser path**: session cookie (`user_nsid`, `username`, `fullname`,
   30-day expiry) set at OAuth callback time. `webapi.py` and `agent/routes.py`
@@ -341,6 +344,49 @@ from the per-user database.
   `/app/*` itself (the unhashed `index.html` shell) gets `no-cache` so a
   rebuild doesn't leave browsers pinned to a stale bundle.
 
+### OAuth 2.1 connector auth (`oauth2.py`)
+
+A second, separate auth layer alongside the static `mcp_api_key`: an OAuth
+2.1 authorization server so Claude Desktop's/claude.ai's "Add custom
+connector" dialog can authorize itself against `/sse`/`/mcp` the way it
+actually expects — discovery, dynamic registration, browser consent, token —
+rather than a user hand-copying a key into `.mcp.json`. Purely additive; the
+static-key path is untouched and both coexist per user.
+
+- **Discovery**: `/.well-known/oauth-protected-resource` (RFC 9728) and
+  `/.well-known/oauth-authorization-server` (RFC 8414) advertise this server
+  as both resource and authorization server at the same origin.
+  `ApiKeyMiddleware` sends a `WWW-Authenticate: Bearer resource_metadata=...`
+  header on 401 so a connector can find them without being told the URL.
+- **Registration**: `POST /oauth/register` (RFC 7591 Dynamic Client
+  Registration) is unauthenticated by design — a connector registers itself
+  the first time a user adds this server, before any Flickr login exists.
+  Registrations are server-wide, stored at `~/.flickr_mcp/oauth_clients.json`
+  (not per-user, since registration precedes login).
+- **Authorize + consent**: `GET /oauth/authorize` requires PKCE (`S256`
+  mandatory) and an existing Flickr-login session; if the browser isn't
+  logged in yet, the whole request is stashed in the session
+  (`post_login_redirect`) and resumed by `route_oauth_callback` after the
+  user completes the normal `/login` flow. A logged-in user sees a consent
+  page (`templates/oauth_authorize.html`) naming the client and their Flickr
+  account; approving issues a short-lived authorization code.
+- **Token issuance**: `POST /oauth/token` exchanges the code (+
+  `code_verifier`) for an access/refresh token pair, or refreshes an
+  existing grant. Tokens are opaque (no JWT/JWK — matches the project's
+  existing "no third-party OAuth library" convention from `flickr_api.py`'s
+  OAuth 1.0a signing) and stored per user at
+  `~/.flickr_mcp/{nsid}/oauth_tokens.json`, one entry per authorized client,
+  independent of the static `mcp_api_key` and of each other. An in-memory
+  `_token_registry` (access_token -> nsid/expiry), rebuilt at startup and
+  kept in sync on issuance/refresh/revocation, lets `ApiKeyMiddleware`
+  resolve an OAuth bearer token as cheaply as a static one.
+- **Revocation**: `POST /oauth/revoke` (RFC 7009) accepts either token type.
+- **CSRF**: `/oauth/register`, `/oauth/token`, and `/oauth/revoke` are
+  client-to-server protocol calls with no session cookie, so
+  `CSRFMiddleware` excludes them (`oauth2.NO_CSRF_PATHS`); the consent
+  form's `POST /oauth/authorize`, by contrast, is a real browser submission
+  and goes through the normal session-CSRF check like any other form.
+
 ## The Workbench
 
 **Mr. E's Photo Workbench** is the browser-based alternative to running an
@@ -403,8 +449,13 @@ and [WORKBENCH.md](WORKBENCH.md) for the milestone-by-milestone build log.
   HMAC-SHA1) — no third-party OAuth library.
 - Credentials and the session-signing key are written with `0o600`
   permissions inside `0o700` directories.
-- MCP transports require a per-user API key; the JSON API and chat agent
-  require a session cookie plus a matching CSRF token on every POST.
+- MCP transports require a per-user API key or a valid OAuth access token
+  (`oauth2.py`); the JSON API and chat agent require a session cookie plus a
+  matching CSRF token on every POST.
+- OAuth 2.1 connector auth is likewise hand-rolled (opaque bearer tokens, no
+  JWT/JWK), PKCE (`S256`) is mandatory on every authorization request, and
+  authorization codes/registered clients/tokens all live in `0o600` files
+  inside `0o700` directories, same as Flickr credentials.
 - `db.like_pattern` escapes `%`, `_`, and `\` before building `LIKE`
   clauses, paired with `ESCAPE '\'`, so user-supplied search text can't act
   as SQL wildcards.
