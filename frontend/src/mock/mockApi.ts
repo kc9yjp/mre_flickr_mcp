@@ -158,7 +158,7 @@ const SETUP: SetupData = {
 const DEMO_CONNECTION: Connection = {
   name: "Ollama (local)", kind: "ollama", api_mode: "chat_completions",
   base_url: "http://localhost:11434", api_key: "", timeout_seconds: 300,
-  disabled_models: [], models: {}, paused: false,
+  disabled_models: [], models: {}, paused: false, tool_set: "all",
 };
 const LLM: LLMSettings = {
   connections: { "ollama-local": DEMO_CONNECTION },
@@ -329,6 +329,7 @@ function registerRoutes() {
     LLM.connections[id] = {
       name: body.name, kind: body.kind, api_mode: body.api_mode || "chat_completions", base_url: body.base_url,
       api_key: body.api_key || "", timeout_seconds: body.timeout_seconds || 300, disabled_models: [], models: {}, paused: false,
+      tool_set: body.tool_set || "all",
     };
     return json({ id, ...LLM });
   });

@@ -216,7 +216,14 @@ export interface Connection {
   // eager model-fetch. For a connection that's regularly unreachable (a
   // local backend that's often off) without deleting its setup.
   paused: boolean;
+  // Which MCP tool schemas get sent to the model on this connection.
+  // "limited" trims the catalog to a curated subset (schema.LIMITED_TOOL_NAMES
+  // on the backend) — helps small/local models that lose tool-call accuracy
+  // as the tool list grows. Not yet user-editable; a fixed set for now.
+  tool_set: ToolSet;
 }
+
+export type ToolSet = "all" | "limited";
 
 export const DEFAULT_TIMEOUT_SECONDS = 300;
 
@@ -531,6 +538,7 @@ export async function createConnection(input: {
   api_key?: string;
   api_mode?: ApiMode;
   timeout_seconds?: number;
+  tool_set?: ToolSet;
 }): Promise<{ id: string } & LLMSettings> {
   return postJSON(`/api/llm-connections`, input);
 }

@@ -570,7 +570,7 @@ async def run_turn(
     username = user["username"]
     nsid = user["nsid"]
     vision = bool(cfg.get("vision", False))
-    tools = schema.to_openai_tools() + [_REMEMBER_TOOL, _ASK_USER_TOOL]
+    tools = schema.to_openai_tools(cfg.get("tool_set", "all")) + [_REMEMBER_TOOL, _ASK_USER_TOOL]
     session_key = (username, session_id)
     _active_conversations[session_key] = conversation_id
 

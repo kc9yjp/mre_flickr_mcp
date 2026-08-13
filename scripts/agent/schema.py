@@ -28,6 +28,26 @@ WRITE_TOOLS: frozenset[str] = frozenset({
 _unknown = WRITE_TOOLS - set(mcp_tools._HANDLERS)
 assert not _unknown, f"WRITE_TOOLS entries with no handler: {_unknown}"
 
+# A curated subset of the full tool catalog, for connections whose model is
+# small/local and struggles with a large tool list — every extra schema in
+# context is a chance to pick the wrong tool or skip a required one. This is
+# exactly the set of tools actually referenced by the built-in prompt
+# playbooks in default-prompts.md, i.e. what the chat UI's canned workflows
+# need day to day; the rarer contact/follow-management and album/group CRUD
+# tools (mostly used by the Claude Code skills, not chat) are left out.
+# Hand-picked for now — see settings.py's "tool_set" field for the switch
+# that selects this set, and TOOLS.md/CLAUDE.md's MCP Tools table for the
+# full catalog this is drawn from. May grow an editable-in-the-UI form later.
+LIMITED_TOOL_NAMES: frozenset[str] = frozenset({
+    "search_photos", "get_photo", "get_photo_stats", "get_photo_comments",
+    "get_unreplied_comments", "fetch_photo_image", "update_photo", "set_visibility",
+    "find_weak_photos", "add_comment", "fave_photo", "find_albums", "add_to_album",
+    "find_groups", "add_to_group", "get_photo_contexts", "get_group_info", "sync",
+})
+
+_unknown_limited = LIMITED_TOOL_NAMES - set(mcp_tools._HANDLERS)
+assert not _unknown_limited, f"LIMITED_TOOL_NAMES entries with no handler: {_unknown_limited}"
+
 
 def all_tools() -> list[Tool]:
     tools = []
@@ -36,8 +56,16 @@ def all_tools() -> list[Tool]:
     return tools
 
 
-def to_openai_tools() -> list[dict]:
-    """Convert mcp.types.Tool definitions to OpenAI function-calling format."""
+def to_openai_tools(tool_set: str = "all") -> list[dict]:
+    """Convert mcp.types.Tool definitions to OpenAI function-calling format.
+
+    ``tool_set`` is a connection's persisted choice (see settings.py):
+    ``"limited"`` restricts to LIMITED_TOOL_NAMES, anything else (including
+    the default ``"all"``) returns the full catalog.
+    """
+    tools = all_tools()
+    if tool_set == "limited":
+        tools = [t for t in tools if t.name in LIMITED_TOOL_NAMES]
     return [
         {
             "type": "function",
@@ -47,5 +75,5 @@ def to_openai_tools() -> list[dict]:
                 "parameters": t.inputSchema,
             },
         }
-        for t in all_tools()
+        for t in tools
     ]

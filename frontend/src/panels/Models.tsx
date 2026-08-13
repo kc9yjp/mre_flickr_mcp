@@ -28,6 +28,7 @@ import {
   ModelList,
   ModelSettings,
   MODEL_SETTINGS_DEFAULTS,
+  ToolSet,
 } from "../api";
 import * as bus from "../bus";
 
@@ -37,6 +38,11 @@ interface NewConnectionDraft {
   base_url: string;
   api_mode: ApiMode;
   timeout_seconds: number;
+  tool_set: ToolSet;
+}
+
+function toolSetLabel(toolSet: ToolSet): string {
+  return toolSet === "limited" ? "Limited tools" : "All tools (default)";
 }
 
 function draftKey(connectionId: string, model: string): string {
@@ -175,6 +181,7 @@ export function Models() {
         api_key: conn.api_key,
         api_mode: conn.api_mode,
         timeout_seconds: conn.timeout_seconds,
+        tool_set: conn.tool_set,
       });
       setCfg(updated);
       flash("Connection saved.");
@@ -290,7 +297,10 @@ export function Models() {
   };
 
   const openCustomConnection = () =>
-    setNewConn({ name: "", kind: "openai_compatible", base_url: "", api_mode: "chat_completions", timeout_seconds: DEFAULT_TIMEOUT_SECONDS });
+    setNewConn({
+      name: "", kind: "openai_compatible", base_url: "", api_mode: "chat_completions",
+      timeout_seconds: DEFAULT_TIMEOUT_SECONDS, tool_set: "all",
+    });
 
   const saveActiveSelection = async (e: FormEvent) => {
     e.preventDefault();
@@ -422,10 +432,22 @@ export function Models() {
                         onChange={(e) => setConnectionField(cid, { timeout_seconds: Number(e.target.value) })}
                       />
                     </label>
+                    <label className="llm-field">
+                      Tool access
+                      <select
+                        value={conn.tool_set ?? "all"}
+                        onChange={(e) => setConnectionField(cid, { tool_set: e.target.value as ToolSet })}
+                      >
+                        <option value="all">{toolSetLabel("all")}</option>
+                        <option value="limited">{toolSetLabel("limited")}</option>
+                      </select>
+                    </label>
                   </div>
                   <p className="hint" style={{ marginTop: 4 }}>
                     Timeout is how long to wait for the model to respond before giving up — raise it for a slow
-                    local backend.
+                    local backend. "Limited tools" trims the tool list sent to the model on this connection to a
+                    curated subset — helps a small/local model that struggles to pick the right tool out of the
+                    full catalog.
                   </p>
                   <div className="llm-row-end">
                     <button type="button" className="danger" onClick={() => removeConnection(cid)}>
@@ -628,6 +650,7 @@ export function Models() {
                   base_url: preset.base_url,
                   api_mode: preset.api_mode,
                   timeout_seconds: DEFAULT_TIMEOUT_SECONDS,
+                  tool_set: "all",
                 })
               }
             >
@@ -681,6 +704,16 @@ export function Models() {
                 value={newConn.timeout_seconds}
                 onChange={(e) => setNewConn({ ...newConn, timeout_seconds: Number(e.target.value) })}
               />
+            </label>
+            <label className="llm-field">
+              Tool access
+              <select
+                value={newConn.tool_set}
+                onChange={(e) => setNewConn({ ...newConn, tool_set: e.target.value as ToolSet })}
+              >
+                <option value="all">{toolSetLabel("all")}</option>
+                <option value="limited">{toolSetLabel("limited")}</option>
+              </select>
             </label>
           </div>
           <div className="llm-row-end">

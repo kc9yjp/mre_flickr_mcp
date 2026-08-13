@@ -19,7 +19,8 @@ Storage shape (v4 — named connections, per-model settings)::
                     }},
         "zen":    {"name": "OpenCode Zen", "kind": "openai_compatible", "api_mode": "chat_completions",
                     "base_url": "https://opencode.ai/zen/v1", "api_key": "...",
-                    "disabled_models": ["gpt-5", "..."], "models": {}, "paused": false}
+                    "disabled_models": ["gpt-5", "..."], "models": {}, "paused": false,
+                    "tool_set": "all"}
       },
       "active_connection": "ollama",
       "active_model": "",
@@ -47,6 +48,12 @@ simply uses ``DEFAULTS`` — entries are only created when a user edits that
 model's settings and saves. ``context_window`` is never sent to the
 connection; it only feeds loop.py's auto-compact threshold and the chat
 stats "context used" readout.
+
+``tool_set`` (default ``"all"``, the only other value ``"limited"``) picks
+which MCP tool schemas are offered to the model on this connection: ``"all"``
+sends the full catalog, ``"limited"`` sends only schema.LIMITED_TOOL_NAMES — a
+curated subset for small/local models that lose accuracy (wrong tool picked,
+a required call skipped) as the tool list grows. See schema.to_openai_tools().
 
 ``paused`` (default ``false``) marks a connection as kept-but-unused: it
 stays fully configured and editable, but is skipped by the "first connection"
@@ -126,8 +133,12 @@ DEFAULT_CONNECTIONS: dict[str, dict] = {
         "disabled_models": [],
         "models": {},
         "paused": False,
+        "tool_set": "all",
     },
 }
+
+# Valid values for a connection's "tool_set" field. See the module docstring.
+TOOL_SETS: frozenset[str] = frozenset({"all", "limited"})
 
 # Read timeout (seconds) a freshly created connection starts with — long
 # enough for slow local prompt processing (see timeout_seconds note above).
@@ -303,6 +314,8 @@ def save_settings(nsid: str, data: dict) -> dict:
             base["disabled_models"] = list(conn["disabled_models"])
         if "paused" in conn:
             base["paused"] = bool(conn["paused"])
+        if "tool_set" in conn:
+            base["tool_set"] = _coerce_tool_set(conn["tool_set"])
         # mask-guard the api_key
         if "api_key" in conn:
             old_key = stored.get(cid, {}).get("api_key", "")
@@ -331,6 +344,7 @@ def create_connection(
     api_key: str = "",
     api_mode: str = "chat_completions",
     timeout_seconds: int | None = None,
+    tool_set: str = "all",
 ) -> tuple[str, dict]:
     """Create a new named connection with a unique generated id.
 
@@ -356,6 +370,7 @@ def create_connection(
         "disabled_models": sorted(suggested_disabled_models(kind, base_url)),
         "models": {},
         "paused": False,
+        "tool_set": _coerce_tool_set(tool_set),
     }
     current["connections"] = connections
     _write_settings(nsid, current)
@@ -379,6 +394,8 @@ def update_connection(nsid: str, connection_id: str, patch: dict) -> dict | None
         conn["disabled_models"] = list(patch["disabled_models"])
     if "paused" in patch:
         conn["paused"] = bool(patch["paused"])
+    if "tool_set" in patch:
+        conn["tool_set"] = _coerce_tool_set(patch["tool_set"])
     if "api_key" in patch:
         if patch["api_key"] != _mask_key(conn.get("api_key", "")):
             conn["api_key"] = patch["api_key"]
@@ -523,6 +540,7 @@ def resolve_cfg(
         "api_key": conn.get("api_key", ""),
         "api_mode": api_mode,
         "timeout_seconds": _coerce_timeout(conn.get("timeout_seconds")),
+        "tool_set": _coerce_tool_set(conn.get("tool_set")),
         "model": model_id,
     }
 
@@ -567,6 +585,12 @@ def resolve_sync_cfg(nsid: str) -> dict:
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
+
+
+def _coerce_tool_set(value) -> str:
+    """Fall back to "all" for anything not in TOOL_SETS (missing, unknown,
+    or a stale value from a future version)."""
+    return value if value in TOOL_SETS else "all"
 
 
 def _coerce_timeout(value) -> int:
@@ -687,6 +711,7 @@ def _merge_defaults(raw: dict) -> dict:
         conn.setdefault("models", {})
         conn.setdefault("timeout_seconds", DEFAULT_TIMEOUT_SECONDS)
         conn.setdefault("paused", False)
+        conn["tool_set"] = _coerce_tool_set(conn.get("tool_set"))
     return {
         "connections": raw["connections"],
         "active_connection": raw.get("active_connection", ""),
