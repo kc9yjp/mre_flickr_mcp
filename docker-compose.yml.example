@@ -9,6 +9,11 @@ services:
     env_file: .env
     environment:
       - MCP_PORT=8000
+      # Set this to true if you're using the tailscale service below (or any
+      # other reverse proxy that terminates TLS on your behalf) — it tells
+      # the app the browser session cookie should be sent Secure even though
+      # this container itself only ever speaks plain HTTP.
+      # - SESSION_COOKIE_SECURE=true
       # Optional semantic group search — off by default. When true, group sync
       # also embeds group text into Chroma and find_groups adds a vector
       # retrieval path. Requires an embedding-capable model served at
@@ -52,6 +57,52 @@ services:
       - "5173:5173"
     profiles: [dev]
 
+  # Optional: expose the server on your Tailscale network instead of (or in
+  # addition to) a published port — TLS terminated by Tailscale's own certs,
+  # reachable at https://<TS_HOSTNAME>.<your-tailnet>.ts.net with no port
+  # forwarding. To use: `cp tailscale/serve-config.json.example
+  # tailscale/serve-config.json` (and same for funnel-config.json.example),
+  # set TS_AUTHKEY in .env (an auth key from the Tailscale admin console —
+  # https://tailscale.com/kb/1085/auth-keys), then `docker compose up -d`.
+  tailscale:
+    image: tailscale/tailscale:latest
+    environment:
+      - TS_AUTHKEY=${TS_AUTHKEY}
+      - TS_HOSTNAME=${TS_HOSTNAME:-flickr-mcp}
+      - TS_EXTRA_ARGS=${TS_EXTRA_ARGS:-}
+      # serve (default) = tailnet-private: reachable only from devices on
+      # your own tailnet.
+      # funnel = also reachable from the public internet over the same
+      # hostname/TLS cert. Needed if you want a remote MCP connector
+      # (Claude Desktop's/claude.ai's "Connectors" UI) to reach this server —
+      # that flow is brokered by claude.ai's own backend, which calls your
+      # server's OAuth endpoints from outside your tailnet, so tailnet-only
+      # `serve` can't satisfy it (see scripts/oauth2.py). Switch with
+      # TS_SERVE_MODE=funnel in .env. Funnel also requires a one-time
+      # tailnet-admin-console step (granting this node the `funnel` node
+      # attribute — see https://tailscale.com/kb/1223/funnel) and exposes the
+      # WHOLE app, not just the MCP/OAuth endpoints, since serve-config.json
+      # proxies `/` wholesale.
+      - TS_SERVE_CONFIG=/config/${TS_SERVE_MODE:-serve}-config.json
+      - TS_STATE_DIR=/var/lib/tailscale
+      - TS_USERSPACE=false
+    volumes:
+      - tailscale-state:/var/lib/tailscale
+      - ./tailscale:/config:ro
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    # Shares flickr-mcp's network namespace so it can proxy to
+    # http://127.0.0.1:8000 in the serve/funnel config — this also means
+    # flickr-mcp's own `ports:` mapping above is optional once this is in
+    # use (Tailscale gives you a reachable hostname instead).
+    network_mode: service:flickr-mcp
+    depends_on:
+      - flickr-mcp
+    restart: unless-stopped
+
   # Standalone Chroma — only needed if you want the vector store queryable
   # from outside the server process. The default (embedded) mode keeps Chroma
   # in-process under data/{username}/chroma and needs no service at all.
@@ -74,3 +125,4 @@ volumes:
   flickr-data:
   chroma-data:
   frontend-node-modules:
+  tailscale-state:
