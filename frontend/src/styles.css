@@ -347,6 +347,33 @@ body {
   justify-content: space-between;
 }
 
+.recent-lists-menu .view-dropdown-menu {
+  min-width: 220px;
+  max-width: 320px;
+}
+
+.recent-lists-menu .view-dropdown-menu button {
+  align-items: baseline;
+}
+
+.recent-list-kind {
+  flex: none;
+  min-width: 4.5em;
+  color: var(--ink-muted);
+  font-size: 0.75rem;
+}
+
+.recent-list-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.recent-lists-empty {
+  padding: 5px 10px;
+  margin: 0;
+}
+
 .flickr-link-menu .view-dropdown-menu {
   left: auto;
   right: 0;

@@ -63,6 +63,122 @@ function filterParams(filters: Filters, offset: number): Record<string, string> 
   return params;
 }
 
+// Recent searches/lists — a small local-storage-backed MRU list so a
+// chat-populated photo list or a filled-in search doesn't vanish the moment
+// you navigate away or reload the page. Keyed by shape, not identity:
+// re-running (or landing back on) the same search moves it to the front
+// instead of duplicating it.
+const RECENTS_KEY = "flickr-workbench:recent-lists";
+const MAX_RECENTS = 8;
+
+type RecentEntry =
+  | { type: "photoList"; label: string; ids: string[] }
+  | { type: "mine"; label: string; filters: Filters }
+  | { type: "user"; label: string; query: string }
+  | { type: "group"; label: string; query: string }
+  | { type: "search"; label: string; query: string };
+
+const RECENT_KIND_LABELS: Record<RecentEntry["type"], string> = {
+  photoList: "List",
+  mine: "My Photos",
+  user: "User",
+  group: "Group",
+  search: "Search",
+};
+
+const SORT_LABELS: Record<string, string> = {
+  date_taken: "Newest",
+  views: "Most viewed",
+  favorites: "Most faved",
+  comments: "Most commented",
+  random: "Random",
+};
+
+function describeFilters(f: Filters): string {
+  const parts: string[] = [];
+  if (f.query) parts.push(`"${f.query}"`);
+  if (f.tags) parts.push(`tags:${f.tags}`);
+  if (f.visibility) parts.push(f.visibility === "1" ? "public" : "private");
+  if (f.sort !== DEFAULT_FILTERS.sort) parts.push(SORT_LABELS[f.sort] ?? f.sort);
+  return parts.length ? parts.join(" · ") : "All photos";
+}
+
+function loadRecents(): RecentEntry[] {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(RECENTS_KEY) ?? "[]");
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function sameRecent(a: RecentEntry, b: RecentEntry): boolean {
+  if (a.type !== b.type) return false;
+  if (a.type === "photoList" && b.type === "photoList") return a.ids.join(",") === b.ids.join(",");
+  if (a.type === "mine" && b.type === "mine") return JSON.stringify(a.filters) === JSON.stringify(b.filters);
+  if ((a.type === "user" || a.type === "group" || a.type === "search") && b.type === a.type) {
+    return (b as { query: string }).query === (a as { query: string }).query;
+  }
+  return false;
+}
+
+// Writes through to localStorage and returns the updated list, so callers
+// can put it straight into state without a second read.
+function saveRecent(entry: RecentEntry): RecentEntry[] {
+  const next = [entry, ...loadRecents().filter((r) => !sameRecent(r, entry))].slice(0, MAX_RECENTS);
+  try {
+    localStorage.setItem(RECENTS_KEY, JSON.stringify(next));
+  } catch {
+    // Storage full/unavailable (private browsing, quota) — recents are a
+    // convenience, so just skip persisting rather than erroring the search.
+  }
+  return next;
+}
+
+// Small dropdown of recent searches/lists, styled to match FlickrLinkMenu /
+// UserMenu (.view-dropdown family) — click the toggle, pick an entry, it
+// closes on selection or on an outside click.
+function RecentListsMenu({ recents, onPick }: { recents: RecentEntry[]; onPick: (entry: RecentEntry) => void }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, []);
+
+  return (
+    <div className="view-dropdown recent-lists-menu" ref={ref}>
+      <button type="button" className="browse-mode" onClick={() => setOpen((o) => !o)} title="Recent searches and lists">
+        Recent ▾
+      </button>
+      {open && (
+        <div className="view-dropdown-menu">
+          {recents.length === 0 ? (
+            <p className="hint recent-lists-empty">No recent searches yet.</p>
+          ) : (
+            recents.map((r, i) => (
+              <button
+                key={i}
+                onClick={() => {
+                  setOpen(false);
+                  onPick(r);
+                }}
+              >
+                <span className="recent-list-kind">{RECENT_KIND_LABELS[r.type]}</span>
+                <span className="recent-list-label">{r.label}</span>
+              </button>
+            ))
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function Thumb({ photo, onClick }: { photo: Photo; onClick: () => void }) {
   const src = photo.url_medium || photo.url_original;
   return (
@@ -151,6 +267,11 @@ export function PhotoBrowser() {
   // Search
   const [searchQuery, setSearchQuery] = useState("");
   const [activeSearchQuery, setActiveSearchQuery] = useState("");
+
+  // Recent searches/lists dropdown (My Photos searches, User/Group/Search
+  // lookups, and chat/workflow photo lists)
+  const [recents, setRecents] = useState<RecentEntry[]>(() => loadRecents());
+  const remember = useCallback((entry: RecentEntry) => setRecents(saveRecent(entry)), []);
 
   const load = useCallback(async (f: Filters, offset: number) => {
     setLoading(true);
@@ -248,6 +369,94 @@ export function PhotoBrowser() {
     }
   }, []);
 
+  // Re-load whatever a recents-menu entry points at. Mirrors the reset
+  // blocks in switchMode/the bus effects below, plus each mode's own
+  // page-1 loader — restoring is just "navigate there again."
+  const restoreRecent = useCallback(
+    (entry: RecentEntry) => {
+      setError("");
+      switch (entry.type) {
+        case "photoList":
+          setMode("mine");
+          setSelectedAlbum(null);
+          setUserProfile(null);
+          setGroupInfo(null);
+          setGroupResults(null);
+          setActiveSearchQuery("");
+          setPhotoListLabel(entry.label);
+          loadPhotoList(entry.ids);
+          break;
+        case "mine":
+          setMode("mine");
+          setSelectedAlbum(null);
+          setUserProfile(null);
+          setGroupInfo(null);
+          setGroupResults(null);
+          setActiveSearchQuery("");
+          setPhotoListLabel(null);
+          setFilters(entry.filters);
+          setDraft(entry.filters);
+          load(entry.filters, 0);
+          break;
+        case "user":
+          setMode("user");
+          setSelectedAlbum(null);
+          setGroupInfo(null);
+          setGroupResults(null);
+          setActiveSearchQuery("");
+          setPhotoListLabel(null);
+          setUserQuery(entry.query);
+          setLoading(true);
+          lookupUser(entry.query)
+            .then((profile) => {
+              setUserProfile(profile);
+              setUserSubMode("photos");
+              setPage(1);
+              return loadUserPhotosPage(profile.nsid, 1);
+            })
+            .catch((e) => {
+              setError(e instanceof Error ? e.message : String(e));
+              setLoading(false);
+            });
+          break;
+        case "group":
+          setMode("group");
+          setSelectedAlbum(null);
+          setUserProfile(null);
+          setActiveSearchQuery("");
+          setPhotoListLabel(null);
+          setGroupQuery(entry.query);
+          setGroupInfo(null);
+          setGroupResults(null);
+          setLoading(true);
+          getGroupInfo(entry.query)
+            .then((info) => {
+              setGroupInfo(info);
+              setPage(1);
+              return loadGroupPhotosPage(info.id, 1);
+            })
+            .catch((e) => {
+              setError(e instanceof Error ? e.message : String(e));
+              setLoading(false);
+            });
+          break;
+        case "search":
+          setMode("search");
+          setSelectedAlbum(null);
+          setUserProfile(null);
+          setGroupInfo(null);
+          setGroupResults(null);
+          setPhotoListLabel(null);
+          setSearchQuery(entry.query);
+          setActiveSearchQuery(entry.query);
+          setPage(1);
+          loadSearchPhotosPage(entry.query, 1);
+          break;
+      }
+    },
+    [loadPhotoList, load, loadUserPhotosPage, loadGroupPhotosPage, loadSearchPhotosPage],
+  );
+
   // The "✕ Clear" action, and what every mode switch away from a loaded
   // browse eventually funnels back into: always lands on default My Photos.
   const resetToMine = useCallback(() => {
@@ -319,6 +528,7 @@ export function PhotoBrowser() {
     try {
       const profile = await lookupUser(q);
       setUserProfile(profile);
+      remember({ type: "user", label: profile.realname || profile.username || profile.nsid, query: profile.nsid });
       setUserSubMode("photos");
       setPage(1);
       await loadUserPhotosPage(profile.nsid, 1);
@@ -374,6 +584,7 @@ export function PhotoBrowser() {
       if (GROUP_ID_RE.test(q) || q.includes("flickr.com/groups/")) {
         const info = await getGroupInfo(q);
         setGroupInfo(info);
+        remember({ type: "group", label: info.name, query: info.id });
         setPage(1);
         await loadGroupPhotosPage(info.id, 1);
       } else {
@@ -392,6 +603,7 @@ export function PhotoBrowser() {
     try {
       const info = await getGroupInfo(g.id);
       setGroupInfo(info);
+      remember({ type: "group", label: info.name, query: info.id });
       setGroupResults(null);
       setPage(1);
       await loadGroupPhotosPage(info.id, 1);
@@ -406,6 +618,7 @@ export function PhotoBrowser() {
     const q = searchQuery.trim();
     if (!q) return;
     setActiveSearchQuery(q);
+    remember({ type: "search", label: q, query: q });
     setPage(1);
     await loadSearchPhotosPage(q, 1);
   };
@@ -427,12 +640,14 @@ export function PhotoBrowser() {
         setGroupInfo(null);
         setGroupResults(null);
         setActiveSearchQuery("");
-        setPhotoListLabel(
-          ids.length ? `${ids.length.toLocaleString("en")} photo${ids.length === 1 ? "" : "s"} found` : "No photos found",
-        );
+        const label = ids.length
+          ? `${ids.length.toLocaleString("en")} photo${ids.length === 1 ? "" : "s"} found`
+          : "No photos found";
+        setPhotoListLabel(label);
+        if (ids.length) remember({ type: "photoList", label, ids });
         loadPhotoList(ids);
       }),
-    [loadPhotoList],
+    [loadPhotoList, remember],
   );
 
   useEffect(
@@ -449,13 +664,14 @@ export function PhotoBrowser() {
         lookupUser(nsid)
           .then((profile) => {
             setUserProfile(profile);
+            remember({ type: "user", label: profile.realname || profile.username || profile.nsid, query: profile.nsid });
             setUserSubMode("photos");
             setPage(1);
             return loadUserPhotosPage(profile.nsid, 1);
           })
           .catch((e) => setError(e instanceof Error ? e.message : String(e)));
       }),
-    [loadUserPhotosPage],
+    [loadUserPhotosPage, remember],
   );
 
   useEffect(
@@ -473,12 +689,13 @@ export function PhotoBrowser() {
         getGroupInfo(ref)
           .then((info) => {
             setGroupInfo(info);
+            remember({ type: "group", label: info.name, query: info.id });
             setPage(1);
             return loadGroupPhotosPage(info.id, 1);
           })
           .catch((e) => setError(e instanceof Error ? e.message : String(e)));
       }),
-    [loadGroupPhotosPage],
+    [loadGroupPhotosPage, remember],
   );
 
   useEffect(
@@ -515,6 +732,9 @@ export function PhotoBrowser() {
     setPhotoListLabel(null);
     setFilters(draft);
     load(draft, 0);
+    if (draft.query || draft.tags || draft.visibility || draft.sort !== DEFAULT_FILTERS.sort) {
+      remember({ type: "mine", label: describeFilters(draft), filters: draft });
+    }
   };
 
   const showResults =
@@ -644,11 +864,12 @@ export function PhotoBrowser() {
             {m.label}
           </button>
         ))}
-        {mode !== "mine" && (
+        {(mode !== "mine" || photoListLabel) && (
           <button className="browse-mode" onClick={resetToMine} title="Back to My Photos">
             ✕ Clear
           </button>
         )}
+        <RecentListsMenu recents={recents} onPick={restoreRecent} />
       </div>
 
       {mode === "mine" &&
