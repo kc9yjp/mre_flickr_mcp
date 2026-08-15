@@ -25,6 +25,7 @@ it, without this generator getting to yield a final event itself.
 """
 
 import asyncio
+import base64
 import json
 import logging
 import re
@@ -47,6 +48,8 @@ CONFIRM_TIMEOUT = 300  # seconds to wait for the user's approve/deny/answer
 RESULT_CHAR_CAP = 20_000
 DEFAULT_CONTEXT_WINDOW = 128_000
 AUTO_COMPACT_THRESHOLD = 0.8  # fraction of context_window that triggers auto-compact
+MAX_USER_IMAGES = 4  # per pasted-image message — mirrors the composer's own client-side cap
+MAX_USER_IMAGE_BYTES = 20 * 1024 * 1024  # raw (pre-downsample) size guard against a pathological paste
 
 _REMEMBER_TOOL: dict = {
     "type": "function",
@@ -412,6 +415,56 @@ def _result_content(result: list, vision: bool) -> "str | list":
     return text
 
 
+def _build_user_content(text: str, images: list[str], vision: bool) -> "str | list":
+    """Combine typed text with pasted images into a user message's content.
+
+    ``images`` are ``data:<mime>;base64,<data>`` URLs as pasted by the
+    composer (see Chat.tsx's clipboard-paste handler) — decoded and
+    downsampled the same way fetch_photo_image handles its own image results
+    (tools.photos._downsample_image), so a screenshot pasted at full
+    resolution doesn't balloon the stored conversation (every later turn
+    resends the full history, images included).
+
+    When the selected model has vision disabled, images are dropped in favor
+    of a text note instead of silently vanishing — same reasoning as
+    _VISION_DISABLED_NOTE above for tool-returned images.
+    """
+    if not images:
+        return text
+    if not vision:
+        note = (
+            f"(user attached {len(images)} image{'s' if len(images) != 1 else ''}, but vision is "
+            "disabled for the selected model — enable it in Models & Connections to send images.)"
+        )
+        return f"{text}\n\n{note}" if text else note
+
+    from tools.photos import _downsample_image
+
+    parts: list = [{"type": "text", "text": text}] if text else []
+    for data_url in images[:MAX_USER_IMAGES]:
+        mime = "image/jpeg"
+        try:
+            header, _, b64data = data_url.partition(",")
+            mime = header.split(";")[0].removeprefix("data:") or "image/jpeg"
+            raw = base64.standard_b64decode(b64data)
+        except Exception as e:
+            logging.warning("chat: failed to decode a pasted image (%s): %s", mime, e)
+            continue
+        if len(raw) > MAX_USER_IMAGE_BYTES:
+            logging.warning("chat: pasted image too large (%d bytes) — skipped", len(raw))
+            continue
+        content, mime = _downsample_image(raw, mime)
+        parts.append({
+            "type": "image_url",
+            "image_url": {"url": f"data:{mime};base64,{base64.standard_b64encode(content).decode()}"},
+        })
+    if not parts:
+        return text
+    if len(parts) == 1 and parts[0]["type"] == "text":
+        return parts[0]["text"]
+    return parts
+
+
 _UPDATE_PHOTO_FIELDS = ("title", "description", "tags")
 
 
@@ -548,6 +601,7 @@ async def run_turn(
     focused_photo_id: str | None = None,
     session_id: str = "",
     resume: bool = False,
+    images: list[str] | None = None,
 ) -> AsyncIterator[dict]:
     """Run one user turn: LLM ↔ tools until the model stops calling tools.
 
@@ -558,6 +612,9 @@ async def run_turn(
     turn's LLM call only and is never persisted to the stored conversation:
     the note would otherwise go stale the moment the user looks at a
     different photo, silently misdirecting later turns that replay history.
+
+    ``images`` — data URLs pasted into the composer alongside ``user_message``
+    (see _build_user_content). Ignored, same as ``user_message``, on resume.
 
     ``resume`` — continue a turn that was cut off by MAX_ITERATIONS (the
     "Continue" button) instead of starting a new one: ``user_message`` is
@@ -590,7 +647,7 @@ async def run_turn(
                     store.reset_context_stats(username, conversation_id)
                     yield {"type": "compacted", "summary": summary}
 
-        user_msg = {"role": "user", "content": user_message}
+        user_msg = {"role": "user", "content": _build_user_content(user_message, images or [], vision)}
         store.append_message(username, conversation_id, user_msg)
     system_prompt = prompts_store.get_prompt_by_code(nsid, "system-core")
     system_text = system_prompt["text"] if system_prompt else prompts_store.SYSTEM_PROMPT_DEFAULT

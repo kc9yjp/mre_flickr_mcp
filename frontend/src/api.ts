@@ -608,6 +608,10 @@ export function modelSupportsVision(modelId: string): boolean {
   return !VISION_UNSUPPORTED.has(modelId);
 }
 
+// Mirrors loop.MAX_USER_IMAGES on the backend — kept in sync manually since
+// this just trims the composer's paste handler before anything hits the wire.
+export const MAX_USER_IMAGES = 4;
+
 /** POST to /api/chat/stream and invoke onEvent for every SSE data event.
  *
  * Pass `resume: true` (with an existing `conversation_id`, no `message`) to
@@ -617,6 +621,7 @@ export async function streamChat(
   body: {
     conversation_id?: string;
     message?: string;
+    images?: string[];
     resume?: boolean;
     focused_photo_id?: string | null;
     connection?: string;

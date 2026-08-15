@@ -6,6 +6,7 @@ import {
   ApiError,
   Conversation,
   LLMSettings,
+  MAX_USER_IMAGES,
   PromptsData,
   SessionStats,
   WireMessage,
@@ -41,6 +42,11 @@ interface ChatMsg {
   text: string;
   tools: ToolCard[];
   origin?: PromptOrigin;
+  // Data URLs pasted into the composer alongside this message — display only;
+  // the wire copy that was actually sent isn't reconstructed from history
+  // (see wireToRender/contentToText, which flattens stored image parts to
+  // "(image)").
+  images?: string[];
 }
 
 interface PendingConfirm {
@@ -274,6 +280,10 @@ export function Chat() {
   const [activeId, setActiveId] = useState<string | null>(null);
   const [msgs, setMsgs] = useState<ChatMsg[]>([]);
   const [input, setInput] = useState("");
+  // Images pasted into the composer, waiting to go out with the next send()
+  // — data URLs, same shape the wire ultimately carries (see api.ts's
+  // ContentPart). Cleared on send, same as `input`.
+  const [pendingImages, setPendingImages] = useState<string[]>([]);
   const [streaming, setStreaming] = useState(false);
   const [confirm, setConfirm] = useState<PendingConfirm | null>(null);
   const [denyReason, setDenyReason] = useState<string | null>(null);
@@ -452,6 +462,7 @@ export function Chat() {
   const runStream = useCallback(async (body: {
     conversation_id?: string;
     message?: string;
+    images?: string[];
     resume?: boolean;
     focused_photo_id?: string | null;
     connection?: string;
@@ -616,11 +627,15 @@ export function Chat() {
     }
   }, [refreshConversations, setActive]);
 
-  const send = useCallback(async (message: string, origin?: PromptOrigin) => {
+  const send = useCallback(async (message: string, origin?: PromptOrigin, images?: string[]) => {
     const text = message.trim();
-    if (!text) return;
+    const imgs = images ?? [];
+    if (!text && imgs.length === 0) return;
 
-    const route = classifyFlickrUrl(text);
+    // A bare Flickr URL only short-circuits into the panel-routing shortcut
+    // when it's the whole message and there's nothing else attached — with
+    // images along for the ride the user clearly means to send it as text.
+    const route = imgs.length === 0 ? classifyFlickrUrl(text) : null;
     if (route) {
       setInput("");
       routeFlickrUrl(route);
@@ -628,9 +643,10 @@ export function Chat() {
     }
 
     setInput("");
+    setPendingImages([]);
     setMsgs((prev) => [
       ...prev,
-      { role: "user", text, tools: [], origin },
+      { role: "user", text, tools: [], origin, images: imgs.length ? imgs : undefined },
       { role: "assistant", text: "", tools: [] },
     ]);
 
@@ -638,6 +654,7 @@ export function Chat() {
     await runStream({
       conversation_id: activeIdRef.current ?? undefined,
       message: text,
+      images: imgs.length ? imgs : undefined,
       focused_photo_id: focusedPhotoRef.current,
       connection: connectionId || undefined,
       model: model || undefined,
@@ -715,6 +732,35 @@ export function Chat() {
 
   const removeQueued = useCallback((index: number) => {
     setQueued((prev) => prev.filter((_, i) => i !== index));
+  }, []);
+
+  const removePendingImage = useCallback((index: number) => {
+    setPendingImages((prev) => prev.filter((_, i) => i !== index));
+  }, []);
+
+  // Clipboard-paste-to-attach: a copied screenshot/image lands in
+  // clipboardData as a file item, not text, so this only fires for an actual
+  // image paste — a normal text paste is untouched (falls through to the
+  // textarea's default handling). Skipped while a turn is streaming, since
+  // there's nowhere for an image to go: "Add info"/"Queue" only carry text
+  // (see addInfo/queueNext) and silently dropping a pasted image there would
+  // be worse than just not capturing it.
+  const handlePaste = useCallback((e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    if (streamingRef.current) return;
+    const items = Array.from(e.clipboardData?.items ?? []);
+    const imageItems = items.filter((it) => it.kind === "file" && it.type.startsWith("image/"));
+    if (imageItems.length === 0) return;
+    e.preventDefault();
+    for (const item of imageItems) {
+      const file = item.getAsFile();
+      if (!file) continue;
+      const reader = new FileReader();
+      reader.onload = () => {
+        if (typeof reader.result !== "string") return;
+        setPendingImages((prev) => (prev.length >= MAX_USER_IMAGES ? prev : [...prev, reader.result as string]));
+      };
+      reader.readAsDataURL(file);
+    }
   }, []);
 
   useEffect(
@@ -855,6 +901,17 @@ export function Chat() {
     ([cid, conn]) => !conn.paused && (modelsByConnection[cid]?.length ?? 0) > 0,
   );
 
+  // Whether the currently-selected connection/model has vision turned on
+  // (Models panel's per-model "Enable vision" switch) — an unconfigured
+  // model defaults to MODEL_SETTINGS_DEFAULTS.vision (false), matching the
+  // backend's resolve_cfg. Drives the pasted-image warning below; the actual
+  // enforcement (dropping images in favor of a text note) lives server-side
+  // in loop._build_user_content, so this is advisory, not a hard gate.
+  const { connectionId: curConnectionId, model: curModel } = parseSelector(connectionModel);
+  const visionEnabled = !!(
+    curConnectionId && curModel && llmCfg?.connections[curConnectionId]?.models?.[curModel]?.vision
+  );
+
   return (
     <div className="panel chat">
       {error && !llmCfg && (
@@ -964,7 +1021,7 @@ export function Chat() {
             {groupToolCards(m.tools).map((g) => (
               <ToolCardGroupView key={g.cards[0].id} group={g} />
             ))}
-            {m.text && (
+            {(m.text || (m.images && m.images.length > 0)) && (
               m.origin
                 ? <PromptOriginMsg text={m.text} origin={m.origin} />
                 : m.role === "assistant"
@@ -973,7 +1030,18 @@ export function Chat() {
                       <Markdown text={m.text} />
                     </div>
                   )
-                  : <div className="chat-bubble">{m.text}</div>
+                  : (
+                    <div className="chat-bubble">
+                      {m.images && m.images.length > 0 && (
+                        <div className="chat-msg-images">
+                          {m.images.map((src, idx) => (
+                            <img key={idx} src={src} alt="" />
+                          ))}
+                        </div>
+                      )}
+                      {m.text}
+                    </div>
+                  )
             )}
           </div>
         ))}
@@ -1150,55 +1218,80 @@ export function Chat() {
         onSubmit={(e) => {
           e.preventDefault();
           if (streaming) addInfo();
-          else send(input);
+          else send(input, undefined, pendingImages);
         }}
       >
-        <textarea
-          ref={inputRef}
-          value={input}
-          rows={2}
-          disabled={!hasAnyModel}
-          placeholder={
-            !hasAnyModel
-              ? "No model configured — see the notice above"
-              : streaming
-                ? "Add info to the running turn…"
-                : "Message the workbench agent…"
-          }
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && !e.shiftKey) {
-              e.preventDefault();
-              if (streaming) addInfo();
-              else send(input);
+        {pendingImages.length > 0 && (
+          <div className="chat-pending-images">
+            {pendingImages.map((src, i) => (
+              <div className="chat-pending-image" key={i}>
+                <img src={src} alt="" />
+                <button
+                  type="button"
+                  className="chat-pending-image-remove"
+                  onClick={() => removePendingImage(i)}
+                  title="Remove"
+                >
+                  ✕
+                </button>
+              </div>
+            ))}
+            {!visionEnabled && (
+              <span className="hint chat-vision-warning">
+                Vision is off for this model — enable it in Models &amp; Connections to actually send these.
+              </span>
+            )}
+          </div>
+        )}
+        <div className="chat-input-row">
+          <textarea
+            ref={inputRef}
+            value={input}
+            rows={2}
+            disabled={!hasAnyModel}
+            placeholder={
+              !hasAnyModel
+                ? "No model configured — see the notice above"
+                : streaming
+                  ? "Add info to the running turn…"
+                  : "Message the workbench agent… (paste an image to attach it)"
             }
-          }}
-        />
-        {contextUse && (
-          <button
-            type="button"
-            className={`btn-sm compact-btn context-${contextUse.level}`}
-            onClick={compactNow}
-            disabled={streaming || !activeId}
-            title="Summarize this conversation and replace its history"
-          >
-            Compact <span className="context-used">({contextUse.percent}%)</span>
-          </button>
-        )}
-        {streaming ? (
-          <>
-            <button type="submit" disabled={!input.trim()} title="Fold this into the running turn">
-              Add info
+            onChange={(e) => setInput(e.target.value)}
+            onPaste={handlePaste}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                if (streaming) addInfo();
+                else send(input, undefined, pendingImages);
+              }
+            }}
+          />
+          {contextUse && (
+            <button
+              type="button"
+              className={`btn-sm compact-btn context-${contextUse.level}`}
+              onClick={compactNow}
+              disabled={streaming || !activeId}
+              title="Summarize this conversation and replace its history"
+            >
+              Compact <span className="context-used">({contextUse.percent}%)</span>
             </button>
-            <button type="button" disabled={!input.trim()} onClick={queueNext} title="Send after this turn finishes">
-              Queue
+          )}
+          {streaming ? (
+            <>
+              <button type="submit" disabled={!input.trim()} title="Fold this into the running turn">
+                Add info
+              </button>
+              <button type="button" disabled={!input.trim()} onClick={queueNext} title="Send after this turn finishes">
+                Queue
+              </button>
+            </>
+          ) : (
+            <button type="submit" disabled={(!input.trim() && pendingImages.length === 0) || !hasAnyModel}>
+              Send
             </button>
-          </>
-        ) : (
-          <button type="submit" disabled={!input.trim() || !hasAnyModel}>
-            Send
-          </button>
-        )}
+          )}
+        </div>
        </form>
         <div className="chat-stats-bar">
           <div className="stats-grid">

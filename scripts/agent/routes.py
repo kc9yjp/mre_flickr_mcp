@@ -75,10 +75,16 @@ async def chat_stream(request: Request):
         return JSONResponse({"error": "invalid JSON body"}, status_code=400)
     resume = bool(body.get("resume"))
     message = (body.get("message") or "").strip()
+    # Pasted images from the composer — data URLs, loosely validated here
+    # (real decoding/downsampling/cap enforcement happens in
+    # loop._build_user_content, which also owns the per-model vision gate).
+    images_in = body.get("images")
+    images = [u for u in images_in if isinstance(u, str) and u.startswith("data:image/")] if isinstance(images_in, list) else []
     # A resume ("Continue" button) picks an existing, already-cut-off turn
     # back up — there's no new user text, and run_turn(resume=True) ignores
-    # `message` entirely. A fresh turn still needs real text, same as before.
-    if not message and not resume:
+    # `message`/`images` entirely. A fresh turn still needs real content,
+    # same as before (now: text OR at least one image).
+    if not message and not images and not resume:
         return JSONResponse({"error": "message is required"}, status_code=400)
 
     nsid = user["nsid"]
@@ -113,8 +119,11 @@ async def chat_stream(request: Request):
     else:
         conv_connection = connection_override or settings.load_settings(nsid).get("active_connection", "")
         conv_model = model_override or cfg.get("model", "")
+        # An image-only first message (no typed text) still needs a title —
+        # store.create_conversation truncates whatever it's given to 80 chars.
+        title = message or ("1 image" if len(images) == 1 else f"{len(images)} images")
         conversation_id = store.create_conversation(
-            username, message, conv_connection, conv_model
+            username, title, conv_connection, conv_model
         )
         store.prune_conversations(username)
 
@@ -133,7 +142,7 @@ async def chat_stream(request: Request):
             yield {"type": "start", "conversation_id": conversation_id}
             async for event in loop.run_turn(
                 user, conversation_id, message, cfg, focused_photo_id,
-                session_id=session_id, resume=resume,
+                session_id=session_id, resume=resume, images=images,
             ):
                 yield event
 

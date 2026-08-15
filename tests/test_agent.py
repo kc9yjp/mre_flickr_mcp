@@ -1063,6 +1063,111 @@ async def test_run_turn_vision_disabled_tool_result_has_disclaimer(user_db):
     assert "IMGDATA" not in stored_json
 
 
+# --- pasted-image composer input ---
+
+def test_build_user_content_no_images_returns_plain_string():
+    """No attachments — behaves exactly like the pre-image-paste code path."""
+    from agent.loop import _build_user_content
+
+    assert _build_user_content("hello", [], vision=True) == "hello"
+    assert _build_user_content("hello", [], vision=False) == "hello"
+
+
+def test_build_user_content_vision_disabled_drops_images_with_note():
+    """Same guard as _result_content above, applied to user-pasted images:
+    vision=False must never let an image_url part reach the wire."""
+    from agent.loop import _build_user_content
+
+    content = _build_user_content("look at this", ["data:image/jpeg;base64,abc123"], vision=False)
+    assert isinstance(content, str)
+    assert "image_url" not in content
+    assert "look at this" in content
+    assert "vision is disabled" in content
+
+
+def test_build_user_content_vision_disabled_image_only_still_has_a_note():
+    """No typed text at all — the note must stand on its own, not disappear."""
+    from agent.loop import _build_user_content
+
+    content = _build_user_content("", ["data:image/jpeg;base64,abc123"], vision=False)
+    assert isinstance(content, str)
+    assert "vision is disabled" in content
+
+
+def test_build_user_content_vision_enabled_includes_image_url():
+    from agent.loop import _build_user_content
+
+    content = _build_user_content("look at this", ["data:image/jpeg;base64,aGVsbG8="], vision=True)
+    assert isinstance(content, list)
+    assert content[0] == {"type": "text", "text": "look at this"}
+    img = next(p for p in content if p["type"] == "image_url")
+    assert img["image_url"]["url"].startswith("data:image/jpeg;base64,")
+
+
+def test_build_user_content_vision_enabled_image_only_no_text_part():
+    from agent.loop import _build_user_content
+
+    content = _build_user_content("", ["data:image/jpeg;base64,aGVsbG8="], vision=True)
+    assert isinstance(content, list)
+    assert all(p["type"] == "image_url" for p in content)
+
+
+def test_build_user_content_caps_at_max_user_images():
+    from agent.loop import MAX_USER_IMAGES, _build_user_content
+
+    images = [f"data:image/jpeg;base64,img{i}" for i in range(MAX_USER_IMAGES + 3)]
+    content = _build_user_content("many", images, vision=True)
+    assert sum(1 for p in content if p["type"] == "image_url") == MAX_USER_IMAGES
+
+
+@pytest.mark.asyncio
+async def test_run_turn_pasted_image_reaches_llm_and_storage(user_db):
+    """End-to-end: an image pasted into the composer shows up as an image_url
+    part on the stored (and outbound) user message when vision is enabled."""
+    from agent import loop, store
+
+    cfg_vision = {**CFG, "vision": True}
+    conv = store.create_conversation(USERNAME, "t")
+
+    scripted = _scripted_llm([{"content": "Nice photo."}])
+
+    with patch("agent.loop.llm.stream_chat", scripted):
+        events = [
+            e async for e in loop.run_turn(
+                USER, conv, "what is this?", cfg_vision,
+                images=["data:image/png;base64,aGVsbG8="],
+            )
+        ]
+
+    assert events[-1]["type"] == "done"
+    stored_user_msg = next(m for m in store.get_messages(USERNAME, conv) if m["role"] == "user")
+    assert isinstance(stored_user_msg["content"], list)
+    assert any(p.get("type") == "image_url" for p in stored_user_msg["content"])
+
+
+@pytest.mark.asyncio
+async def test_run_turn_pasted_image_dropped_when_vision_disabled(user_db):
+    from agent import loop, store
+
+    cfg_no_vision = {**CFG, "vision": False}
+    conv = store.create_conversation(USERNAME, "t")
+
+    scripted = _scripted_llm([{"content": "I can't see images."}])
+
+    with patch("agent.loop.llm.stream_chat", scripted):
+        events = [
+            e async for e in loop.run_turn(
+                USER, conv, "what is this?", cfg_no_vision,
+                images=["data:image/png;base64,aGVsbG8="],
+            )
+        ]
+
+    assert events[-1]["type"] == "done"
+    stored_user_msg = next(m for m in store.get_messages(USERNAME, conv) if m["role"] == "user")
+    assert isinstance(stored_user_msg["content"], str)
+    assert "vision is disabled" in stored_user_msg["content"]
+
+
 def test_wire_messages_splits_tool_image_into_following_user_message():
     """A "tool" role message's content is text-only per the Chat Completions
     spec — an image_url part left on it is silently dropped by compliant

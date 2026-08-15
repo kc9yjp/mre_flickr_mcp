@@ -193,6 +193,55 @@ def test_chat_stream_lock_is_keyed_by_conversation(client, chat_data_dir, monkey
     assert calls == [(USERNAME, conv)]
 
 
+def test_chat_stream_requires_message_or_images(client, chat_data_dir, monkeypatch):
+    from agent import settings
+
+    _login(client)
+    monkeypatch.setattr(
+        settings, "resolve_cfg",
+        lambda *a, **k: {"model": "m", "base_url": "http://x/v1"},
+    )
+    resp = client.post("/api/chat/stream", headers=HEADERS, json={})
+    assert resp.status_code == 400
+    assert "message is required" in resp.json()["error"]
+
+
+def test_chat_stream_image_only_message_reaches_run_turn(client, chat_data_dir, monkeypatch):
+    """No typed text, just a pasted image: the request must not be rejected
+    for "missing message", the invalid second entry must be filtered out
+    before reaching run_turn, and the new conversation's title must fall
+    back to something other than an empty string."""
+    from agent import loop, settings, store
+
+    _login(client)
+    monkeypatch.setattr(
+        settings, "resolve_cfg",
+        lambda *a, **k: {"model": "m", "base_url": "http://x/v1"},
+    )
+
+    captured = {}
+
+    async def fake_run_turn(user, conversation_id, message, cfg, focused_photo_id=None,
+                             session_id="", resume=False, images=None):
+        captured["message"] = message
+        captured["images"] = images
+        yield {"type": "done"}
+
+    monkeypatch.setattr(loop, "run_turn", fake_run_turn)
+
+    data_url = "data:image/png;base64,aGVsbG8="
+    resp = client.post(
+        "/api/chat/stream", headers=HEADERS,
+        json={"images": [data_url, "not-a-data-url"]},
+    )
+    assert resp.status_code == 200
+    assert captured["message"] == ""
+    assert captured["images"] == [data_url]
+
+    conv = store.list_conversations(USERNAME)[0]
+    assert conv["title"] == "1 image"
+
+
 # --- presets ---
 
 def test_llm_connection_presets(client):
