@@ -35,6 +35,7 @@ from typing import AsyncIterator
 
 from mcp.types import TextContent, ImageContent
 
+import flickr_api
 import mcp_tools
 from db import _current_user, get_db
 
@@ -506,7 +507,10 @@ def _omission_warning(fields: list[str]) -> str:
 def _focus_photo_id(name: str, args: dict) -> str | None:
     if name in ("sync",):
         return None
-    for key in ("photo_id", "id"):
+    # primary_photo_id covers create_album/edit_album/create_gallery's cover
+    # photo — same id shape, just a different arg name for "the photo this
+    # confirm card (and the post-execution focus event) should show".
+    for key in ("photo_id", "id", "primary_photo_id"):
         value = str(args.get(key, ""))
         if re.fullmatch(r"\d{6,}", value):
             return value
@@ -591,6 +595,85 @@ def _group_preview_sync(user: dict, group_id: str) -> dict | None:
     finally:
         _current_user.reset(token)
     return None
+
+
+def _album_preview_sync(user: dict, album_id: str) -> dict | None:
+    """Best-effort album-title lookup for the confirm card — local DB first,
+    then a live flickr.photosets.getInfo call (same fallback _edit_album
+    already uses) for an album not yet synced locally, e.g. one created
+    earlier in this same conversation. Never raises — a missing preview just
+    means the card falls back to showing the raw id."""
+    token = _current_user.set(user)
+    try:
+        with get_db() as conn:
+            row = conn.execute(
+                "SELECT id, title FROM albums WHERE id = ?", (album_id,)
+            ).fetchone()
+        if row:
+            return {"id": row["id"], "title": row["title"]}
+        creds = flickr_api._load_credentials()
+        data = flickr_api._api_get(
+            "flickr.photosets.getInfo", {"photoset_id": album_id, "user_id": creds["user_nsid"]}
+        )
+        ps = data.get("photoset") or {}
+        title = ps.get("title")
+        title = title.get("_content", "") if isinstance(title, dict) else (title or "")
+        return {"id": album_id, "title": title}
+    except Exception:
+        logging.warning("agent: album preview lookup failed for %s", album_id)
+        return None
+    finally:
+        _current_user.reset(token)
+
+
+def _contact_preview_sync(user: dict, contact_id: str) -> dict | None:
+    """Best-effort contact name/handle lookup for the confirm card — local DB
+    first (by resolved NSID), then a live flickr.people.getInfo call for
+    someone not yet followed. That live fallback matters most here: the
+    whole point of follow_contact is a contact who, by definition, usually
+    ISN'T already in the local cache, and it's exactly the case where seeing
+    the real name/handle (not just a raw NSID) before approving matters most.
+    ``contact_id`` may be a username or profile URL, not just an NSID — same
+    as the tool handlers themselves accept (see flickr_api.resolve_user_id).
+    Never raises — a missing preview just means the card falls back to
+    showing the raw id."""
+    token = _current_user.set(user)
+    try:
+        nsid = flickr_api.resolve_user_id(contact_id)
+        with get_db() as conn:
+            row = conn.execute(
+                "SELECT id, username, realname FROM contacts WHERE id = ?", (nsid,)
+            ).fetchone()
+        if row:
+            return {"id": row["id"], "username": row["username"], "realname": row["realname"]}
+        info = flickr_api._api_get("flickr.people.getInfo", {"user_id": nsid})
+        person = info.get("person") or {}
+        username = (person.get("username") or {}).get("_content", "")
+        realname = (person.get("realname") or {}).get("_content", "")
+        return {"id": nsid, "username": username, "realname": realname}
+    except Exception:
+        logging.warning("agent: contact preview lookup failed for %s", contact_id)
+        return None
+    finally:
+        _current_user.reset(token)
+
+
+def _gallery_preview_sync(user: dict, gallery_id: str) -> dict | None:
+    """Best-effort gallery-title lookup for the confirm card. Galleries
+    aren't cached locally at all (no `galleries` table), so this is always a
+    live flickr.galleries.getInfo call. Never raises."""
+    token = _current_user.set(user)
+    try:
+        data = flickr_api._api_get("flickr.galleries.getInfo", {"gallery_id": gallery_id})
+        gallery = data.get("gallery") or {}
+        title = gallery.get("title")
+        title = title.get("_content", "") if isinstance(title, dict) else (title or "")
+        return {"id": gallery_id, "title": title}
+    except Exception:
+        logging.warning("agent: gallery preview lookup failed for %s", gallery_id)
+        return None
+    finally:
+        _current_user.reset(token)
 
 
 async def run_turn(
@@ -751,6 +834,9 @@ async def run_turn(
                             "arguments": raw_args,
                             "photo": None,
                             "groups": None,
+                            "album": None,
+                            "contact": None,
+                            "gallery": None,
                             "warning": None,
                         }
                         decision = await _await_confirmation(confirm_id, future)
@@ -814,6 +900,27 @@ async def run_turn(
                         )
                         if g
                     ] or None
+                    # Same "show the real name/handle, not just the raw id"
+                    # treatment as photo/groups above, for the other
+                    # id-referencing write tools: albums (add/remove/edit/
+                    # delete_album), contacts (follow/unfollow/protect/
+                    # never-follow — the one where getting the WRONG person
+                    # matters most), and galleries (add_to_gallery).
+                    album_id = str(args.get("album_id", "") or "")
+                    album = (
+                        await asyncio.to_thread(_album_preview_sync, user, album_id)
+                        if album_id else None
+                    )
+                    contact_id = str(args.get("contact_id", "") or "")
+                    contact = (
+                        await asyncio.to_thread(_contact_preview_sync, user, contact_id)
+                        if contact_id else None
+                    )
+                    gallery_id = str(args.get("gallery_id", "") or "")
+                    gallery = (
+                        await asyncio.to_thread(_gallery_preview_sync, user, gallery_id)
+                        if gallery_id else None
+                    )
                     yield {
                         "type": "confirm_request",
                         "confirm_id": confirm_id,
@@ -821,6 +928,9 @@ async def run_turn(
                         "arguments": raw_args,
                         "photo": photo,
                         "groups": groups,
+                        "album": album,
+                        "contact": contact,
+                        "gallery": gallery,
                         "warning": _omission_warning(omitted_fields) if omitted_fields else None,
                     }
                     decision = await _await_confirmation(confirm_id, future)

@@ -913,6 +913,186 @@ async def test_confirm_request_photo_preview_populated_for_numeric_id(user_db):
 
 
 @pytest.mark.asyncio
+async def test_confirm_request_includes_album_preview_from_local_db(user_db):
+    """album_id resolves to a title the same way group_id already does for
+    groups — mem_db seeds 'album1' as 'My Album'."""
+    from agent import loop, store
+
+    conv = store.create_conversation(USERNAME, "t")
+    scripted = _scripted_llm([
+        {"tool_calls": [_tool_call("c1", "edit_album", {"album_id": "album1", "title": "Renamed"})]},
+        {"content": "Done."},
+    ])
+    events = []
+    with patch("agent.loop.llm.stream_chat", scripted):
+        async for event in loop.run_turn(USER, conv, "rename my album", CFG):
+            events.append(event)
+            if event["type"] == "confirm_request":
+                assert loop.resolve_confirm(event["confirm_id"], True)
+
+    confirm = next(e for e in events if e["type"] == "confirm_request")
+    assert confirm["album"] == {"id": "album1", "title": "My Album"}
+
+
+@pytest.mark.asyncio
+async def test_confirm_request_album_preview_falls_back_to_live_api(user_db, patched_server):
+    """An album not yet in the local cache (e.g. created earlier this same
+    conversation) still gets a real title via flickr.photosets.getInfo,
+    instead of the card showing nothing but a raw id."""
+    from agent import loop, store
+
+    mcp, api_get, api_post = patched_server
+    api_get.return_value = {"photoset": {"title": {"_content": "Live Album Title"}}}
+
+    conv = store.create_conversation(USERNAME, "t")
+    scripted = _scripted_llm([
+        {"tool_calls": [_tool_call("c1", "delete_album", {"album_id": "newalbum99"})]},
+        {"content": "Done."},
+    ])
+    events = []
+    with patch("agent.loop.llm.stream_chat", scripted):
+        async for event in loop.run_turn(USER, conv, "delete that album", CFG):
+            events.append(event)
+            if event["type"] == "confirm_request":
+                assert loop.resolve_confirm(event["confirm_id"], False)
+
+    confirm = next(e for e in events if e["type"] == "confirm_request")
+    assert confirm["album"] == {"id": "newalbum99", "title": "Live Album Title"}
+
+
+@pytest.mark.asyncio
+async def test_confirm_request_includes_contact_preview_from_local_db(user_db):
+    from agent import loop, store
+
+    con = sqlite3.connect(Path(user_db) / "flickr.db")
+    con.execute(
+        "INSERT INTO contacts VALUES (?,?,?,?,?,?)",
+        ("11223344@N00", "shutterbug", "Jane Doe", 0, 0, 0),
+    )
+    con.commit()
+    con.close()
+
+    conv = store.create_conversation(USERNAME, "t")
+    scripted = _scripted_llm([
+        {"tool_calls": [_tool_call("c1", "unfollow_contact", {"contact_id": "11223344@N00"})]},
+        {"content": "Done."},
+    ])
+    events = []
+    with patch("agent.loop.llm.stream_chat", scripted):
+        async for event in loop.run_turn(USER, conv, "unfollow them", CFG):
+            events.append(event)
+            if event["type"] == "confirm_request":
+                assert loop.resolve_confirm(event["confirm_id"], False)
+
+    confirm = next(e for e in events if e["type"] == "confirm_request")
+    assert confirm["contact"] == {"id": "11223344@N00", "username": "shutterbug", "realname": "Jane Doe"}
+
+
+@pytest.mark.asyncio
+async def test_confirm_request_contact_preview_falls_back_to_live_api_for_new_follow(user_db, patched_server):
+    """follow_contact's whole point is someone NOT already in the local
+    cache — this is the case where seeing a real name/handle instead of a
+    raw NSID before approving matters most, so it must go live for it.
+    Also exercises contact_id as a username rather than an NSID, same as
+    flickr_api.resolve_user_id itself accepts."""
+    from agent import loop, store
+
+    mcp, api_get, api_post = patched_server
+
+    def fake_api_get(method, extra=None):
+        if method == "flickr.people.findByUsername":
+            return {"user": {"nsid": "55555555@N00"}}
+        if method == "flickr.people.getInfo":
+            return {"person": {
+                "username": {"_content": "newfriend"},
+                "realname": {"_content": "New Friend"},
+            }}
+        raise AssertionError(f"unexpected method {method}")
+
+    api_get.side_effect = fake_api_get
+
+    conv = store.create_conversation(USERNAME, "t")
+    scripted = _scripted_llm([
+        {"tool_calls": [_tool_call("c1", "follow_contact", {"contact_id": "newfriend"})]},
+        {"content": "Done."},
+    ])
+    events = []
+    with patch("agent.loop.llm.stream_chat", scripted):
+        async for event in loop.run_turn(USER, conv, "follow newfriend", CFG):
+            events.append(event)
+            if event["type"] == "confirm_request":
+                assert loop.resolve_confirm(event["confirm_id"], False)
+
+    confirm = next(e for e in events if e["type"] == "confirm_request")
+    assert confirm["contact"] == {"id": "55555555@N00", "username": "newfriend", "realname": "New Friend"}
+
+
+@pytest.mark.asyncio
+async def test_confirm_request_includes_gallery_preview(user_db, patched_server):
+    """Galleries have no local cache table at all, so this is always a live
+    flickr.galleries.getInfo call."""
+    from agent import loop, store
+
+    mcp, api_get, api_post = patched_server
+    api_get.return_value = {"gallery": {"title": {"_content": "Best of 2026"}}}
+
+    conv = store.create_conversation(USERNAME, "t")
+    scripted = _scripted_llm([
+        {"tool_calls": [_tool_call("c1", "add_to_gallery", {"gallery_id": "gal123", "photo_id": "photo1"})]},
+        {"content": "Done."},
+    ])
+    events = []
+    with patch("agent.loop.llm.stream_chat", scripted):
+        async for event in loop.run_turn(USER, conv, "add to my gallery", CFG):
+            events.append(event)
+            if event["type"] == "confirm_request":
+                assert loop.resolve_confirm(event["confirm_id"], False)
+
+    confirm = next(e for e in events if e["type"] == "confirm_request")
+    assert confirm["gallery"] == {"id": "gal123", "title": "Best of 2026"}
+
+
+@pytest.mark.asyncio
+async def test_confirm_request_create_album_shows_cover_photo_preview(user_db):
+    """primary_photo_id (create_album/edit_album/create_gallery's cover
+    photo arg) must resolve a photo preview too, not just photo_id/id —
+    see _focus_photo_id."""
+    from agent import loop, store
+
+    con = sqlite3.connect(Path(user_db) / "flickr.db")
+    con.execute(
+        "INSERT INTO photos (id, title, description, date_taken, date_uploaded, "
+        "last_updated, url_photopage, url_original, tags, views, favorites, "
+        "comments, is_public, synced_at, reviewed_at, url_medium) "
+        "VALUES ('55405570240','Sunset','','2024-01-15 12:00:00',0,0,'','',"
+        "'',0,0,0,1,0,NULL,'https://live.staticflickr.com/x/thumb_z.jpg')"
+    )
+    con.commit()
+    con.close()
+
+    conv = store.create_conversation(USERNAME, "t")
+    scripted = _scripted_llm([
+        {"tool_calls": [_tool_call(
+            "c1", "create_album", {"title": "New Album", "primary_photo_id": "55405570240"},
+        )]},
+        {"content": "Done."},
+    ])
+    events = []
+    with patch("agent.loop.llm.stream_chat", scripted):
+        async for event in loop.run_turn(USER, conv, "make an album", CFG):
+            events.append(event)
+            if event["type"] == "confirm_request":
+                assert loop.resolve_confirm(event["confirm_id"], False)
+
+    confirm = next(e for e in events if e["type"] == "confirm_request")
+    assert confirm["photo"] == {
+        "id": "55405570240",
+        "title": "Sunset",
+        "thumb_url": "https://live.staticflickr.com/x/thumb_z.jpg",
+    }
+
+
+@pytest.mark.asyncio
 async def test_run_turn_write_tool_approved_executes(user_db, patched_server):
     mcp, api_get, api_post = patched_server
     from agent import loop, store

@@ -55,6 +55,9 @@ interface PendingConfirm {
   arguments: string;
   photo: { id: string; title: string; thumb_url: string | null } | null;
   groups: { id: string; name: string }[] | null;
+  album: { id: string; title: string } | null;
+  contact: { id: string; username: string; realname: string } | null;
+  gallery: { id: string; title: string } | null;
   warning: string | null;
 }
 
@@ -192,6 +195,18 @@ function ErrorBanner({
       )}
     </p>
   );
+}
+
+// realname is the display name Flickr shows in most of its own UI, but it's
+// optional — plenty of accounts only ever set a username/handle. Fall back
+// through both before admitting the lookup came up empty (the caller still
+// shows the raw NSID alongside this, so approval never has to rest on a
+// blank label alone).
+function contactLabel(contact: { username: string; realname: string }): string {
+  if (contact.realname && contact.username) return `${contact.realname} (@${contact.username})`;
+  if (contact.username) return `@${contact.username}`;
+  if (contact.realname) return contact.realname;
+  return "(unknown)";
 }
 
 function prettyArgs(raw: string): string {
@@ -1063,6 +1078,21 @@ export function Chat() {
               <p className="hint">
                 {confirm.groups.length === 1 ? "Group: " : "Groups: "}
                 {confirm.groups.map((g) => g.name || "(unknown)").join(", ")}
+              </p>
+            )}
+            {confirm.album && (
+              <p className="hint">
+                Album: {confirm.album.title || "(untitled)"} — album {confirm.album.id}
+              </p>
+            )}
+            {confirm.contact && (
+              <p className="hint">
+                Contact: {contactLabel(confirm.contact)} — {confirm.contact.id}
+              </p>
+            )}
+            {confirm.gallery && (
+              <p className="hint">
+                Gallery: {confirm.gallery.title || "(untitled)"} — gallery {confirm.gallery.id}
               </p>
             )}
             <pre>{prettyArgs(confirm.arguments)}</pre>
