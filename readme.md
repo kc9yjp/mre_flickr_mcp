@@ -245,6 +245,7 @@ See [`playwright/README.md`](playwright/README.md) for details.
 - [TOOLS.md](TOOLS.md) — full catalog of all MCP tools
 - [WORKBENCH.md](WORKBENCH.md) / [MODEL_CONFIG.md](MODEL_CONFIG.md) — Workbench build log and LLM settings reference
 - [VECTOR_SEARCH.md](VECTOR_SEARCH.md) — optional group semantic search: setup, configuration, and troubleshooting
+- [RELEASING.md](RELEASING.md) — how to tag a release and what the Docker Hub publish workflow does
 - [Docker Hub](https://hub.docker.com/repositories/ejwettstein)
 - [Flickr API docs](https://www.flickr.com/services/api/)
 - [Model Context Protocol](https://modelcontextprotocol.io/)
