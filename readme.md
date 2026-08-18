@@ -13,16 +13,15 @@ A Flickr [MCP (Model Context Protocol)](https://modelcontextprotocol.io/) server
 
 ## How it works
 
-The server always runs in SSE/web mode — one container serves both the MCP endpoint and a web dashboard for login, sync, and stats.
+The server always runs in SSE/web mode — one container serves both the MCP endpoint and **Mr. E's Photo Workbench**, a browser-based dashboard for login, sync, stats, and an LLM chat agent that can call every MCP tool directly.
 
 | URL | Purpose |
 |-----|---------|
-| `http://localhost:8000/` | Home — status overview and navigation |
 | `http://localhost:8000/login` | Browser-based Flickr OAuth login |
-| `http://localhost:8000/sync` | Sync status and trigger buttons |
-| `http://localhost:8000/stats` | Collection statistics |
-| `http://localhost:8000/setup` | `.mcp.json` config snippet for your AI client |
+| `http://localhost:8000/app` | The Workbench — Photo Browser, Sync, Stats, Setup, Chat, and more, each a dockable panel |
 | `http://localhost:8000/sse` | MCP SSE endpoint (AI clients connect here) |
+
+Logged-in visits to `/` redirect straight to `/app`.
 
 ---
 
@@ -39,7 +38,6 @@ The server always runs in SSE/web mode — one container serves both the MCP end
 ```bash
 FLICKR_API_KEY=your_api_key
 FLICKR_API_SECRET=your_api_secret
-MCP_API_KEY=your_secret_token   # optional but recommended
 ```
 
 **2. Start the server:**
@@ -48,7 +46,7 @@ MCP_API_KEY=your_secret_token   # optional but recommended
 docker run -d \
   --env-file .env \
   -e MCP_PORT=8000 \
-  -v flickr-creds:/root/.flickr_mcp \
+  -v flickr-creds:/home/app/.flickr_mcp \
   -v flickr-data:/app/data \
   -p 8000:8000 \
   ejwettstein/flickr-mcp
@@ -64,7 +62,7 @@ services:
     environment:
       - MCP_PORT=8000
     volumes:
-      - flickr-creds:/root/.flickr_mcp
+      - flickr-creds:/home/app/.flickr_mcp
       - flickr-data:/app/data
     ports:
       - "8000:8000"
@@ -85,11 +83,11 @@ Open `http://localhost:8000/login` in your browser and click **Login with Flickr
 
 **4. Run your first sync:**
 
-Visit `http://localhost:8000/sync` and click **Photos** to sync your library to the local database.
+Open `http://localhost:8000/app`, go to the **Sync** panel, and click **Photos** to sync your library to the local database.
 
 **5. Connect your AI client:**
 
-Visit `http://localhost:8000/setup` for a ready-to-paste `.mcp.json` config, or use this template:
+Open the **Setup** panel in the Workbench for a ready-to-paste `.mcp.json` config with your personal API key already filled in, or use this template (get `your_secret_token` from that panel — it's generated per-user on first login, not something you choose):
 
 ```json
 {
@@ -111,13 +109,18 @@ Add this to your project's `.mcp.json` (Claude Code), `~/.cursor/mcp.json` (Curs
 
 ## Stdio mode
 
-Stdio transport is available for clients that require it. Set `MCP_TRANSPORT=stdio` and pipe through docker:
+Stdio transport is available for clients that require it. It identifies you
+by your personal API key rather than a session, so you must log in via the
+SSE container first (see Quick start above) and copy your key from the
+Workbench's Setup panel. Set `MCP_TRANSPORT=stdio` and `MCP_API_KEY=<your
+personal key>`, and pipe through docker:
 
 ```bash
 docker run -i --rm \
   --env-file .env \
   -e MCP_TRANSPORT=stdio \
-  -v flickr-creds:/root/.flickr_mcp \
+  -e MCP_API_KEY=your_personal_api_key \
+  -v flickr-creds:/home/app/.flickr_mcp \
   -v flickr-data:/app/data \
   ejwettstein/flickr-mcp
 ```
@@ -134,7 +137,8 @@ docker run -i --rm \
         "-e", "FLICKR_API_KEY=your_api_key",
         "-e", "FLICKR_API_SECRET=your_api_secret",
         "-e", "MCP_TRANSPORT=stdio",
-        "-v", "flickr-creds:/root/.flickr_mcp",
+        "-e", "MCP_API_KEY=your_personal_api_key",
+        "-v", "flickr-creds:/home/app/.flickr_mcp",
         "-v", "flickr-data:/app/data",
         "ejwettstein/flickr-mcp"
       ]
@@ -154,7 +158,7 @@ Note: stdio mode has no web UI — login and sync must be done via the SSE conta
 | `FLICKR_API_KEY` | Yes | Your Flickr API key |
 | `FLICKR_API_SECRET` | Yes | Your Flickr API secret |
 | `MCP_PORT` | No | Port for the web/SSE server (default: `8000`) |
-| `MCP_API_KEY` | No | Bearer token to protect the SSE endpoint |
+| `MCP_API_KEY` | Only for stdio | Personal API key (from the Workbench Setup panel) identifying which user's stdio session this is. Not used by SSE mode — each user's own key, issued at login, authenticates their SSE/streamable-HTTP connections instead. |
 | `MCP_TRANSPORT` | No | `sse` (default) or `stdio` |
 | `WORKBENCH_VECTOR_SEARCH_ENABLED` | No | `false` (default) — see [Group semantic search](#group-semantic-search-optional) |
 
@@ -202,7 +206,7 @@ troubleshooting.
 
 | Mount | Purpose |
 |-------|---------|
-| `flickr-creds:/root/.flickr_mcp` | OAuth credentials (written by web login) |
+| `flickr-creds:/home/app/.flickr_mcp` | OAuth credentials (written by web login) |
 | `flickr-data:/app/data` | SQLite database of your photo metadata |
 
 ---

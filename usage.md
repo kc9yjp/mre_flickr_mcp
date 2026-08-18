@@ -3,7 +3,9 @@
 ## Prerequisites
 
 ```bash
-cp .env.example .env   # add your FLICKR_API_KEY and FLICKR_API_SECRET
+cp docker-compose.yml.example docker-compose.yml
+echo "FLICKR_API_KEY=your_api_key" >> .env
+echo "FLICKR_API_SECRET=your_api_secret" >> .env
 docker compose build
 docker compose up -d
 ```
@@ -12,14 +14,16 @@ docker compose up -d
 
 ## Web dashboard
 
-The server always starts in SSE/web mode. Visit these pages after `docker compose up -d`:
+The server always starts in SSE/web mode. After `docker compose up -d`, log in
+once and everything else lives inside **Mr. E's Photo Workbench**, a single
+dockable-panel SPA:
 
 | Page | URL | Purpose |
 |------|-----|---------|
 | Login | `http://localhost:8000/login` | Browser-based Flickr OAuth — click once, done |
-| Sync | `http://localhost:8000/sync` | Trigger and monitor syncs |
-| Stats | `http://localhost:8000/stats` | Collection stats from local DB |
-| Setup | `http://localhost:8000/setup` | `.mcp.json` config snippet for your AI client |
+| Workbench | `http://localhost:8000/app` | Photo Browser, Sync, Stats, Setup, Chat, Queue, and Settings panels |
+
+`http://localhost:8000/` redirects to `/app` once you're logged in.
 
 ---
 
@@ -27,8 +31,8 @@ The server always starts in SSE/web mode. Visit these pages after `docker compos
 
 1. `docker compose up -d`
 2. Open `http://localhost:8000/login` → **Login with Flickr** → complete OAuth in browser
-3. Open `http://localhost:8000/sync` → click **Photos** for initial sync
-4. Open `http://localhost:8000/setup` → copy the `.mcp.json` snippet into your project
+3. Open `http://localhost:8000/app` → **Sync** panel → click **Photos** for initial sync
+4. Same app → **Setup** panel → copy the `.mcp.json` snippet into your project
 
 ---
 
@@ -50,9 +54,15 @@ The SSE endpoint is `http://localhost:8000/sse`. Add to `.mcp.json`:
 }
 ```
 
-`MCP_API_KEY` is optional — if not set, no auth is required. Set it in `.env` to restrict access.
+`your_mcp_api_key` above is the personal key shown in the Workbench's Setup
+panel after you log in — every request to `/sse`/`/mcp` must carry a valid
+key or OAuth access token; there is no way to run the endpoint unauthenticated.
+`MCP_API_KEY` (the env var) only matters for stdio mode — see below.
 
 ### Tools
+
+A representative sample — see **[TOOLS.md](TOOLS.md)** for the full catalog
+of all MCP tools.
 
 | Tool | Description |
 |------|-------------|
@@ -80,13 +90,16 @@ For clients that require stdio transport, override with `MCP_TRANSPORT=stdio`:
 docker compose --profile stdio up flickr-mcp-stdio
 ```
 
-Or via `docker run`:
+Or via `docker run`. Stdio mode identifies you by your personal API key, not a
+session, so log in via the SSE container first and copy the key from the
+Workbench's Setup panel:
 
 ```bash
 docker run -i --rm \
   --env-file .env \
   -e MCP_TRANSPORT=stdio \
-  -v flickr-creds:/root/.flickr_mcp \
+  -e MCP_API_KEY=your_personal_api_key \
+  -v flickr-creds:/home/app/.flickr_mcp \
   -v flickr-data:/app/data \
   ejwettstein/flickr-mcp
 ```
@@ -102,28 +115,35 @@ Note: stdio mode has no web UI. Manage login and sync via the SSE container firs
 | `FLICKR_API_KEY` | Yes | Your Flickr API key |
 | `FLICKR_API_SECRET` | Yes | Your Flickr API secret |
 | `MCP_PORT` | No | Port for the web/SSE server (default: `8000`) |
-| `MCP_API_KEY` | No | Bearer token to protect the SSE endpoint |
+| `MCP_API_KEY` | Only for stdio | Personal API key (from the Workbench Setup panel) identifying which user a stdio session is; not used by SSE mode |
 | `MCP_TRANSPORT` | No | `sse` (default) or `stdio` |
 
 ## Volumes
 
 | Mount | Purpose |
 |-------|---------|
-| `flickr-creds:/root/.flickr_mcp` | OAuth credentials |
+| `flickr-creds:/home/app/.flickr_mcp` | OAuth credentials |
 | `flickr-data:/app/data` | SQLite photo metadata database |
 
 ---
 
-## CLI (`scripts/flickr.py`)
+## Scripted / headless login and sync
 
-The CLI is still available for direct use outside Docker:
+There is no longer a standalone `flickr.py` CLI. For scripted or headless
+use outside the web login flow:
 
 ```bash
-pip install requests
-python scripts/flickr.py login    # OAuth login (terminal-based, opens browser)
-python scripts/flickr.py status   # Verify session
-python scripts/flickr.py sync     # Incremental sync
-python scripts/flickr.py sync --full   # Full re-fetch
+# Terminal OAuth (out-of-band verifier, no browser redirect) — see the
+# module docstring in flickr_oauth.py for the two-step exchange:
+python scripts/flickr_oauth.py
+
+# Sync directly, once credentials exist (per-user, needs --nsid/--username
+# unless running as the legacy single-user fallback):
+python scripts/flickr_sync.py            # incremental
+python scripts/flickr_sync.py --full     # full re-fetch
+python scripts/flickr_sync.py --backfill # walk full upload history in date windows
 ```
 
-Credentials are saved to `~/.flickr_mcp/credentials.json`. The CLI is useful for development and debugging; for production use the web dashboard.
+Credentials are saved to `~/.flickr_mcp/{nsid}/credentials.json`. This path
+is for development/debugging; for normal use, log in and sync via the
+Workbench (`/login`, then the Sync panel at `/app`).

@@ -9,7 +9,7 @@ A Flickr MCP (Model Context Protocol) server. The server always runs in SSE/web 
 **Architecture:**
 - `scripts/flickr_mcp.py` — MCP server + web UI (Starlette/uvicorn, SSE transport)
 - `scripts/flickr_sync.py` and `scripts/sync_*.py` — sync scripts invoked by the server
-- `scripts/flickr.py` — standalone CLI (legacy, rarely used directly)
+- `scripts/flickr_oauth.py` — legacy terminal OAuth flow, superseded by the browser login at `/login` (there is no longer a standalone `flickr.py` CLI)
 - `scripts/vector_search.py` — optional semantic group search (Chroma + `/v1/embeddings`), off by default
 - `frontend/` — the workbench's React/TypeScript UI (Chat, Photo Browser, Session Stats, etc.), built to `frontend/dist` and served by `flickr_mcp.py`
 
@@ -62,9 +62,11 @@ Visit `http://localhost:8000` after starting the container:
 | Page | Purpose |
 |------|---------|
 | `/login` | Browser-based Flickr OAuth login (no terminal paste) |
-| `/stats` | Collection statistics from local SQLite |
-| `/sync` | Sync status and trigger buttons; includes Reset Database button |
-| `/setup` | Personal MCP connection config snippet (shows your API key) |
+| `/app` | **Mr. E's Photo Workbench** — dockable panels for Photo Browser, Sync (status/trigger, Reset Database), Stats/Summary, Setup (personal MCP config snippet), Chat, Queue, and Settings |
+
+`/` redirects to `/app` for logged-in users, `/login` otherwise. The classic
+server-rendered `/stats`, `/sync`, `/setup` pages were removed when the
+Workbench SPA replaced them — see [ARCHITECTURE.md](ARCHITECTURE.md#the-workbench).
 
 Logs go to stderr and are visible via `docker compose logs -f flickr-mcp`.
 
@@ -72,7 +74,7 @@ Logs go to stderr and are visible via `docker compose logs -f flickr-mcp`.
 
 1. Build and start: `docker compose up -d`
 2. Log in at `http://localhost:8000/login` via Flickr OAuth
-3. Visit `http://localhost:8000/setup` for your personal `.mcp.json` config snippet
+3. Open `http://localhost:8000/app`, go to the Setup panel, for your personal `.mcp.json` config snippet
 4. Add it to your project or global `~/.claude/mcp.json`
 5. Restart Claude Code and run `/mcp` to confirm the `flickr` server is connected
 
@@ -92,10 +94,10 @@ Logs go to stderr and are visible via `docker compose logs -f flickr-mcp`.
 The server supports multiple independent Flickr accounts:
 
 - Each user authenticates via Flickr OAuth at `/login`
-- A personal MCP API key is generated automatically on first login and shown at `/setup`
+- A personal MCP API key is generated automatically on first login and shown in the Workbench's Setup panel (`/app`)
 - Each user has an isolated SQLite database (`data/{username}/flickr.db`) and credentials dir (`~/.flickr_mcp/{nsid}/`)
 - Sessions last 30 days; logout clears the session but preserves credentials and database
-- Users can reset (delete) their own database from the `/sync` page — a fresh sync recreates it
+- Users can reset (delete) their own database from the Workbench's Sync panel — a fresh sync recreates it
 - The background refresh task syncs each registered user independently every 12 hours
 
 ### Migration from single-user installs
@@ -129,51 +131,25 @@ groups            — id, name, members, pool_count, synced_at, description,
 albums            — id, title, description, primary_photo_id, count_photos, count_views, synced_at
 photo_groups      — photo_id, group_id (which of your photos are in each group)
 sync_log          — type, mode, photos_fetched, synced_at
+pending_group_adds — queue for rate-limited or scheduled group-pool adds (see ARCHITECTURE.md's "Group-add queue")
+settings          — per-user key/value overrides
+keeper_list       — photo_id, note (photos flagged as worth keeping despite weak stats)
 ```
 
 ## MCP Tools
 
-| Tool | Description |
-|------|-------------|
-| `get_summary` | Total photos, views, top tags, date range |
-| `list_recent_syncs` | Recent sync log entries |
-| `search_photos` | Search local DB by keyword, incomplete metadata, sort by views/date |
-| `get_photo` | Fetch single photo details — local DB for own photos, live API fallback for other users' |
-| `get_photo_stats` | Views, favorites, comments for a photo |
-| `get_photo_comments` | Fetch comments on a photo |
-| `get_unreplied_comments` | Scan recent activity (`flickr.activity.userPhotos`) and return photos with comments the user hasn't replied to yet |
-| `fetch_photo_image` | Download photo and return as image for visual inspection |
-| `update_photo` | Update title, description, tags (Flickr + local DB) |
-| `set_visibility` | Make photo public or private |
-| `find_weak_photos` | Rank photos by weakness score (low views, zero faves/comments) |
-| `add_comment` | Post a comment on a photo |
-| `fave_photo` | Add a photo to the user's favorites |
-| `get_photo_faves` | List users who faved a photo, with `you_follow` flag cross-referenced from local contacts DB |
-| `find_albums` | Search albums by keyword — matches any individual word against title or description |
-| `get_all_albums` | List all albums, optionally sorted by title/photo count/views |
-| `get_album_photos` | List photos in an album |
-| `add_to_album` | Add photo to an album |
-| `remove_from_album` | Remove photo from an album |
-| `create_album` | Create a new album |
-| `edit_album` | Update album title/description |
-| `delete_album` | Delete an album |
-| `find_groups` | Search joined groups by keyword; returns a markdown listing (one section per group, headed by its id) with the AI summary, milestone thresholds, and your note. With `WORKBENCH_VECTOR_SEARCH_ENABLED=true`, leftover result slots are filled with semantically similar groups under their own heading (`limit` caps both paths combined) |
-| `set_group_note` | Set a personal note about a group, incorporated into its AI summary on the next sync |
-| `get_group_stats` | Groups ranked by how many of your photos are in each |
-| `get_threshold_groups` | Joined groups with a fave or view count minimum to post, sorted by that threshold |
-| `get_photo_group_count` | Photos ranked by how many groups they belong to |
-| `add_to_group` | Add photo to a group pool |
-| `remove_from_group` | Remove photo from a group pool |
-| `get_photo_contexts` | Return group pools and albums a photo belongs to (local DB after sync, API fallback — only for the caller's own photos) |
-| `get_group_info` | Live lookup for any group by ID — name, description, rules, member/pool counts, and whether you've joined it |
-| `get_contacts_summary` | Total contacts, friends/family count, engagement stats, top engagers |
-| `find_unfollow_candidates` | Contacts ranked by lowest engagement (faves + comments) |
-| `protect_contact` | Add contact to do-not-unfollow whitelist |
-| `unfollow_contact` | Unfollow a contact via API |
-| `find_follow_candidates` | People who faved/commented on your photos that you don't follow yet, ranked by engagement |
-| `add_to_never_follow` | Permanently exclude a contact from follow suggestions |
-| `set_location` | Set photo geolocation (lat/lon) on Flickr |
-| `sync` | Trigger an incremental (or full) photo sync from within MCP |
+69 tools across `scripts/tools/{photos,albums,groups,contacts,galleries,sync}.py`.
+See **[TOOLS.md](TOOLS.md)** for the full catalog with parameters — kept
+there rather than duplicated here so there's one place to update when tools
+change. A few worth knowing up front:
+
+- `get_photo` / `get_photo_contexts` / `get_group_info` — local-DB-first with
+  a live API fallback, so they work for photos/groups outside the caller's
+  own library (see "Database Schema" below).
+- `find_albums` / `find_groups` — keyword search over the local cache,
+  favoring recall (see "Key Implementation Details" below); `find_groups`
+  also gains an optional semantic path when `WORKBENCH_VECTOR_SEARCH_ENABLED=true`.
+- `sync` — trigger an incremental (or full/backfill) sync from within MCP.
 
 ## Key Implementation Details
 
@@ -190,18 +166,28 @@ sync_log          — type, mode, photos_fetched, synced_at
 ## Skills (Claude Code slash commands)
 
 - `/flickr-photo` — process a photo from the current browser tab: suggest metadata, update, add to groups/albums
-- `/flickr-fave` — suggest a comment with any input given, wait for confirm comment and suggest fave
+- `/flickr-album` — suggest and add the current browser-tab photo to matching albums
+- `/flickr-comment` — fave the current browser-tab photo and suggest a short comment to post
+- `/flickr-award` — post a group's award-comment template to photos as the user reviews them in the browser
+- `/flickr-boost` — find photos qualifying for view/fave-count threshold groups and add 1-2 per group per session
 - `/flickr-hide` — find weak photos, review visually, make private or update and keep
+- `/flickr-unearth` — review private photos oldest-first and decide which to publish
 - `/flickr-likes` — review recent faves grouped by owner; mark heavy-fave owners as friends, review light ones for follow
 - `/flickr-fans` — review people who fave/comment on your photos but aren't followed; follow, interact, or add to never-follow list
-- `/flickr-sync` — trigger syncs via the web UI and report results
+- `/flickr-contacts` — review followed contacts one at a time as unfollow candidates, ranked by lowest engagement
+- `/flickr-thanks` — review recent comments on your photos and reply to any that haven't been replied to yet
+- `/flickr-sync` — trigger syncs via the Workbench and report results
 
 ## Browser Interaction
 
 When interacting with the browser:
 - **Always ask the user** before taking browser-based actions
 - **Remember user preferences** across sessions
-- **Preferred setup:** macOS Safari withy cli, Chrome DevTools, or something else (suggest)
+- **Current mechanism:** the `.claude/commands/flickr-*` skills use one of
+  two ways to read/drive the browser: `node playwright/scripts/browser-url.js`
+  / `browser-open.js <url>` (see `playwright/README.md`), or direct
+  AppleScript targeting Safari/Chrome (`osascript -e 'tell application
+  "Safari" to ...'`) — check the specific skill file for which it uses
 - Use browser context to enhance photo workflows (e.g., detecting current Flickr page, extracting metadata)
 
 ## Resources

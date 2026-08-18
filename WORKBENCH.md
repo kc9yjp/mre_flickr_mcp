@@ -105,6 +105,7 @@ cd frontend && npx tsc --noEmit && npm run build
 pytest
 ```
 
-128 tests as of the last commit: JSON API, agent loop (schema conversion,
-streaming parse, read/write/confirm/deny paths, focused-photo context,
-photo preview, vision guard), and the MCP/tool suite.
+423 tests as of this branch (see [ARCHITECTURE.md](ARCHITECTURE.md#testing)
+for the breakdown): JSON API, agent loop (schema conversion, streaming
+parse, read/write/confirm/deny paths, focused-photo context, photo preview,
+vision guard), and the MCP/tool suite.

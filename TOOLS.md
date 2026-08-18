@@ -1,6 +1,6 @@
 # MCP Tools
 
-Full catalog of the 65 MCP tools exposed by this server, grouped by the
+Full catalog of the 69 MCP tools exposed by this server, grouped by the
 module that defines them under `scripts/tools/`. See
 [ARCHITECTURE.md](ARCHITECTURE.md#mcp-tool-layer) for how these are
 aggregated, dispatched, and threaded.
@@ -22,7 +22,7 @@ confirmation UI provides.
 
 ---
 
-## Photos (`tools/photos.py`) — 31 tools
+## Photos (`tools/photos.py`) — 33 tools
 
 | Tool | Write | Parameters | Description |
 |---|:---:|---|---|
@@ -48,12 +48,14 @@ confirmation UI provides.
 | `get_exif` | | `photo_id`* | Camera, lens, exposure settings, etc. |
 | `get_upload_status` | | | Upload bandwidth and storage status for the current month. |
 | `get_person_info` | | `user_id`* (NSID or username) | Public profile info for any Flickr user. |
+| `get_user_photos` | | `user_id`*, `limit` (default 30, max 100) | List any Flickr user's public photostream, live from the API — most recent uploads first. Useful for previewing someone before deciding to follow them. |
 | `get_photostream_stats` | | | Total view counts across all photos, sets, and galleries for a given date. |
 | `get_popular_photos` | | | Most popular photos sorted by favorites, comments, or views. |
 | `get_photo_faves` | | `photo_id`*, `limit` (default 50) | Who favorited a photo, with a `you_follow` flag from the local contacts DB. |
 | `get_faves` | | | Photos you have favorited. |
 | `get_photos_with_comments` | | | Photos with ≥1 comment, most recently uploaded first (id/title/URL/count only — use `get_photo_comments` for the thread). |
 | `get_recent_activity` | | | Recent comments and faves on your photos. |
+| `get_unreplied_comments` | | `timeframe` (default `7d`, max `7d`) | Scan recent activity (`flickr.activity.userPhotos`) and return photos with comments you haven't replied to yet, within the given window. |
 | `add_to_keeper_list` | ✍️ | `photo_id`*, `note` | Flag a photo as worth preserving even if weak on stats. |
 | `get_keeper_list` | | | List the keeper list. |
 | `remove_from_keeper_list` | ✍️ | `photo_id`* | Remove a photo from the keeper list. |
@@ -71,7 +73,7 @@ confirmation UI provides.
 | `edit_album` | ✍️ | `album_id`*, `title`, `description`, `primary_photo_id` | Rename, redescribe, or re-cover an album. |
 | `delete_album` | ✍️ | `album_id`* | Delete an album (photos themselves are not deleted). |
 
-## Groups (`tools/groups.py`) — 13 tools
+## Groups (`tools/groups.py`) — 15 tools
 
 | Tool | Write | Parameters | Description |
 |---|:---:|---|---|
@@ -83,8 +85,10 @@ confirmation UI provides.
 | `leave_group` | ✍️ | `group_id`* | Leave a group. |
 | `get_group_photos` | | `group_id`*, `limit` (default 50), `page` (default 1) | List photos in a group pool. |
 | `search_all_groups` | | `query`*, `limit` (default 20) | Search all Flickr groups, not just ones you've joined. |
+| `get_group_info` | | `group_id`* | Live lookup for any group by ID — name, description, rules, member/pool counts, and whether you've joined it. Use for groups outside your own joined-groups list, e.g. one a photo you don't own belongs to. |
 | `get_photo_contexts` | | `photo_id`*, `force_api` | All group pools and albums a photo currently belongs to — check before `add_to_group` to skip duplicates. |
 | `get_group_stats` | | | How many of your photos are in each joined group, ranked by count. Requires a groups sync. |
+| `get_threshold_groups` | | `metric`* (`faves` / `views`), `order` (`asc` default / `desc`) | Joined groups that require a minimum fave or view count to post, sorted by that threshold. |
 | `get_photo_group_count` | | | Your photos ranked by how many groups they belong to — finds under/over-distributed photos. Requires a groups sync. |
 | `get_group_queue` | | | Status of the pending group-add queue (waiting/success/error counts + details); also flushes anything whose retry window has passed. |
 | `remove_from_queue` | ✍️ | `photo_id`*, `group_id`* | Remove a waiting item from the queue. |

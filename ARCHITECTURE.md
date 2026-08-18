@@ -43,7 +43,7 @@ flowchart TB
     end
 
     subgraph tools["scripts/mcp_tools.py + tools/*.py"]
-        Handlers["_HANDLERS registry (64 tools across 6 modules)"]
+        Handlers["_HANDLERS registry (69 tools across 6 modules)"]
     end
 
     subgraph agentloop["scripts/agent/ (chat agent)"]
@@ -288,7 +288,7 @@ for _mod in _ALL_MODULES:
 
 Each module exports `TOOLS` (a list of `mcp.types.Tool` — name, description,
 JSON Schema `inputSchema`) and `HANDLERS` (name → async function). See
-[TOOLS.md](TOOLS.md) for the full catalog (64 tools as of this branch).
+[TOOLS.md](TOOLS.md) for the full catalog (69 tools as of this branch).
 
 **Threading model** (`call_tool` in `mcp_tools.py`): the `sync` tool family
 uses asyncio subprocesses and per-user locks that must stay bound to the
@@ -465,13 +465,17 @@ and [WORKBENCH.md](WORKBENCH.md) for the milestone-by-milestone build log.
 
 ## Testing
 
-`pytest` (`tests/`, ~140 tests): `test_tools.py` (MCP tool handlers),
-`test_web.py` / `test_webapi.py` (Starlette routes and the JSON API),
-`test_agent.py` (schema conversion, the streaming loop, confirm/deny,
-vision gating, focused-photo context), `test_transport.py` (SSE/streamable
-HTTP wiring), `test_stdio.py` (stdio transport), `test_sync.py` (migrations
-and sync scripts). `tests/conftest.py` provides shared fixtures (temp
-per-user DBs, patched credentials).
+`pytest` (`tests/`, 423 tests as of this branch): `test_tools.py` / `test_tools_sync.py` (MCP
+tool handlers), `test_web.py` / `test_web_sync_rows.py` / `test_webapi.py`
+(Starlette routes and the JSON API), `test_agent.py` / `test_agent_routes.py`
+(schema conversion, the streaming loop, confirm/deny, vision gating,
+focused-photo context), `test_transport.py` (SSE/streamable HTTP wiring),
+`test_stdio.py` (stdio transport), `test_sync.py` (migrations and sync
+scripts), `test_oauth2.py` (OAuth 2.1 connector auth), `test_vector_search.py`
+(optional semantic group search), `test_settings.py`, `test_db.py`,
+`test_flickr_api_auth.py` / `test_flickr_api_cache.py`, `test_text_utils.py`.
+`tests/conftest.py` provides shared fixtures (temp per-user DBs, patched
+credentials).
 
 ## Deployment
 
