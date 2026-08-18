@@ -19,7 +19,11 @@ TOOLS = [
         name="search_photos",
         description=(
             "Search and filter the photo collection. Supports keyword search on title, "
-            "tag filtering, date range, and sorting by date or popularity (views)."
+            "tag filtering, date range, and sorting by date or popularity (views). "
+            "url_original/url_medium are cached from the last sync and can go stale "
+            "(403/410) for an external fetcher after a visibility change — call "
+            "get_photo for a specific photo to get a freshly-resolved direct URL "
+            "before handing it to anything other than a browser."
         ),
         inputSchema={
             "type": "object",
@@ -44,7 +48,10 @@ TOOLS = [
             "caller's own photos (from the local synced library) as well as other "
             "users' public photos (e.g. from a group pool or contact) via a live "
             "Flickr API lookup — a \"not found\" result means the photo ID is invalid "
-            "or was deleted, not that it's restricted for content reasons."
+            "or was deleted, not that it's restricted for content reasons. "
+            "url_original/url_medium are always freshly resolved from Flickr (not "
+            "read from the sync-time cache), so they're safe to hand to an external "
+            "service even if a previously-fetched URL for the same photo went stale."
         ),
         inputSchema={
             "type": "object",
@@ -478,12 +485,49 @@ async def _search_photos(args):
     return [TextContent(type="text", text=json.dumps([dict(r) for r in rows], indent=2))]
 
 
+def _live_photo_urls(photo_id: str) -> tuple[str | None, str | None]:
+    """Fetch fresh direct-image URLs from Flickr, bypassing the local cache.
+
+    Flickr's photo source URLs embed a secret that can rotate (e.g. on a
+    public/private visibility change), so a url_original/url_medium value
+    cached at sync time can 403/410 for an external fetcher even though the
+    photo still loads fine in a browser. Callers that hand a direct image
+    URL to something other than the browser (an external API, a bot) should
+    always resolve it live rather than trust the synced DB columns. Mirrors
+    the pattern in webapi.py's _build_photo_detail.
+    """
+    try:
+        sizes_data = flickr_api._api_get("flickr.photos.getSizes", {"photo_id": photo_id})
+    except Exception as e:
+        logging.warning("get_photo: failed to refresh live URLs for %s: %s", photo_id, e)
+        return None, None
+    sizes = sizes_data.get("sizes", {}).get("size", [])
+
+    def _pick(labels):
+        return next(
+            (s["source"] for label in labels for s in sizes if s["label"] == label),
+            None,
+        )
+
+    url_original = _pick(("Original", "Large 2048", "Large 1600", "Large"))
+    if not url_original and sizes:
+        url_original = sizes[-1]["source"]
+    url_medium = _pick(("Medium 640", "Medium"))
+    return url_original, url_medium
+
+
 async def _get_photo(args):
     photo_id = args["id"]
     with get_db() as conn:
         row = conn.execute("SELECT * FROM photos WHERE id = ?", (photo_id,)).fetchone()
     if row:
-        return [TextContent(type="text", text=json.dumps(dict(row), indent=2))]
+        result = dict(row)
+        url_original, url_medium = _live_photo_urls(photo_id)
+        if url_original:
+            result["url_original"] = url_original
+        if url_medium:
+            result["url_medium"] = url_medium
+        return [TextContent(type="text", text=json.dumps(result, indent=2))]
 
     # Not one of the caller's own synced photos (e.g. someone else's photo in
     # a group pool or from a contact) — the local DB only ever holds the

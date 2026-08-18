@@ -57,6 +57,32 @@ services:
       - "5173:5173"
     profiles: [dev]
 
+  # Optional: Cloudflare Tunnel — exposes the server on the public internet
+  # via Cloudflare's edge (WAF, DDoS protection, and traffic analytics
+  # included) without opening any inbound ports, as an alternative to the
+  # tailscale funnel below. Create a tunnel in the Cloudflare Zero Trust
+  # dashboard (Networks -> Tunnels -> Create a tunnel -> Docker), copy its
+  # token, and set CLOUDFLARE_TUNNEL_TOKEN in .env. Requires a token to
+  # start — with none set it fails immediately and restart-loops under
+  # `restart: on-failure`, so leave it out of your regular `docker compose
+  # up -d` (or `docker compose rm cloudflared`) until a token is in .env,
+  # then start it explicitly with `docker compose up -d cloudflared`.
+  #
+  # By default the tunnel forwards whatever path Cloudflare's Public
+  # Hostname config sends it to http://localhost:8000 (the whole app,
+  # sharing flickr-mcp's network namespace below) — narrow the actual
+  # exposure to just the MCP endpoints (/mcp, /sse, /messages) using
+  # per-path Public Hostname rules in the Cloudflare dashboard, not here.
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    command: tunnel --no-autoupdate run --token "${CLOUDFLARE_TUNNEL_TOKEN}"
+    environment:
+      - CLOUDFLARE_TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN:-}
+    network_mode: service:flickr-mcp
+    depends_on:
+      - flickr-mcp
+    restart: on-failure
+
   # Optional: expose the server on your Tailscale network instead of (or in
   # addition to) a published port — TLS terminated by Tailscale's own certs,
   # reachable at https://<TS_HOSTNAME>.<your-tailnet>.ts.net with no port
