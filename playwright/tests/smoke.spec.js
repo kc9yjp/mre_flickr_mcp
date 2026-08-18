@@ -12,18 +12,3 @@ test('unauthenticated / redirects to /login', async ({ page }) => {
   await page.goto('/');
   expect(page.url()).toContain('/login');
 });
-
-test('unauthenticated /sync redirects to /login', async ({ page }) => {
-  await page.goto('/sync');
-  expect(page.url()).toContain('/login');
-});
-
-test('unauthenticated /stats redirects to /login', async ({ page }) => {
-  await page.goto('/stats');
-  expect(page.url()).toContain('/login');
-});
-
-test('unauthenticated /setup redirects to /login', async ({ page }) => {
-  await page.goto('/setup');
-  expect(page.url()).toContain('/login');
-});

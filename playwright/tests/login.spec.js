@@ -3,7 +3,7 @@
 // Opens a visible browser window, navigates to /login, and clicks the Flickr
 // auth button.  You complete the authorization on Flickr's site; the script
 // waits (up to 2 minutes) for the callback redirect, then saves the session
-// to .auth/session.json for use by sync.spec.js.
+// to .auth/session.json for any authenticated tests that need it.
 //
 // Usage:
 //   npm run login

@@ -5,7 +5,6 @@ Playwright tests and scripts for the Flickr MCP server's web dashboard.
 Covers:
 - Smoke tests (no login required) — verify the server is up and public pages load
 - Interactive OAuth login — drives the browser through Flickr's auth flow and saves a session
-- Sync trigger tests — click the sync buttons and confirm they fire
 
 ---
 
@@ -77,19 +76,16 @@ cd playwright
 npm install
 npx playwright install --with-deps chromium
 
-# 1. Run smoke tests — no login needed
+# Run smoke tests — no login needed
 npm test
 
-# 2. Complete OAuth login (opens a browser window; you log in manually on Flickr)
+# Complete OAuth login (opens a browser window; you log in manually on Flickr)
 npm run login
-
-# 3. Run sync and stats tests using the saved session
-npm test
 ```
 
-After `npm run login` succeeds, a session file is written to
-`playwright/.auth/session.json`.  Subsequent `npm test` runs use it
-automatically.
+`npm run login` saves a session file to `playwright/.auth/session.json` for
+any future authenticated tests to reuse via Playwright's `storageState`
+option — there are none in the suite at the moment.
 
 ---
 
@@ -122,7 +118,6 @@ session files are written back to your local working tree.
 |------|:---:|---------|
 | `tests/smoke.spec.js` | No | Server health and unauthenticated page checks |
 | `tests/login.spec.js` | No | Interactive OAuth flow — run once with `npm run login` |
-| `tests/sync.spec.js` | Yes | Navigate to `/sync`, trigger a sync, verify it starts |
 
 `login.spec.js` is excluded from the default `npm test` run and must be
 invoked explicitly via `npm run login`.
@@ -132,8 +127,12 @@ invoked explicitly via `npm run login`.
 ## Authentication
 
 The login test saves browser cookies to `playwright/.auth/session.json` after a
-successful Flickr OAuth.  Tests in `sync.spec.js` load this file via Playwright's
-`storageState` option so they run as an authenticated user.
+successful Flickr OAuth. Any future authenticated test can load this file via
+Playwright's `storageState` option to run as a logged-in user (see the
+`chromium` project in `playwright.config.js` for where to wire that up) —
+the suite doesn't currently have one, since the tests that used to cover the
+classic `/sync`, `/stats`, `/setup` pages were removed when those pages were
+replaced by the Workbench SPA (`/app`).
 
 `playwright/.auth/session.json` is excluded from git — it contains your
 session cookie.  Re-run `npm run login` if the session expires (sessions last

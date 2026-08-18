@@ -1,5 +1,4 @@
 const { defineConfig, devices } = require('@playwright/test');
-const fs = require('fs');
 
 module.exports = defineConfig({
   testDir: './tests',
@@ -14,14 +13,6 @@ module.exports = defineConfig({
     {
       name: 'chromium',
       use: { ...devices['Desktop Chrome'] },
-    },
-    {
-      name: 'authenticated',
-      use: {
-        ...devices['Desktop Chrome'],
-        storageState: fs.existsSync('.auth/session.json') ? '.auth/session.json' : undefined,
-      },
-      testMatch: '**/sync.spec.js',
     },
   ],
 });

@@ -224,9 +224,8 @@ npx playwright install --with-deps chromium
 # Smoke tests (no login required)
 npm test
 
-# Complete OAuth once to save a session, then run authenticated tests
+# Complete OAuth once to save a session for any future authenticated tests
 npm run login   # opens a browser — log in on Flickr, script saves session
-npm test        # now also runs sync/stats/setup page tests
 ```
 
 To run the tests inside Docker against the running container:
