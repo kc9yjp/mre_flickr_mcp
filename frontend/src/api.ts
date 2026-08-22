@@ -535,9 +535,20 @@ export async function postJSON<T>(url: string, body?: unknown): Promise<T> {
   );
 }
 
+// Per-model context info read live from LM Studio's own REST API (distinct
+// from the OpenAI-compatible /v1/models every connection kind exposes) —
+// present only for connections that happen to be LM Studio. Display-only:
+// never written back into ModelSettings.context_window.
+export interface LMStudioContextHint {
+  max_context_length: number | null;
+  loaded_context_length: number | null;
+  state: string | null;
+}
+
 export interface ModelList {
   models: string[];
   all_models: string[];
+  context_hints?: Record<string, LMStudioContextHint>;
 }
 
 export async function listModels(connectionId: string): Promise<ModelList> {

@@ -25,6 +25,7 @@ import {
   ConnectionPreset,
   DEFAULT_TIMEOUT_SECONDS,
   LLMSettings,
+  LMStudioContextHint,
   ModelList,
   ModelSettings,
   MODEL_SETTINGS_DEFAULTS,
@@ -62,6 +63,21 @@ function isZenConnection(baseUrl: string): boolean {
 
 function contextLabel(contextWindow: number): string {
   return `${Math.round(contextWindow / 1000)}k ctx`;
+}
+
+// Formats LM Studio's live-reported context length as a read-only hint next
+// to the manual Context window field — never used to overwrite it, since a
+// connection can be repointed at a different backend at any time and the
+// stored value is what auto-compact actually keys off. Absent (undefined)
+// for any connection that isn't LM Studio, or that hasn't reported this
+// model back yet (e.g. it's never been loaded).
+function lmStudioHint(hint: LMStudioContextHint | undefined): string | null {
+  if (!hint || hint.max_context_length == null) return null;
+  const max = hint.max_context_length.toLocaleString();
+  if (hint.loaded_context_length != null && hint.loaded_context_length !== hint.max_context_length) {
+    return `LM Studio reports ${max} max context (${hint.loaded_context_length.toLocaleString()} loaded)`;
+  }
+  return `LM Studio reports ${max} max context`;
 }
 
 // Checkbox styled as an on/off track+knob switch, used for "model enabled"
@@ -484,6 +500,7 @@ export function Models() {
                         const savedSettings = cfg.connections[cid]?.models?.[m];
                         const ctxWindow = savedSettings?.context_window ?? MODEL_SETTINGS_DEFAULTS.context_window;
                         const enabled = !(drafted ?? new Set(conn.disabled_models)).has(m);
+                        const lmHint = lmStudioHint(list.context_hints?.[m]);
 
                         return (
                           <div key={m} className="llm-model-card">
@@ -529,6 +546,7 @@ export function Models() {
                                   </label>
                                 </div>
                                 <p className="hint">Context window drives auto-compact's threshold for this model.</p>
+                                {lmHint && <p className="hint">{lmHint}</p>}
 
                                 <div>
                                   <button

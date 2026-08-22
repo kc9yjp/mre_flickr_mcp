@@ -408,13 +408,18 @@ def test_llm_models_filters_disabled_models(client, monkeypatch):
     async def fake_list_models(base_url, api_key="", client=None):
         return ["a", "b", "c"]
 
+    async def fake_context_hints(base_url, api_key="", client=None):
+        return {}
+
     monkeypatch.setattr("agent.routes.llm.list_models", fake_list_models)
+    monkeypatch.setattr("agent.routes.llm.lmstudio_context_hints", fake_context_hints)
 
     resp = client.get(f"/api/llm-models?connection={cid}")
     assert resp.status_code == 200
     body = resp.json()
     assert body["models"] == ["a", "c"]
     assert body["all_models"] == ["a", "b", "c"]
+    assert body["context_hints"] == {}
 
 
 def test_llm_models_unknown_connection_404(client):
@@ -434,8 +439,66 @@ def test_llm_models_accepts_legacy_provider_param(client, monkeypatch):
     async def fake_list_models(base_url, api_key="", client=None):
         return ["a"]
 
+    async def fake_context_hints(base_url, api_key="", client=None):
+        return {}
+
     monkeypatch.setattr("agent.routes.llm.list_models", fake_list_models)
+    monkeypatch.setattr("agent.routes.llm.lmstudio_context_hints", fake_context_hints)
 
     resp = client.get(f"/api/llm-models?provider={cid}")
     assert resp.status_code == 200
     assert resp.json()["models"] == ["a"]
+
+
+def test_llm_models_includes_lmstudio_context_hints(client, monkeypatch):
+    """When the connection's origin answers LM Studio's native API, its
+    per-model context info rides along in the response for display only."""
+    _login(client)
+    created = client.post(
+        "/api/llm-connections", headers=HEADERS,
+        json={"name": "LM Studio", "kind": "openai_compatible", "base_url": "http://fake:1234/v1"},
+    ).json()
+    cid = created["id"]
+
+    async def fake_list_models(base_url, api_key="", client=None):
+        return ["qwen/qwen3.5-9b"]
+
+    async def fake_context_hints(base_url, api_key="", client=None):
+        return {"qwen/qwen3.5-9b": {
+            "max_context_length": 32768, "loaded_context_length": 4096, "state": "loaded",
+        }}
+
+    monkeypatch.setattr("agent.routes.llm.list_models", fake_list_models)
+    monkeypatch.setattr("agent.routes.llm.lmstudio_context_hints", fake_context_hints)
+
+    resp = client.get(f"/api/llm-models?connection={cid}")
+    assert resp.status_code == 200
+    hints = resp.json()["context_hints"]
+    assert hints["qwen/qwen3.5-9b"]["max_context_length"] == 32768
+    assert hints["qwen/qwen3.5-9b"]["loaded_context_length"] == 4096
+
+
+def test_llm_models_survives_context_hints_failure(client, monkeypatch):
+    """A broken/unreachable lmstudio_context_hints must not fail the whole
+    model list — it's a display-only enrichment."""
+    _login(client)
+    created = client.post(
+        "/api/llm-connections", headers=HEADERS,
+        json={"name": "Fake Ollama", "kind": "ollama", "base_url": "http://fake/v1"},
+    ).json()
+    cid = created["id"]
+
+    async def fake_list_models(base_url, api_key="", client=None):
+        return ["a"]
+
+    async def fake_context_hints(base_url, api_key="", client=None):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr("agent.routes.llm.list_models", fake_list_models)
+    monkeypatch.setattr("agent.routes.llm.lmstudio_context_hints", fake_context_hints)
+
+    resp = client.get(f"/api/llm-models?connection={cid}")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["models"] == ["a"]
+    assert body["context_hints"] == {}

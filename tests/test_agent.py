@@ -374,6 +374,76 @@ def test_stream_for_mode_maps_each_wire_format():
     assert llm.stream_for_mode("something-else") is llm.stream_chat
 
 
+# --- lmstudio_context_hints ---
+
+@pytest.mark.asyncio
+async def test_lmstudio_context_hints_parses_native_api_response():
+    from agent import llm
+
+    seen = {}
+
+    def _handler(request):
+        seen["url"] = str(request.url)
+        return httpx.Response(200, json={"data": [
+            {"id": "qwen/qwen3.5-9b", "state": "loaded",
+             "max_context_length": 32768, "loaded_context_length": 4096},
+            {"id": "google/gemma-4-e4b", "state": "not-loaded",
+             "max_context_length": 8192, "loaded_context_length": None},
+        ]})
+
+    transport = httpx.MockTransport(_handler)
+    async with httpx.AsyncClient(transport=transport) as client:
+        hints = await llm.lmstudio_context_hints("http://fake:1234/v1", client=client)
+
+    # Probed at LM Studio's own API root, not the OpenAI-compatible /v1 path.
+    assert seen["url"] == "http://fake:1234/api/v0/models"
+    assert hints["qwen/qwen3.5-9b"] == {
+        "max_context_length": 32768, "loaded_context_length": 4096, "state": "loaded",
+    }
+    assert hints["google/gemma-4-e4b"]["max_context_length"] == 8192
+
+
+@pytest.mark.asyncio
+async def test_lmstudio_context_hints_returns_empty_on_404():
+    """Any non-LM-Studio connection (Ollama, Zen, custom) just 404s or
+    serves something else at that path — this must degrade to {}, not
+    raise, since it's a best-effort enrichment."""
+    from agent import llm
+
+    transport = httpx.MockTransport(lambda request: httpx.Response(404, content=b"not found"))
+    async with httpx.AsyncClient(transport=transport) as client:
+        hints = await llm.lmstudio_context_hints("http://fake/v1", client=client)
+
+    assert hints == {}
+
+
+@pytest.mark.asyncio
+async def test_lmstudio_context_hints_returns_empty_on_non_json_body():
+    """E.g. an HTML 404/error page from a server that isn't LM Studio at
+    all — resp.json() raising must not propagate."""
+    from agent import llm
+
+    transport = httpx.MockTransport(lambda request: httpx.Response(200, content=b"<html>nope</html>"))
+    async with httpx.AsyncClient(transport=transport) as client:
+        hints = await llm.lmstudio_context_hints("http://fake/v1", client=client)
+
+    assert hints == {}
+
+
+@pytest.mark.asyncio
+async def test_lmstudio_context_hints_returns_empty_on_connection_error():
+    from agent import llm
+
+    def _raise(request):
+        raise httpx.ConnectError("refused", request=request)
+
+    transport = httpx.MockTransport(_raise)
+    async with httpx.AsyncClient(transport=transport) as client:
+        hints = await llm.lmstudio_context_hints("http://fake:1234/v1", client=client)
+
+    assert hints == {}
+
+
 # --- store ---
 
 def test_store_roundtrip(user_db):

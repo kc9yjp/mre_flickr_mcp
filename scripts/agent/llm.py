@@ -13,8 +13,10 @@ isolated here so connection drift is fixed in one place.
 """
 
 import json
+import logging
 import time
 from typing import AsyncIterator, Callable
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -972,6 +974,64 @@ async def list_models(
         return sorted(ids)
     except httpx.HTTPError as e:
         raise LLMError(f"Failed to reach model list endpoint: {e}") from e
+    finally:
+        if owns_client:
+            await client.aclose()
+
+
+async def lmstudio_context_hints(
+    base_url: str,
+    api_key: str = "",
+    client: httpx.AsyncClient | None = None,
+) -> dict[str, dict]:
+    """Best-effort read of LM Studio's own REST API (``/api/v0/models``,
+    distinct from the OpenAI-compatible ``/v1/models`` used by
+    ``list_models``) for the context-length info LM Studio knows about a
+    model but the OpenAI-compatible surface doesn't expose.
+
+    There's no stored flag saying "this connection is LM Studio" — a
+    connection is just a base_url of kind ``openai_compatible`` — so this
+    always probes and swallows anything that isn't LM Studio's shape
+    (wrong host, 404, non-JSON, Ollama/Zen/custom connections, etc.) rather
+    than raising. Returns ``{}`` on any failure; never used to block or fail
+    the main model list.
+    """
+    parts = urlsplit(base_url)
+    if not parts.scheme or not parts.netloc:
+        return {}
+    url = f"{parts.scheme}://{parts.netloc}/api/v0/models"
+    owns_client = client is None
+    if owns_client:
+        client = httpx.AsyncClient(timeout=httpx.Timeout(5.0, connect=3.0))
+    headers = {"Content-Type": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    try:
+        resp = await client.get(url, headers=headers)
+        if resp.status_code != 200:
+            return {}
+        data = resp.json()
+        models = data.get("data")
+        if not isinstance(models, list):
+            return {}
+        hints: dict[str, dict] = {}
+        for m in models:
+            if not isinstance(m, dict):
+                continue
+            mid = m.get("id")
+            if not isinstance(mid, str) or not mid.strip():
+                continue
+            hints[mid] = {
+                "max_context_length": m.get("max_context_length"),
+                "loaded_context_length": m.get("loaded_context_length"),
+                "state": m.get("state"),
+            }
+        return hints
+    except (httpx.HTTPError, ValueError) as e:
+        # ValueError covers resp.json() on a non-JSON body (e.g. an HTML
+        # 404 page from a server that isn't LM Studio at all).
+        logging.debug("lmstudio_context_hints: no LM Studio API at %s (%s)", url, e)
+        return {}
     finally:
         if owns_client:
             await client.aclose()

@@ -364,9 +364,19 @@ async def llm_models(request: Request):
         logging.warning("llm_models: failed for connection %s (%s): %s", connection_id, user["nsid"], e)
         return JSONResponse({"error": str(e)}, status_code=502)
 
+    # Best-effort enrichment from LM Studio's own REST API, when this
+    # connection happens to be one — see lmstudio_context_hints's docstring
+    # for why this always probes rather than checking a stored "kind".
+    # Never lets the main model list fail because of it.
+    try:
+        context_hints = await llm.lmstudio_context_hints(base_url, api_key)
+    except Exception as e:
+        logging.debug("llm_models: lmstudio_context_hints failed for connection %s: %s", connection_id, e)
+        context_hints = {}
+
     disabled = set(conn.get("disabled_models") or [])
     models = [m for m in all_models if m not in disabled]
-    return JSONResponse({"models": models, "all_models": all_models})
+    return JSONResponse({"models": models, "all_models": all_models, "context_hints": context_hints})
 
 
 async def llm_connection_presets(request: Request):
