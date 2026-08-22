@@ -791,6 +791,58 @@ async def test_run_turn_write_tool_denied_with_reason(user_db):
 
 
 @pytest.mark.asyncio
+async def test_run_turn_ask_user_multi_select_round_trips_joined_answer(user_db):
+    """ask_user with multi_select propagates the flag on question_request,
+    and the client's joined selection comes back as the tool's answer."""
+    from agent import loop, store
+
+    conv = store.create_conversation(USERNAME, "t")
+    scripted = _scripted_llm([
+        {"tool_calls": [_tool_call("c1", "ask_user", {
+            "question": "Which tags apply?",
+            "options": ["sunset", "mountains", "lake"],
+            "multi_select": True,
+        })]},
+        {"content": "Got it."},
+    ])
+    events = []
+    with patch("agent.loop.llm.stream_chat", scripted):
+        async for event in loop.run_turn(USER, conv, "tag this photo", CFG):
+            events.append(event)
+            if event["type"] == "question_request":
+                assert event["options"] == ["sunset", "mountains", "lake"]
+                assert event["multi_select"] is True
+                assert loop.resolve_question(event["question_id"], "sunset, lake")
+
+    result = next(e for e in events if e["type"] == "tool_result")
+    assert "sunset, lake" in result["text"]
+
+
+@pytest.mark.asyncio
+async def test_run_turn_ask_user_without_options_is_not_multi_select(user_db):
+    """multi_select is only meaningful alongside options; requesting it with
+    no options must not be reported back as multi-select."""
+    from agent import loop, store
+
+    conv = store.create_conversation(USERNAME, "t")
+    scripted = _scripted_llm([
+        {"tool_calls": [_tool_call("c1", "ask_user", {
+            "question": "What title?",
+            "multi_select": True,
+        })]},
+        {"content": "Got it."},
+    ])
+    events = []
+    with patch("agent.loop.llm.stream_chat", scripted):
+        async for event in loop.run_turn(USER, conv, "title this photo", CFG):
+            events.append(event)
+            if event["type"] == "question_request":
+                assert event["options"] is None
+                assert event["multi_select"] is False
+                assert loop.resolve_question(event["question_id"], "Sunset Ridge")
+
+
+@pytest.mark.asyncio
 async def test_resolve_confirm_rejects_wrong_owner(user_db):
     """A confirm_id belongs to the user whose turn generated it — another
     authenticated user who learned/guessed the id must not be able to

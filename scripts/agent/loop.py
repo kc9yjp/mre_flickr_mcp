@@ -6,7 +6,7 @@
     {"type": "delta", "text": ...}                       content tokens
     {"type": "tool_call", "id", "name", "arguments"}     model wants a tool
     {"type": "confirm_request", "confirm_id", "name", "arguments"}
-    {"type": "question_request", "question_id", "question", "options"}
+    {"type": "question_request", "question_id", "question", "options", "multi_select"}
     {"type": "tool_result", "id", "name", "text"}
     {"type": "llm_call", "message_seq", "provider", "model", "request_url",
      "request", "response", "usage", "latency_ms"}  literal request/response
@@ -88,8 +88,15 @@ _ASK_USER_TOOL: dict = {
             "Use this for clarification, a preference, or a decision that isn't a "
             "yes/no on a specific write action (those already pause for approval "
             "automatically) — e.g. picking between two title options, or what tags "
-            "to use. Provide `options` for a multiple-choice question (shown as "
-            "buttons), or omit it for free-text input."
+            "to use. Whenever the answer is one of a nameable, closed set — "
+            "yes/no/skip, a pick-one from up to ~25 choices, which of several "
+            "tags/groups/albums to use — you MUST provide `options` so the user "
+            "gets buttons or checkboxes instead of having to type. Set "
+            "`multi_select` when more than one option can be chosen at once (e.g. "
+            "\"which of these tags apply?\"), which shows checkboxes instead of "
+            "single-choice buttons. Only omit `options` for genuinely open-ended "
+            "input (a custom title, free-form notes) where the answer can't be "
+            "enumerated."
         ),
         "parameters": {
             "type": "object",
@@ -101,7 +108,19 @@ _ASK_USER_TOOL: dict = {
                 "options": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "Optional choices to present as buttons. Omit for free text.",
+                    "description": (
+                        "Choices to present as buttons (or checkboxes, with "
+                        "multi_select). Provide this whenever the answer space is "
+                        "enumerable — omit only for genuinely open-ended free text."
+                    ),
+                },
+                "multi_select": {
+                    "type": "boolean",
+                    "description": (
+                        "Only meaningful with `options`. True shows checkboxes and "
+                        "lets the user pick several; false/omitted shows single-"
+                        "choice buttons."
+                    ),
                 },
             },
             "required": ["question"],
@@ -913,6 +932,7 @@ async def run_turn(
                     options = args.get("options")
                     if not isinstance(options, list) or not all(isinstance(o, str) for o in options):
                         options = None
+                    multi_select = bool(args.get("multi_select")) and options is not None
                     if not question:
                         text = "Nothing to ask (empty question)."
                     else:
@@ -923,6 +943,7 @@ async def run_turn(
                             "question_id": question_id,
                             "question": question,
                             "options": options,
+                            "multi_select": multi_select,
                         }
                         answer = await _await_answer(question_id, future)
                         text = f"User answered: {answer}" if answer else "(no response — timed out)"

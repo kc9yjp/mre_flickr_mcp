@@ -396,6 +396,7 @@ export type StreamEvent =
       question_id: string;
       question: string;
       options: string[] | null;
+      multi_select: boolean;
     }
   | { type: "tool_result"; id: string; name: string; text: string }
   | ({ type: "llm_call" } & Omit<LLMCallDetail, "created_at">)

@@ -74,6 +74,7 @@ interface PendingQuestion {
   question_id: string;
   question: string;
   options: string[] | null;
+  multi_select: boolean;
 }
 
 // Content is usually a plain string, but a stored tool result can be
@@ -345,6 +346,7 @@ export function Chat() {
   const [denyReason, setDenyReason] = useState<string | null>(null);
   const [question, setQuestion] = useState<PendingQuestion | null>(null);
   const [questionAnswer, setQuestionAnswer] = useState("");
+  const [questionChecked, setQuestionChecked] = useState<Set<string>>(new Set());
   const [error, setError] = useState("");
   const [autoApprove, setAutoApprove] = useState(false);
   // Messages typed while a turn is streaming, waiting to be sent as a fresh
@@ -582,6 +584,7 @@ export function Chat() {
               // confirm_request above — an unanswered question just times
               // out server-side and stalls that (invisible) turn.
               setQuestion(event);
+              setQuestionChecked(new Set());
               break;
             case "llm_call":
               if (stale()) break;
@@ -922,11 +925,21 @@ export function Chat() {
     const questionId = question.question_id;
     setQuestion(null);
     setQuestionAnswer("");
+    setQuestionChecked(new Set());
     try {
       await postJSON("/api/chat/answer", { question_id: questionId, answer });
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
+  };
+
+  const toggleQuestionOption = (opt: string) => {
+    setQuestionChecked((prev) => {
+      const next = new Set(prev);
+      if (next.has(opt)) next.delete(opt);
+      else next.add(opt);
+      return next;
+    });
   };
 
   const openConversation = async (id: string) => {
@@ -1216,7 +1229,39 @@ export function Chat() {
         {question && (
           <div className="confirm-card question-card">
             <p>{question.question}</p>
-            {question.options && question.options.length > 0 ? (
+            {question.options && question.options.length > 0 && question.multi_select ? (
+              <form
+                className="confirm-actions question-options question-checkboxes"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  answerQuestion(Array.from(questionChecked).join(", "));
+                }}
+              >
+                {question.options.map((opt) => (
+                  <label key={opt} className="question-checkbox">
+                    <input
+                      type="checkbox"
+                      checked={questionChecked.has(opt)}
+                      onChange={() => toggleQuestionOption(opt)}
+                    />
+                    {opt}
+                  </label>
+                ))}
+                <div className="question-checkbox-actions">
+                  <button type="submit" disabled={questionChecked.size === 0}>
+                    Send
+                  </button>
+                  <button
+                    type="button"
+                    className="cancel-chat-btn"
+                    onClick={cancelTurn}
+                    title="Stop the whole turn instead of answering"
+                  >
+                    Cancel chat
+                  </button>
+                </div>
+              </form>
+            ) : question.options && question.options.length > 0 ? (
               <div className="confirm-actions question-options">
                 {question.options.map((opt) => (
                   <button key={opt} type="button" onClick={() => answerQuestion(opt)}>
