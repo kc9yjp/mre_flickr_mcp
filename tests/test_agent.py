@@ -491,7 +491,7 @@ async def test_compact_replaces_history_with_summary(user_db):
 
     seen_messages = []
 
-    async def fake_stream_chat(cfg, messages, tools=None, client=None):
+    async def fake_stream_chat(cfg, messages, tools=None, client=None, on_request=None):
         seen_messages.append(messages)
         yield {"type": "message", "content": "Summary of the chat.", "tool_calls": [], "finish_reason": "stop"}
 
@@ -526,7 +526,7 @@ async def test_compact_llm_error_is_a_no_op(user_db):
     conv = store.create_conversation(USERNAME, "t")
     store.append_message(USERNAME, conv, {"role": "user", "content": "hello"})
 
-    async def broken(cfg, messages, tools=None, client=None):
+    async def broken(cfg, messages, tools=None, client=None, on_request=None):
         raise llm.LLMError("connection refused")
         yield  # pragma: no cover
 
@@ -558,7 +558,7 @@ async def test_run_turn_auto_compacts_when_over_threshold(user_db):
     store.append_message(USERNAME, conv, {"role": "user", "content": "x" * 400})
     store.append_message(USERNAME, conv, {"role": "assistant", "content": "y" * 400})
 
-    async def fake_stream_chat(cfg, messages, tools=None, client=None):
+    async def fake_stream_chat(cfg, messages, tools=None, client=None, on_request=None):
         if messages and messages[-1].get("content") == prompts_store.COMPACT_PROMPT_DEFAULT:
             yield {"type": "message", "content": "Old chat summarized.", "tool_calls": [], "finish_reason": "stop"}
         else:
@@ -606,7 +606,7 @@ def _scripted_llm(turns: list[dict]):
     """Return a stream_chat stand-in yielding one scripted turn per call."""
     calls = iter(turns)
 
-    async def fake_stream_chat(cfg, messages, tools=None, client=None):
+    async def fake_stream_chat(cfg, messages, tools=None, client=None, on_request=None):
         turn = next(calls)
         for text in turn.get("deltas", []):
             yield {"type": "delta", "text": text}
@@ -633,7 +633,7 @@ async def test_injection_folded_into_next_iteration_is_answered(user_db):
 
     conv = store.create_conversation(USERNAME, "t")
 
-    async def fake_stream_chat(cfg, messages, tools=None, client=None):
+    async def fake_stream_chat(cfg, messages, tools=None, client=None, on_request=None):
         # First call asks for a tool; the injection is added *before* the
         # second iteration, so its top-of-loop pop folds it in.
         if not any(m.get("role") == "tool" for m in messages):
@@ -668,7 +668,7 @@ async def test_injection_arriving_too_late_is_missed_not_stored(user_db):
 
     conv = store.create_conversation(USERNAME, "t")
 
-    async def fake_stream_chat(cfg, messages, tools=None, client=None):
+    async def fake_stream_chat(cfg, messages, tools=None, client=None, on_request=None):
         # No tool calls -> the loop breaks after this one iteration. The
         # injection arrives *during* this final call, so it's only seen by the
         # post-loop "too late" drain.
@@ -834,7 +834,7 @@ async def test_focused_photo_context_is_ephemeral_not_persisted(user_db):
     conv = store.create_conversation(USERNAME, "t")
     seen_messages = []
 
-    async def fake_stream_chat(cfg, messages, tools=None, client=None):
+    async def fake_stream_chat(cfg, messages, tools=None, client=None, on_request=None):
         seen_messages.append(messages)
         yield {"type": "message", "content": "ok", "tool_calls": [], "finish_reason": "stop"}
 
@@ -1141,11 +1141,11 @@ async def test_run_turn_uses_stream_responses_when_api_mode_responses(user_db):
     conv = store.create_conversation(USERNAME, "t")
     cfg_responses = {**CFG, "api_mode": "responses"}
 
-    async def fake_stream_responses(cfg, messages, tools=None, client=None):
+    async def fake_stream_responses(cfg, messages, tools=None, client=None, on_request=None):
         yield {"type": "message", "content": "hi from responses", "tool_calls": [],
                "finish_reason": "stop", "usage": {}, "latency_ms": 1}
 
-    async def fail_if_called(cfg, messages, tools=None, client=None):
+    async def fail_if_called(cfg, messages, tools=None, client=None, on_request=None):
         raise AssertionError("stream_chat should not be called in responses mode")
         yield  # pragma: no cover
 
@@ -1161,7 +1161,7 @@ async def test_run_turn_uses_stream_responses_when_api_mode_responses(user_db):
 async def test_run_turn_llm_error_yields_error_event(user_db):
     from agent import llm, loop, store
 
-    async def broken(cfg, messages, tools=None, client=None):
+    async def broken(cfg, messages, tools=None, client=None, on_request=None):
         raise llm.LLMError("connection refused")
         yield  # pragma: no cover
 
@@ -1424,7 +1424,7 @@ async def test_run_turn_vision_enabled_image_reaches_llm_as_user_message(user_db
 
     captured_messages = []
 
-    async def fake_stream_chat(cfg, messages, tools=None, client=None):
+    async def fake_stream_chat(cfg, messages, tools=None, client=None, on_request=None):
         captured_messages.append(messages)
         if len(captured_messages) == 1:
             yield {
@@ -1642,7 +1642,7 @@ async def test_run_turn_uses_system_core_and_user_memory(user_db):
 
     captured = {}
 
-    async def capturing(cfg, messages, tools=None):
+    async def capturing(cfg, messages, tools=None, on_request=None):
         captured["messages"] = messages
         async for event in scripted(cfg, messages, tools=tools):
             yield event

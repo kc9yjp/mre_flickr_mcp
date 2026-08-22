@@ -14,9 +14,14 @@ isolated here so connection drift is fixed in one place.
 
 import json
 import time
-from typing import AsyncIterator
+from typing import AsyncIterator, Callable
 
 import httpx
+
+# Called with (url, payload) right before the POST, for callers that want the
+# literal wire request for logging/transparency (see agent.loop's llm_calls
+# capture) without duplicating each function's payload-building logic.
+OnRequest = Callable[[str, dict], None]
 
 
 class LLMError(Exception):
@@ -98,6 +103,7 @@ async def stream_chat(
     messages: list[dict],
     tools: list[dict] | None = None,
     client: httpx.AsyncClient | None = None,
+    on_request: OnRequest | None = None,
 ) -> AsyncIterator[dict]:
     """Stream one assistant turn.
 
@@ -119,6 +125,8 @@ async def stream_chat(
     _add_sampling_params(payload, cfg)
 
     url = cfg.get("base_url", "").rstrip("/") + "/chat/completions"
+    if on_request:
+        on_request(url, payload)
     owns_client = client is None
     if owns_client:
         client = httpx.AsyncClient(timeout=httpx.Timeout(float(cfg.get("timeout_seconds") or 300), connect=15.0))
@@ -324,6 +332,7 @@ async def stream_responses(
     messages: list[dict],
     tools: list[dict] | None = None,
     client: httpx.AsyncClient | None = None,
+    on_request: OnRequest | None = None,
 ) -> AsyncIterator[dict]:
     """Stream one assistant turn via the Responses API (``/responses``).
 
@@ -345,6 +354,8 @@ async def stream_responses(
     _add_sampling_params(payload, cfg)
 
     url = cfg.get("base_url", "").rstrip("/") + "/responses"
+    if on_request:
+        on_request(url, payload)
     owns_client = client is None
     if owns_client:
         client = httpx.AsyncClient(timeout=httpx.Timeout(float(cfg.get("timeout_seconds") or 300), connect=15.0))
@@ -554,6 +565,7 @@ async def stream_messages(
     messages: list[dict],
     tools: list[dict] | None = None,
     client: httpx.AsyncClient | None = None,
+    on_request: OnRequest | None = None,
 ) -> AsyncIterator[dict]:
     """Stream one assistant turn via the Anthropic Messages API (``/messages``).
 
@@ -592,6 +604,8 @@ async def stream_messages(
         # Zen accepts the Anthropic-style x-api-key; Bearer works too, but
         # x-api-key is the canonical Anthropic auth header.
         headers["x-api-key"] = cfg["api_key"]
+    if on_request:
+        on_request(url, payload)
 
     owns_client = client is None
     if owns_client:
@@ -791,6 +805,7 @@ async def stream_gemini(
     messages: list[dict],
     tools: list[dict] | None = None,
     client: httpx.AsyncClient | None = None,
+    on_request: OnRequest | None = None,
 ) -> AsyncIterator[dict]:
     """Stream one assistant turn via Zen's Gemini endpoint.
 
@@ -823,6 +838,8 @@ async def stream_gemini(
     # Per-model URL: base_url already ends in /v1, so append /models/{id}.
     model_id = cfg.get("model", "")
     url = cfg.get("base_url", "").rstrip("/") + f"/models/{model_id}"
+    if on_request:
+        on_request(url, payload)
 
     owns_client = client is None
     if owns_client:

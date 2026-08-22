@@ -542,6 +542,10 @@ def resolve_cfg(
         "timeout_seconds": _coerce_timeout(conn.get("timeout_seconds")),
         "tool_set": _coerce_tool_set(conn.get("tool_set")),
         "model": model_id,
+        # Not sent to the connection — only used to label the LLM call log
+        # (agent.store.record_llm_call) with which connection actually served it.
+        "connection_id": cid,
+        "connection_name": conn.get("name") or cid,
     }
 
 

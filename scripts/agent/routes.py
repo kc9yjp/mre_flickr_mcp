@@ -250,6 +250,18 @@ async def chat_conversation_detail(request: Request):
     })
 
 
+async def chat_conversation_llm_calls(request: Request):
+    """Logged request/response detail for every LLM call in this conversation
+    — the chat transparency ("inspect this call") view. See store.get_llm_calls."""
+    user = _session_user(request)
+    if not user:
+        return _unauthorized()
+    conversation_id = request.path_params["id"]
+    if not store.conversation_exists(user["username"], conversation_id):
+        return JSONResponse({"error": "conversation not found"}, status_code=404)
+    return JSONResponse({"calls": store.get_llm_calls(user["username"], conversation_id)})
+
+
 async def chat_conversation_delete(request: Request):
     user = _session_user(request)
     if not user:
@@ -642,6 +654,7 @@ def api_routes() -> list[Route]:
         Route("/api/chat/answer",  endpoint=chat_answer, methods=["POST"]),
         Route("/api/chat/conversations", endpoint=chat_conversations),
         Route("/api/chat/conversations/{id}", endpoint=chat_conversation_detail),
+        Route("/api/chat/conversations/{id}/llm-calls", endpoint=chat_conversation_llm_calls),
         Route("/api/chat/conversations/{id}/delete", endpoint=chat_conversation_delete, methods=["POST"]),
         Route("/api/chat/conversations/{id}/compact", endpoint=chat_conversation_compact, methods=["POST"]),
         Route("/api/chat/stats",    endpoint=chat_stats),

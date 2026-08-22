@@ -1031,6 +1031,10 @@ select:focus {
   margin-left: 4px;
 }
 
+.llm-call-card {
+  border-left: 2px solid var(--accent);
+}
+
 .chat-bubble.markdown-body {
   white-space: normal;
 }

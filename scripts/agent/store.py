@@ -29,6 +29,21 @@ CREATE TABLE IF NOT EXISTS messages (
     content_json    TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_messages_conv ON messages(conversation_id, seq);
+CREATE TABLE IF NOT EXISTS llm_calls (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    conversation_id TEXT NOT NULL,
+    message_seq     INTEGER NOT NULL,
+    created_at      INTEGER NOT NULL,
+    provider        TEXT,
+    model           TEXT,
+    request_url     TEXT,
+    request_json    TEXT NOT NULL,
+    response_json   TEXT NOT NULL,
+    finish_reason   TEXT,
+    usage_json      TEXT,
+    latency_ms      INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_llm_calls_conv ON llm_calls(conversation_id, message_seq);
 """
 
 # Schema migrations — each is a (check_sql, alter_sql) pair.  The check
@@ -210,7 +225,17 @@ def get_messages(username: str, conversation_id: str) -> list[dict]:
     return [json.loads(r["content_json"]) for r in rows]
 
 
-def append_message(username: str, conversation_id: str, message: dict) -> None:
+def append_message(username: str, conversation_id: str, message: dict) -> int:
+    """Append one message and return its ``seq``.
+
+    ``seq`` is a gapless 1..N counter per conversation, shared across every
+    role (user/assistant/tool) — messages are only ever added in bulk
+    (``replace_messages``) or wiped whole (``delete_conversation``), never
+    deleted individually, so a message's position in ``get_messages()``'s
+    result is always ``seq - 1``. The returned value lets a caller (see
+    ``record_llm_call``) link an LLM call to the exact assistant message it
+    produced.
+    """
     now = int(time.time())
     with _chat_db(username) as conn:
         seq = conn.execute(
@@ -224,6 +249,79 @@ def append_message(username: str, conversation_id: str, message: dict) -> None:
         conn.execute(
             "UPDATE conversations SET updated_at = ? WHERE id = ?", (now, conversation_id)
         )
+    return seq
+
+
+def record_llm_call(
+    username: str,
+    conversation_id: str,
+    *,
+    message_seq: int,
+    provider: str,
+    model: str,
+    request_url: str,
+    request_payload: dict,
+    response_content: str,
+    response_tool_calls: list,
+    finish_reason: str,
+    usage: dict,
+    latency_ms: int,
+) -> None:
+    """Log the literal request/response of one LLM call, for the chat
+    transparency ("inspect this call") view in the Workbench.
+
+    One row per iteration of ``loop.run_turn``'s tool loop — each iteration
+    makes exactly one LLM call and appends exactly one assistant message, so
+    ``message_seq`` (that message's ``append_message``-returned seq) links
+    this row to the exact bubble it produced. ``request_payload`` is the
+    literal wire-format body POSTed to the connection (see llm.py's
+    ``on_request`` hook) — not the internal chat-completions-shaped messages
+    loop.py builds, so what's shown here is genuinely what left the server.
+    """
+    now = int(time.time())
+    response = {
+        "content": response_content,
+        "tool_calls": response_tool_calls,
+        "finish_reason": finish_reason,
+    }
+    with _chat_db(username) as conn:
+        conn.execute(
+            """
+            INSERT INTO llm_calls
+                (conversation_id, message_seq, created_at, provider, model,
+                 request_url, request_json, response_json, finish_reason, usage_json, latency_ms)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?)
+            """,
+            (
+                conversation_id, message_seq, now, provider, model,
+                request_url, json.dumps(request_payload), json.dumps(response),
+                finish_reason, json.dumps(usage or {}), latency_ms,
+            ),
+        )
+
+
+def get_llm_calls(username: str, conversation_id: str) -> list[dict]:
+    """All logged LLM calls for a conversation, ordered as they happened.
+
+    Each entry carries ``message_seq`` so the frontend can attach it to the
+    matching assistant message (position ``message_seq - 1`` in
+    ``get_messages()``'s result — see ``append_message``'s docstring).
+    """
+    with _chat_db(username) as conn:
+        rows = conn.execute(
+            "SELECT message_seq, created_at, provider, model, request_url, request_json, "
+            "response_json, finish_reason, usage_json, latency_ms FROM llm_calls "
+            "WHERE conversation_id = ? ORDER BY id",
+            (conversation_id,),
+        ).fetchall()
+    out = []
+    for r in rows:
+        d = dict(r)
+        d["request"] = json.loads(d.pop("request_json"))
+        d["response"] = json.loads(d.pop("response_json"))
+        d["usage"] = json.loads(d.pop("usage_json") or "{}")
+        out.append(d)
+    return out
 
 
 def replace_messages(username: str, conversation_id: str, messages: list[dict]) -> None:
@@ -231,10 +329,16 @@ def replace_messages(username: str, conversation_id: str, messages: list[dict]) 
 
     Used by compaction: the full history is deleted and replaced with just
     the summary message(s), same conversation id and title.
+
+    Also clears this conversation's logged ``llm_calls`` — ``seq`` numbering
+    restarts from 1 for the replacement messages, so any call log left
+    behind would point at the wrong (new) message by coincidence of number
+    rather than actually describing it.
     """
     now = int(time.time())
     with _chat_db(username) as conn:
         conn.execute("DELETE FROM messages WHERE conversation_id = ?", (conversation_id,))
+        conn.execute("DELETE FROM llm_calls WHERE conversation_id = ?", (conversation_id,))
         for seq, message in enumerate(messages, start=1):
             conn.execute(
                 "INSERT INTO messages (conversation_id, seq, role, content_json) VALUES (?,?,?,?)",
@@ -248,6 +352,7 @@ def replace_messages(username: str, conversation_id: str, messages: list[dict]) 
 def delete_conversation(username: str, conversation_id: str) -> None:
     with _chat_db(username) as conn:
         conn.execute("DELETE FROM messages WHERE conversation_id = ?", (conversation_id,))
+        conn.execute("DELETE FROM llm_calls WHERE conversation_id = ?", (conversation_id,))
         conn.execute("DELETE FROM conversations WHERE id = ?", (conversation_id,))
 
 
@@ -268,6 +373,9 @@ def prune_conversations(username: str, keep_min: int = 12, keep_days: int = 2) -
         placeholders = ",".join("?" * len(stale_ids))
         conn.execute(
             f"DELETE FROM messages WHERE conversation_id IN ({placeholders})", stale_ids
+        )
+        conn.execute(
+            f"DELETE FROM llm_calls WHERE conversation_id IN ({placeholders})", stale_ids
         )
         conn.execute(
             f"DELETE FROM conversations WHERE id IN ({placeholders})", stale_ids

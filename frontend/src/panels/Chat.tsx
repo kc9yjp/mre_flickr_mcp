@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ApiError,
   Conversation,
+  LLMCallDetail,
   LLMSettings,
   MAX_USER_IMAGES,
   PromptsData,
@@ -14,6 +15,7 @@ import {
   compactConversation,
   contextUsage,
   getJSON,
+  getLLMCalls,
   getSessionStats,
   injectChat,
   listModels,
@@ -47,6 +49,13 @@ interface ChatMsg {
   // (see wireToRender/contentToText, which flattens stored image parts to
   // "(image)").
   images?: string[];
+  // The LLM call(s) that produced this bubble — the chat transparency
+  // ("inspect this call") detail. On reload (wireToRender) this is always
+  // exactly one entry, since the backend appends one assistant message per
+  // call; while streaming live, a turn's whole tool loop patches into a
+  // single trailing bubble (see runStream's patchLast), so a multi-iteration
+  // turn can accumulate more than one entry here.
+  llmCalls?: LLMCallDetail[];
 }
 
 interface PendingConfirm {
@@ -103,10 +112,16 @@ function routeFlickrUrl(route: FlickrRoute) {
   }
 }
 
-function wireToRender(messages: WireMessage[]): ChatMsg[] {
+// Every stored message's position is its (seq - 1) — see store.append_message's
+// docstring: seq is a gapless 1..N counter shared across every role, and
+// messages are only ever added in bulk or wiped whole, never deleted
+// individually. So an llm_calls row's message_seq maps straight to the array
+// index of the assistant message it produced, with no extra plumbing needed
+// to carry seq through the wire message shape itself.
+function wireToRender(messages: WireMessage[], llmCallsBySeq: Map<number, LLMCallDetail>): ChatMsg[] {
   const out: ChatMsg[] = [];
   const cardsById = new Map<string, ToolCard>();
-  for (const m of messages) {
+  messages.forEach((m, i) => {
     if (m.role === "user") {
       out.push({ role: "user", text: contentToText(m.content), tools: [] });
     } else if (m.role === "assistant") {
@@ -115,12 +130,13 @@ function wireToRender(messages: WireMessage[]): ChatMsg[] {
         cardsById.set(c.id, card);
         return card;
       });
-      out.push({ role: "assistant", text: contentToText(m.content), tools });
+      const call = llmCallsBySeq.get(i + 1);
+      out.push({ role: "assistant", text: contentToText(m.content), tools, llmCalls: call ? [call] : undefined });
     } else if (m.role === "tool" && m.tool_call_id) {
       const card = cardsById.get(m.tool_call_id);
       if (card) card.result = contentToText(m.content);
     }
-  }
+  });
   return out;
 }
 
@@ -225,6 +241,31 @@ function ToolCardView({ card }: { card: ToolCard }) {
       </summary>
       <pre>{prettyArgs(card.arguments)}</pre>
       {card.result !== undefined && <pre className="tool-result">{card.result}</pre>}
+    </details>
+  );
+}
+
+// Chat transparency detail — the literal request/response of one LLM call,
+// expandable inline under the bubble it produced. See LLMCallDetail (api.ts)
+// and store.record_llm_call for what's actually captured.
+function LLMCallView({ call }: { call: LLMCallDetail }) {
+  const tokens = call.usage.total_tokens ?? (call.usage.prompt_tokens ?? 0) + (call.usage.completion_tokens ?? 0);
+  return (
+    <details className="tool-card llm-call-card">
+      <summary>
+        🔍 {call.model || "(model)"}
+        {" · "}
+        {formatLatency(call.latency_ms)}
+        {tokens > 0 && ` · ${compactNumber(tokens)} tok`}
+      </summary>
+      <p className="hint">
+        {call.provider && <>Connection: {call.provider} · </>}
+        Finish reason: {call.response.finish_reason || "—"}
+      </p>
+      <p className="hint">Request sent to {call.request_url || "(unknown url)"}</p>
+      <pre>{JSON.stringify(call.request, null, 2)}</pre>
+      <p className="hint">Response</p>
+      <pre>{JSON.stringify(call.response, null, 2)}</pre>
     </details>
   );
 }
@@ -541,6 +582,26 @@ export function Chat() {
               // confirm_request above — an unanswered question just times
               // out server-side and stalls that (invisible) turn.
               setQuestion(event);
+              break;
+            case "llm_call":
+              if (stale()) break;
+              patchLast((m) => ({
+                ...m,
+                llmCalls: [
+                  ...(m.llmCalls ?? []),
+                  {
+                    message_seq: event.message_seq,
+                    created_at: Math.floor(Date.now() / 1000),
+                    provider: event.provider,
+                    model: event.model,
+                    request_url: event.request_url,
+                    request: event.request,
+                    response: event.response,
+                    usage: event.usage,
+                    latency_ms: event.latency_ms,
+                  },
+                ],
+              }));
               break;
             case "tool_result":
               setConfirm(null);
@@ -872,10 +933,17 @@ export function Chat() {
     setActive(id);
     setError("");
     try {
-      const detail = await getJSON<{ provider: string; model: string; messages: WireMessage[] }>(
-        `/api/chat/conversations/${id}`,
-      );
-      setMsgs(wireToRender(detail.messages));
+      const [detail, callsResult] = await Promise.all([
+        getJSON<{ provider: string; model: string; messages: WireMessage[] }>(
+          `/api/chat/conversations/${id}`,
+        ),
+        // Best-effort — a failure here (e.g. an older conversation predating
+        // this feature) just means calls render without their inspect
+        // detail, not that the conversation fails to open.
+        getLLMCalls(id).catch(() => ({ calls: [] as LLMCallDetail[] })),
+      ]);
+      const llmCallsBySeq = new Map(callsResult.calls.map((c) => [c.message_seq, c]));
+      setMsgs(wireToRender(detail.messages, llmCallsBySeq));
       // Restore per-conversation connection/model into the selector
       if (detail.provider) {
         setConnectionModel(makeSelector(detail.provider, detail.model ?? ""));
@@ -1035,6 +1103,9 @@ export function Chat() {
           <div key={i} className={`chat-msg chat-${m.role}`}>
             {groupToolCards(m.tools).map((g) => (
               <ToolCardGroupView key={g.cards[0].id} group={g} />
+            ))}
+            {(m.llmCalls ?? []).map((c, idx) => (
+              <LLMCallView key={`${c.message_seq}-${idx}`} call={c} />
             ))}
             {(m.text || (m.images && m.images.length > 0)) && (
               m.origin

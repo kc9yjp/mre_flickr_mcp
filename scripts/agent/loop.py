@@ -8,6 +8,10 @@
     {"type": "confirm_request", "confirm_id", "name", "arguments"}
     {"type": "question_request", "question_id", "question", "options"}
     {"type": "tool_result", "id", "name", "text"}
+    {"type": "llm_call", "message_seq", "provider", "model", "request_url",
+     "request", "response", "usage", "latency_ms"}  literal request/response
+                                                      of one LLM call, for the
+                                                      chat transparency view
     {"type": "focus", "photo_id"}                        drive the photo viewer
     {"type": "photo_list", "photo_ids"}                  populate the grid
     {"type": "user_photos", "nsid"}                      switch grid to another user's photostream
@@ -42,6 +46,7 @@ from db import _current_user, get_db
 from agent import compact, llm, prompts_store, schema, settings, store
 from agent.wire import approx_tokens
 from agent.wire import coerce_null_content as _coerce_null_content
+from agent.wire import redact_large_strings as _redact_large_strings
 from agent.wire import wire_messages as _wire_messages
 
 MAX_ITERATIONS = 15
@@ -772,7 +777,18 @@ async def run_turn(
                 yield {"type": "injected", "text": extra}
 
             final = None
-            async for event in stream_fn(cfg, _wire_messages(messages), tools=tools):
+            # Captured by llm.py's on_request hook right before the POST —
+            # the literal wire-format body sent to the connection, for the
+            # chat transparency log below (see store.record_llm_call).
+            captured_request: dict = {}
+
+            def _capture_request(url: str, payload: dict) -> None:
+                captured_request["url"] = url
+                captured_request["payload"] = payload
+
+            async for event in stream_fn(
+                cfg, _wire_messages(messages), tools=tools, on_request=_capture_request
+            ):
                 if event["type"] == "delta":
                     yield event
                 else:
@@ -793,8 +809,51 @@ async def run_turn(
             assistant_msg: dict = {"role": "assistant", "content": final["content"]}
             if final["tool_calls"]:
                 assistant_msg["tool_calls"] = final["tool_calls"]
-            store.append_message(username, conversation_id, assistant_msg)
+            message_seq = store.append_message(username, conversation_id, assistant_msg)
             messages.append(assistant_msg)
+
+            # Log + surface this call for the chat transparency view — every
+            # iteration makes exactly one call and appends exactly one
+            # assistant message, so message_seq links the two 1:1.
+            if captured_request:
+                usage = final.get("usage") or {}
+                provider = cfg.get("connection_id", "")
+                model = cfg.get("model", "")
+                request_url = captured_request.get("url", "")
+                # Redacted for both the persisted log and the SSE event below
+                # — a vision call's payload can carry inline base64 image
+                # data that would otherwise bloat chat.db and the stream
+                # alike (see redact_large_strings's docstring).
+                request_payload = _redact_large_strings(captured_request.get("payload", {}))
+                response = {
+                    "content": final.get("content", ""),
+                    "tool_calls": final.get("tool_calls", []),
+                    "finish_reason": final.get("finish_reason", ""),
+                }
+                store.record_llm_call(
+                    username, conversation_id,
+                    message_seq=message_seq,
+                    provider=provider,
+                    model=model,
+                    request_url=request_url,
+                    request_payload=request_payload,
+                    response_content=response["content"],
+                    response_tool_calls=response["tool_calls"],
+                    finish_reason=response["finish_reason"],
+                    usage=usage,
+                    latency_ms=final.get("latency_ms", 0),
+                )
+                yield {
+                    "type": "llm_call",
+                    "message_seq": message_seq,
+                    "provider": provider,
+                    "model": model,
+                    "request_url": request_url,
+                    "request": request_payload,
+                    "response": response,
+                    "usage": usage,
+                    "latency_ms": final.get("latency_ms", 0),
+                }
 
             if not final["tool_calls"]:
                 break

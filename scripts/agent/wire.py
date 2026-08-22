@@ -66,6 +66,33 @@ def wire_messages(messages: list[dict]) -> list[dict]:
     return out
 
 
+_REDACT_MAX_LEN = 4_000
+
+
+def redact_large_strings(obj, max_len: int = _REDACT_MAX_LEN):
+    """Deep-copy ``obj``, truncating any string longer than ``max_len``.
+
+    Used for the chat transparency log (agent.loop's llm_calls capture)
+    before a request payload is persisted or sent down the SSE stream. A
+    vision-enabled call's payload can carry base64 image data inline — the
+    exact key differs per provider (``image_url.url``, Anthropic's
+    ``source.data``, Gemini's ``inlineData.data``, ...) so rather than
+    special-casing each wire shape, any long string anywhere in the
+    structure is capped generically. This only affects the *logged copy*;
+    the real request already went out over the wire unmodified before this
+    is ever called.
+    """
+    if isinstance(obj, str):
+        if len(obj) <= max_len:
+            return obj
+        return f"{obj[:max_len]}…(truncated, {len(obj)} chars total)"
+    if isinstance(obj, dict):
+        return {k: redact_large_strings(v, max_len) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [redact_large_strings(v, max_len) for v in obj]
+    return obj
+
+
 def approx_tokens(messages: list[dict]) -> int:
     """Rough token-count estimate (chars / 4) used only to decide whether to
     auto-compact — no tokenizer dependency, so it's a heuristic, not exact.

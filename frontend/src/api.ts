@@ -349,6 +349,23 @@ export interface WireMessage {
   tool_call_id?: string;
 }
 
+// Logged request/response of one LLM call — the chat transparency ("inspect
+// this call") detail. `request` is the literal wire-format body POSTed to
+// the connection (shape varies by api_mode: chat/responses/messages/gemini —
+// see llm.py), not the internal chat-completions-shaped messages loop.py
+// builds, so what's shown here is genuinely what left the server.
+export interface LLMCallDetail {
+  message_seq: number;
+  created_at: number;
+  provider: string;
+  model: string;
+  request_url: string;
+  request: unknown;
+  response: { content: string; tool_calls: unknown[]; finish_reason: string };
+  usage: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number };
+  latency_ms: number;
+}
+
 export interface WorkflowCommand {
   id: string;
   prompt_id: string;
@@ -381,6 +398,7 @@ export type StreamEvent =
       options: string[] | null;
     }
   | { type: "tool_result"; id: string; name: string; text: string }
+  | ({ type: "llm_call" } & Omit<LLMCallDetail, "created_at">)
   | { type: "focus"; photo_id: string }
   | { type: "photo_list"; photo_ids: string[] }
   | { type: "user_photos"; nsid: string }
@@ -575,6 +593,10 @@ export async function getSessionStats(conversationId: string): Promise<SessionSt
 
 export async function compactConversation(conversationId: string): Promise<{ ok: true; summary: string }> {
   return postJSON(`/api/chat/conversations/${conversationId}/compact`, {});
+}
+
+export async function getLLMCalls(conversationId: string): Promise<{ calls: LLMCallDetail[] }> {
+  return getJSON(`/api/chat/conversations/${conversationId}/llm-calls`);
 }
 
 /** Cancel the current user's in-flight turn, if any. `ok: false` just means nothing was running. */
