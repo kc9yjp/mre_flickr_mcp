@@ -1337,3 +1337,97 @@ class TestAddToGroupSkipExisting:
             result = await mcp_tools._add_to_group({"photo_id": "photo1", "group_ids": ["group1@N00"]})
         assert "added to group group1@N00" in _text(result)
         assert api_post.call_count == 1
+
+
+# ---------------------------------------------------------------------------
+# add_to_album — multiple albums per call
+# ---------------------------------------------------------------------------
+
+class TestAddToAlbum:
+    CONTEXTS = {"pool": [], "set": [{"id": "album1", "title": "My Album"}]}
+
+    @pytest.mark.asyncio
+    async def test_adds_to_every_album_in_one_call(self, db, api_post):
+        import mcp_tools
+        with patch("flickr_api._api_get", return_value={"pool": [], "set": []}):
+            result = await mcp_tools._add_to_album(
+                {"photo_id": "photo1", "album_ids": ["a1", "a2", "a3"]}
+            )
+        text = _text(result)
+        assert text.count("added to album") == 3
+        assert [c.args[1]["photoset_id"] for c in api_post.call_args_list] == ["a1", "a2", "a3"]
+
+    @pytest.mark.asyncio
+    async def test_skips_albums_the_photo_is_already_in(self, db, api_post):
+        import mcp_tools
+        with patch("flickr_api._api_get", return_value=self.CONTEXTS):
+            result = await mcp_tools._add_to_album(
+                {"photo_id": "photo1", "album_ids": ["album1", "album2"]}
+            )
+        text = _text(result)
+        assert "already in album album1 — skipped" in text
+        assert "added to album album2" in text
+        assert [c.args[1]["photoset_id"] for c in api_post.call_args_list] == ["album2"]
+
+    @pytest.mark.asyncio
+    async def test_one_bad_album_does_not_abort_the_others(self, db, api_post):
+        import mcp_tools
+        from flickr_api import FlickrAPIError
+
+        def _post(method, params=None):
+            if params and params.get("photoset_id") == "bad":
+                raise FlickrAPIError(1, "Photoset not found")
+            return {"stat": "ok"}
+        api_post.side_effect = _post
+
+        with patch("flickr_api._api_get", return_value={"pool": [], "set": []}):
+            result = await mcp_tools._add_to_album(
+                {"photo_id": "photo1", "album_ids": ["bad", "good"]}
+            )
+        text = _text(result)
+        assert "NOT added to album bad: Photoset not found" in text
+        assert "added to album good" in text
+
+    @pytest.mark.asyncio
+    async def test_legacy_single_album_id_still_works(self, db, api_post):
+        """Callers (and the Claude Code skills) that pass one album_id must
+        keep working unchanged."""
+        import mcp_tools
+        with patch("flickr_api._api_get", return_value={"pool": [], "set": []}):
+            result = await mcp_tools._add_to_album({"photo_id": "photo1", "album_id": "album9"})
+        assert "Photo photo1 added to album album9." == _text(result)
+        assert api_post.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_duplicate_ids_are_collapsed(self, db, api_post):
+        import mcp_tools
+        with patch("flickr_api._api_get", return_value={"pool": [], "set": []}):
+            await mcp_tools._add_to_album({"photo_id": "photo1", "album_ids": ["a1", "a1", "a2"]})
+        assert [c.args[1]["photoset_id"] for c in api_post.call_args_list] == ["a1", "a2"]
+
+    @pytest.mark.asyncio
+    async def test_failed_context_lookup_still_attempts_every_add(self, db, api_post):
+        import mcp_tools
+        with patch("flickr_api._api_get", side_effect=RuntimeError("Flickr API timed out")):
+            result = await mcp_tools._add_to_album(
+                {"photo_id": "photo1", "album_ids": ["album1", "album2"]}
+            )
+        assert _text(result).count("added to album") == 2
+        assert api_post.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_skip_existing_false_skips_the_context_lookup(self, db, api_post):
+        import mcp_tools
+        with patch("flickr_api._api_get") as api_get:
+            await mcp_tools._add_to_album(
+                {"photo_id": "photo1", "album_ids": ["album1"], "skip_existing": False}
+            )
+        api_get.assert_not_called()
+        assert api_post.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_no_albums_supplied_is_reported(self, db, api_post):
+        import mcp_tools
+        result = await mcp_tools._add_to_album({"photo_id": "photo1", "album_ids": []})
+        assert "supply album_ids" in _text(result)
+        api_post.assert_not_called()

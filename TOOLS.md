@@ -69,7 +69,7 @@ confirmation UI provides.
 | `find_albums` | | *(optional keyword)* | Search your albums from the local database — matches any individual word of the query against title or description (recall over precision). |
 | `get_all_albums` | | `sort` (`title` default / `count_photos` / `count_views`), `limit` | List all your albums from the local database. |
 | `get_album_photos` | | `album_id`*, `limit` (default 50), `page` (default 1) | List photos in an album. |
-| `add_to_album` | ✍️ | `photo_id`*, `album_id`* | Add a photo to an album. |
+| `add_to_album` | ✍️ | `photo_id`*, `album_ids`* (array; legacy `album_id` still accepted), `skip_existing` | Add a photo to one or more albums in a single call. Albums the photo is already in are detected and skipped (`skip_existing`, default true); each album is added independently, so one bad album id doesn't abort the rest. |
 | `remove_from_album` | ✍️ | `photo_id`*, `album_id`* | Remove a photo from an album. |
 | `create_album` | ✍️ | `title`*, `primary_photo_id`*, `description` | Create a new album with an initial cover photo. |
 | `edit_album` | ✍️ | `album_id`*, `title`, `description`, `primary_photo_id` | Rename, redescribe, or re-cover an album. |

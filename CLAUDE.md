@@ -167,6 +167,9 @@ change. A few worth knowing up front:
 - `add_to_group` — skips group pools the photo is already in by default
   (`skip_existing`), so it no longer needs a `get_photo_contexts` call chained
   in front of it just to avoid duplicate submissions.
+- `add_to_album` — takes `album_ids` (a list) and shares that `skip_existing`
+  behaviour, so a photo goes into all its albums in one call. The single
+  `album_id` form still works.
 
 ## Key Implementation Details
 

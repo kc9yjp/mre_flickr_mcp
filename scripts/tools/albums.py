@@ -1,11 +1,13 @@
 """Album tool definitions and handlers."""
 
 import json
+import logging
 import time
 
 from mcp.types import TextContent, Tool
 
 import flickr_api
+from flickr_api import FlickrAPIError
 from db import get_db, like_pattern, table_empty
 
 TOOLS = [
@@ -46,14 +48,37 @@ TOOLS = [
     ),
     Tool(
         name="add_to_album",
-        description="Add a photo to a Flickr album.",
+        description=(
+            "Add a photo to one or more Flickr albums. Pass every album in a single "
+            "album_ids call rather than one call per album. Albums the photo is already "
+            "in are detected and skipped automatically (skip_existing, on by default), "
+            "so there is no need to call get_photo_contexts first just to avoid "
+            "duplicates. Each album is added independently: one failure is reported "
+            "against that album and the rest still proceed."
+        ),
         inputSchema={
             "type": "object",
             "properties": {
                 "photo_id": {"type": "string", "description": "Flickr photo ID"},
-                "album_id": {"type": "string", "description": "Flickr photoset ID"},
+                "album_ids": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Flickr photoset IDs to add the photo to",
+                },
+                "album_id": {
+                    "type": "string",
+                    "description": "Single Flickr photoset ID (legacy — prefer album_ids)",
+                },
+                "skip_existing": {
+                    "type": "boolean",
+                    "description": (
+                        "Check the photo's current albums first and skip any it is already in "
+                        "(default true). Set false to attempt every add regardless — Flickr "
+                        "will reject duplicates with its own error."
+                    ),
+                },
             },
-            "required": ["photo_id", "album_id"],
+            "required": ["photo_id"],
         },
     ),
     Tool(
@@ -185,9 +210,62 @@ async def _get_album_photos(args):
     return [TextContent(type="text", text=json.dumps({"total": total, "pages": pages, "page": page, "returned": len(photos), "photos": photos}, indent=2))]
 
 
+def _requested_album_ids(args: dict) -> list[str]:
+    """Normalize album_ids / legacy album_id into an ordered, de-duplicated list."""
+    raw = args.get("album_ids")
+    if raw is None:
+        raw = args.get("album_id")
+    if raw is None:
+        return []
+    if isinstance(raw, str):
+        raw = [raw]
+    seen, album_ids = set(), []
+    for value in raw:
+        album_id = str(value).strip()
+        if album_id and album_id not in seen:
+            seen.add(album_id)
+            album_ids.append(album_id)
+    return album_ids
+
+
 async def _add_to_album(args):
-    flickr_api._api_post("flickr.photosets.addPhoto", {"photoset_id": args["album_id"], "photo_id": args["photo_id"]})
-    return [TextContent(type="text", text=f"Photo {args['photo_id']} added to album {args['album_id']}.")]
+    photo_id = args["photo_id"]
+    album_ids = _requested_album_ids(args)
+    if not album_ids:
+        return [TextContent(type="text", text="add_to_album: supply album_ids (or album_id).")]
+    # Default on, matching add_to_group: "add unless already in it" is what a
+    # caller almost always means, and one contexts lookup covers every album.
+    skip_existing = bool(args.get("skip_existing", True))
+    existing = None
+    if skip_existing:
+        contexts = flickr_api.photo_context_ids(photo_id)
+        if contexts is None:
+            logging.warning(
+                "add_to_album: could not check current albums for photo %s; "
+                "attempting every requested add", photo_id,
+            )
+        else:
+            _pools, existing = contexts
+
+    results = []
+    for album_id in album_ids:
+        if existing is not None and album_id in existing:
+            results.append(f"Photo {photo_id} already in album {album_id} — skipped.")
+            continue
+        try:
+            flickr_api._api_post(
+                "flickr.photosets.addPhoto", {"photoset_id": album_id, "photo_id": photo_id}
+            )
+            results.append(f"Photo {photo_id} added to album {album_id}.")
+        except FlickrAPIError as e:
+            # Reported per-album rather than raised, so one bad album id can't
+            # abort the adds the caller asked for on every other album.
+            logging.warning(
+                "add_to_album: failed to add photo %s to album %s: %s",
+                photo_id, album_id, e.flickr_message,
+            )
+            results.append(f"Photo {photo_id} NOT added to album {album_id}: {e.flickr_message}")
+    return [TextContent(type="text", text="\n".join(results))]
 
 
 async def _remove_from_album(args):

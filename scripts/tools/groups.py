@@ -618,20 +618,18 @@ def _add_photo_to_one_group(conn, photo_id: str, group_id: str, retry_at_str, qu
 def _current_pool_ids(photo_id: str) -> set[str] | None:
     """Return the group ids whose pools already hold *photo_id*, or None.
 
-    One live ``flickr.photos.getAllContexts`` call covers the whole batch (and
-    is served from the 5-minute GET cache when get_photo_contexts just ran).
-    Returns None — meaning "unknown, don't skip anything" — if the lookup
-    fails, so a context hiccup can never silently drop a requested add.
+    None means the lookup failed — "unknown, don't skip anything" — so a
+    context hiccup can never silently drop a requested add.
     """
-    try:
-        data = flickr_api._api_get("flickr.photos.getAllContexts", {"photo_id": photo_id})
-    except Exception as e:
+    contexts = flickr_api.photo_context_ids(photo_id)
+    if contexts is None:
         logging.warning(
-            "add_to_group: could not check existing pools for photo %s (%s); "
-            "attempting every requested add", photo_id, e,
+            "add_to_group: could not check existing pools for photo %s; "
+            "attempting every requested add", photo_id,
         )
         return None
-    return {p["id"] for p in data.get("pool", []) if p.get("id")}
+    pools, _albums = contexts
+    return pools
 
 
 async def _add_to_group(args):

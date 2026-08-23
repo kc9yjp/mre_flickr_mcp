@@ -468,6 +468,28 @@ def _api_replace(photo_id: str, content: bytes, filename: str = "photo.jpg") -> 
     return (node.text or str(photo_id)).strip() if node is not None else str(photo_id)
 
 
+def photo_context_ids(photo_id: str) -> tuple[set[str], set[str]] | None:
+    """Return ``(group_pool_ids, album_ids)`` for *photo_id*, or None if unknown.
+
+    One ``flickr.photos.getAllContexts`` call answers "is this photo already
+    in X?" for every group and album at once, so a batched add needs a single
+    lookup rather than one per target (and it is served from the GET cache
+    when something asked recently).
+
+    None means the lookup itself failed.  Callers must treat that as "don't
+    know, so skip nothing" — never as "the photo is in nothing", which would
+    silently drop the very adds they were asked to make.
+    """
+    try:
+        data = _api_get("flickr.photos.getAllContexts", {"photo_id": photo_id})
+    except Exception as e:
+        logging.warning("photo_context_ids: lookup failed for photo %s: %s", photo_id, e)
+        return None
+    pools = {p["id"] for p in data.get("pool", []) if p.get("id")}
+    sets = {s["id"] for s in data.get("set", []) if s.get("id")}
+    return pools, sets
+
+
 _NSID_RE = re.compile(r"^\d+@N\d+$")
 _PROFILE_URL_RE = re.compile(r"flickr\.com/(?:photos|people)/([^/\s]+)")
 

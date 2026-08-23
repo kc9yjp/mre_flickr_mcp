@@ -912,7 +912,7 @@ async def run_turn(
                             "arguments": raw_args,
                             "photo": None,
                             "groups": None,
-                            "album": None,
+                            "albums": None,
                             "contact": None,
                             "gallery": None,
                             "warning": None,
@@ -986,11 +986,22 @@ async def run_turn(
                     # delete_album), contacts (follow/unfollow/protect/
                     # never-follow — the one where getting the WRONG person
                     # matters most), and galleries (add_to_gallery).
-                    album_id = str(args.get("album_id", "") or "")
-                    album = (
-                        await asyncio.to_thread(_album_preview_sync, user, album_id)
-                        if album_id else None
-                    )
+                    # add_to_album takes a list (album_ids); the other album
+                    # tools take a single album_id — same normalization as
+                    # groups above, so the card names every album a multi-album
+                    # add would touch instead of just the first.
+                    raw_album_ids = args.get("album_ids")
+                    if isinstance(raw_album_ids, list):
+                        album_ids = [str(a) for a in raw_album_ids if str(a).strip()]
+                    else:
+                        single_album = str(args.get("album_id", "") or "")
+                        album_ids = [single_album] if single_album else []
+                    albums = [
+                        a for a in await asyncio.gather(
+                            *(asyncio.to_thread(_album_preview_sync, user, aid) for aid in album_ids)
+                        )
+                        if a
+                    ] or None
                     contact_id = str(args.get("contact_id", "") or "")
                     contact = (
                         await asyncio.to_thread(_contact_preview_sync, user, contact_id)
@@ -1008,7 +1019,7 @@ async def run_turn(
                         "arguments": raw_args,
                         "photo": photo,
                         "groups": groups,
-                        "album": album,
+                        "albums": albums,
                         "contact": contact,
                         "gallery": gallery,
                         "warning": _omission_warning(omitted_fields) if omitted_fields else None,

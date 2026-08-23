@@ -1164,9 +1164,10 @@ export function Chat() {
                 {confirm.groups.map((g) => g.name || "(unknown)").join(", ")}
               </p>
             )}
-            {confirm.album && (
+            {confirm.albums && (
               <p className="hint">
-                Album: {confirm.album.title || "(untitled)"} — album {confirm.album.id}
+                {confirm.albums.length === 1 ? "Album: " : "Albums: "}
+                {confirm.albums.map((a) => a.title || "(untitled)").join(", ")}
               </p>
             )}
             {confirm.contact && (

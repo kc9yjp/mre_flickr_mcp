@@ -1037,7 +1037,8 @@ async def test_confirm_request_photo_preview_populated_for_numeric_id(user_db):
 @pytest.mark.asyncio
 async def test_confirm_request_includes_album_preview_from_local_db(user_db):
     """album_id resolves to a title the same way group_id already does for
-    groups — mem_db seeds 'album1' as 'My Album'."""
+    groups — mem_db seeds 'album1' as 'My Album'. Single-album tools land in
+    the same list the card renders for a multi-album add."""
     from agent import loop, store
 
     conv = store.create_conversation(USERNAME, "t")
@@ -1053,7 +1054,7 @@ async def test_confirm_request_includes_album_preview_from_local_db(user_db):
                 assert loop.resolve_confirm(event["confirm_id"], True)
 
     confirm = next(e for e in events if e["type"] == "confirm_request")
-    assert confirm["album"] == {"id": "album1", "title": "My Album"}
+    assert confirm["albums"] == [{"id": "album1", "title": "My Album"}]
 
 
 @pytest.mark.asyncio
@@ -1079,7 +1080,7 @@ async def test_confirm_request_album_preview_falls_back_to_live_api(user_db, pat
                 assert loop.resolve_confirm(event["confirm_id"], False)
 
     confirm = next(e for e in events if e["type"] == "confirm_request")
-    assert confirm["album"] == {"id": "newalbum99", "title": "Live Album Title"}
+    assert confirm["albums"] == [{"id": "newalbum99", "title": "Live Album Title"}]
 
 
 @pytest.mark.asyncio
@@ -1938,3 +1939,38 @@ def test_category_in_use_cannot_be_deleted():
     empty = prompts_store.create_category(NSID, "Empty category")
     ok, error = prompts_store.delete_category(NSID, empty["id"])
     assert ok and error is None
+
+
+@pytest.mark.asyncio
+async def test_confirm_request_lists_every_album_of_a_multi_album_add(user_db):
+    """add_to_album takes a list, so the approval card must name every album
+    it would touch — not just the first — the same way it does for groups."""
+    from agent import loop, store
+
+    con = sqlite3.connect(Path(user_db) / "flickr.db")
+    con.execute(
+        "INSERT INTO albums (id, title, description, primary_photo_id, count_photos, "
+        "count_views, synced_at) VALUES ('album2', 'Second Album', '', 'photo1', 1, 0, 0)"
+    )
+    con.commit()
+    con.close()
+
+    conv = store.create_conversation(USERNAME, "t")
+    scripted = _scripted_llm([
+        {"tool_calls": [_tool_call("c1", "add_to_album", {
+            "photo_id": "photo1", "album_ids": ["album1", "album2"],
+        })]},
+        {"content": "Done."},
+    ])
+    events = []
+    with patch("agent.loop.llm.stream_chat", scripted):
+        async for event in loop.run_turn(USER, conv, "add it to both albums", CFG):
+            events.append(event)
+            if event["type"] == "confirm_request":
+                assert loop.resolve_confirm(event["confirm_id"], False)
+
+    confirm = next(e for e in events if e["type"] == "confirm_request")
+    assert confirm["albums"] == [
+        {"id": "album1", "title": "My Album"},
+        {"id": "album2", "title": "Second Album"},
+    ]

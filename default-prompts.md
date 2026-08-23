@@ -119,7 +119,7 @@ Look at my photo {photo_id} and gather whatever context you need.
 Suggest albums for the current photo.
 
 ```
-Check which albums my photo {photo_id} should be in. If you don't already have its image and current albums from earlier in this conversation, fetch them first (fetch_photo_image, then get_photo_contexts for current albums), and call find_albums to see what exists. Suggest topical albums matching the subject as a numbered list. Stop suggesting once the photo is already in about 5 albums, and never suggest the 'Made Explore' album unless I've confirmed the photo made Explore. Wait for my picks, then add with add_to_album.
+Check which albums my photo {photo_id} should be in. If you don't already have its image and current albums from earlier in this conversation, fetch them first (fetch_photo_image, then get_photo_contexts for current albums), and call find_albums to see what exists. Suggest topical albums matching the subject as a numbered list. Stop suggesting once the photo is already in about 5 albums, and never suggest the 'Made Explore' album unless I've confirmed the photo made Explore. Wait for my picks, then add them all in one add_to_album call (pass every pick in album_ids).
 ```
 
 ### Threshold groups
