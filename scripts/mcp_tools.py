@@ -67,6 +67,7 @@ async def call_tool(name: str, arguments: dict):
 # Re-export handler functions so tests can call mcp_tools._search_photos etc.
 from tools.photos import (  # noqa: E402, F401
     _search_photos, _get_photo, _get_summary, _list_recent_syncs, _update_photo,
+    _batch_update_photos, _replace_photo,
     _fetch_photo_image, _get_photo_comments, _add_comment, _delete_comment,
     _fave_photo, _remove_fave, _get_photo_stats, _find_weak_photos,
     _set_visibility, _set_location, _remove_location, _set_safety_level,

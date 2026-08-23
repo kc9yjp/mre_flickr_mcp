@@ -21,6 +21,7 @@ import secrets
 import threading
 import time
 import urllib.parse
+from xml.etree import ElementTree
 
 import requests
 
@@ -57,6 +58,9 @@ CREDENTIALS_FILE = os.path.join(_CREDS_BASE, "credentials.json")
 
 ENV_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env")
 API_URL = "https://api.flickr.com/services/rest/"
+# The replace endpoint is a separate host that takes a multipart upload
+# rather than a REST method call, and answers in XML regardless of format.
+REPLACE_URL = "https://up.flickr.com/services/replace/"
 HTTP_TIMEOUT = int(os.environ.get("FLICKR_HTTP_TIMEOUT", 30))
 _API_MAX_RETRIES = 3
 
@@ -398,6 +402,70 @@ def _api_post(method, extra=None):
     data = _api_call("POST", method, _make_params)
     _cache_purge_for_write(nsid, extra)
     return data
+
+
+def _api_replace(photo_id: str, content: bytes, filename: str = "photo.jpg") -> str:
+    """Replace the image behind an existing photo, keeping its ID and metadata.
+
+    Wraps Flickr's non-REST replace endpoint: the OAuth signature covers only
+    the regular form fields (the binary part is excluded from the base
+    string, per the upload API), which are then posted alongside the file as
+    multipart/form-data.  Returns the photo ID echoed back by Flickr.
+
+    Title, description, tags, comments, faves, and group/album memberships all
+    survive a replace — only the image bytes (and the URL secret) change.
+    Raises ``RuntimeError`` on transport failure and ``FlickrAPIError`` on an
+    application-level error.
+    """
+    api_key, api_secret = _load_env()
+    creds = _load_credentials()
+    nsid = creds.get("user_nsid", "")
+
+    params = _oauth_params(api_key, {
+        "oauth_token": creds["oauth_token"],
+        "photo_id":    str(photo_id),
+    })
+    params["oauth_signature"] = _sign("POST", REPLACE_URL, params, api_secret, creds["oauth_token_secret"])
+
+    try:
+        resp = requests.post(
+            REPLACE_URL,
+            data=params,
+            files={"photo": (filename, content, "application/octet-stream")},
+            timeout=max(HTTP_TIMEOUT, 120),
+        )
+    except requests.exceptions.RequestException as e:
+        raise RuntimeError(f"Flickr replace request failed for photo {photo_id}") from e
+
+    if not resp.ok:
+        raise RuntimeError(f"Flickr replace HTTP {resp.status_code} for photo {photo_id}")
+
+    try:
+        root = ElementTree.fromstring(resp.text)
+    except ElementTree.ParseError as e:
+        raise RuntimeError(
+            f"Flickr replace returned unparseable response: {resp.text[:200]!r}"
+        ) from e
+
+    # A proxy/error page can be well-formed XML-ish HTML; anything that isn't
+    # Flickr's <rsp> envelope is a transport failure, not an API-level error.
+    if root.tag != "rsp":
+        raise RuntimeError(
+            f"Flickr replace returned an unexpected response: {resp.text[:200]!r}"
+        )
+
+    if root.get("stat") != "ok":
+        err = root.find("err")
+        code = int(err.get("code", 0)) if err is not None else 0
+        message = err.get("msg", "unknown") if err is not None else "unknown"
+        raise FlickrAPIError(code, message)
+
+    # A replace rotates the photo's URL secret, so every cached getSizes/getInfo
+    # response for it is now stale — drop them the same way a REST write does.
+    _cache_purge_for_write(nsid, {"photo_id": str(photo_id)})
+
+    node = root.find("photoid")
+    return (node.text or str(photo_id)).strip() if node is not None else str(photo_id)
 
 
 _NSID_RE = re.compile(r"^\d+@N\d+$")

@@ -1033,3 +1033,307 @@ class TestKeeperList:
         entry = next(i for i in items if i["photo_id"] == "unknownphoto")
         assert entry["url"] == f"https://www.flickr.com/photos/{FAKE_CREDS['user_nsid']}/unknownphoto/"
         assert "ejwettstein" not in entry["url"]
+
+
+# ---------------------------------------------------------------------------
+# batch_update_photos
+# ---------------------------------------------------------------------------
+
+class TestBatchUpdatePhotos:
+    @pytest.fixture()
+    def two_photos(self, db):
+        now = int(time.time())
+        db.execute(
+            "INSERT INTO photos (id, title, description, tags, date_taken, "
+            "date_uploaded, synced_at, is_public) VALUES (?,?,?,?,?,?,?,1)",
+            ("photo2", "Second", "desc two", "old", "2024-02-01 10:00:00", now, now),
+        )
+        db.commit()
+        return db
+
+    @pytest.mark.asyncio
+    async def test_updates_every_photo_in_one_call(self, two_photos, api_post):
+        import mcp_tools
+        api_post.return_value = {"stat": "ok"}
+        result = await mcp_tools._batch_update_photos({"photos": [
+            {"id": "photo1", "title": "One", "description": "d1", "tags": "a b"},
+            {"id": "photo2", "title": "Two", "description": "d2", "tags": "c d"},
+        ]})
+        payload = _json(result)
+        assert payload["succeeded"] == 2 and payload["failed"] == 0
+        assert [r["status"] for r in payload["results"]] == ["ok", "ok"]
+        rows = {r["id"]: r for r in two_photos.execute(
+            "SELECT id, title, description, tags FROM photos WHERE id IN ('photo1','photo2')"
+        ).fetchall()}
+        assert rows["photo1"]["title"] == "One" and rows["photo1"]["tags"] == "a b"
+        assert rows["photo2"]["description"] == "d2"
+
+    @pytest.mark.asyncio
+    async def test_one_failure_does_not_abort_the_batch(self, two_photos, api_post):
+        """A rejected photo is reported against that photo only — the rest of
+        the batch still gets written, so a partial batch is never silently lost."""
+        import mcp_tools
+        from flickr_api import FlickrAPIError
+
+        def _post(method, params=None):
+            if params and params.get("photo_id") == "photo1":
+                raise FlickrAPIError(1, "Photo not found")
+            return {"stat": "ok"}
+        api_post.side_effect = _post
+
+        result = await mcp_tools._batch_update_photos({"photos": [
+            {"id": "photo1", "title": "One", "description": "d1", "tags": "a"},
+            {"id": "photo2", "title": "Two", "description": "d2", "tags": "b"},
+        ]})
+        payload = _json(result)
+        assert payload["succeeded"] == 1 and payload["failed"] == 1
+        first, second = payload["results"]
+        assert first["status"] == "error" and "Photo not found" in first["error"]
+        assert second["status"] == "ok"
+        row = two_photos.execute("SELECT title FROM photos WHERE id='photo2'").fetchone()
+        assert row["title"] == "Two"
+
+    @pytest.mark.asyncio
+    async def test_stop_on_error_halts_remaining_photos(self, two_photos, api_post):
+        import mcp_tools
+        from flickr_api import FlickrAPIError
+        api_post.side_effect = FlickrAPIError(1, "Photo not found")
+
+        result = await mcp_tools._batch_update_photos({
+            "photos": [
+                {"id": "photo1", "title": "One", "description": "d", "tags": "a"},
+                {"id": "photo2", "title": "Two", "description": "d", "tags": "b"},
+            ],
+            "stop_on_error": True,
+        })
+        payload = _json(result)
+        assert payload["stopped_early"] is True
+        assert len(payload["results"]) == 1
+
+    @pytest.mark.asyncio
+    async def test_rejects_oversized_batch(self, db):
+        import mcp_tools
+        from tools.photos import MAX_BATCH_UPDATE
+        photos = [{"id": str(i), "title": "t"} for i in range(MAX_BATCH_UPDATE + 1)]
+        result = await mcp_tools._batch_update_photos({"photos": photos})
+        assert "too many photos" in _text(result)
+
+    @pytest.mark.asyncio
+    async def test_entry_with_no_fields_is_reported_not_written(self, db, api_post):
+        import mcp_tools
+        result = await mcp_tools._batch_update_photos({"photos": [{"id": "photo1"}]})
+        payload = _json(result)
+        assert payload["results"][0]["status"] == "skipped"
+        api_post.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# replace_photo
+# ---------------------------------------------------------------------------
+
+class TestReplacePhoto:
+    @pytest.mark.asyncio
+    async def test_replaces_from_file_and_refreshes_cached_urls(self, db, tmp_path):
+        import mcp_tools
+        image = tmp_path / "enhanced.jpg"
+        image.write_bytes(b"\xff\xd8fake-jpeg-bytes")
+
+        with (
+            patch("flickr_api._api_replace", return_value="photo1") as replace,
+            patch("tools.photos._live_photo_urls",
+                  return_value=("https://live.staticflickr.com/x/new_o.jpg",
+                                "https://live.staticflickr.com/x/new_z.jpg")),
+        ):
+            result = await mcp_tools._replace_photo({"photo_id": "photo1", "file_path": str(image)})
+
+        payload = _json(result)
+        assert payload["status"] == "replaced"
+        assert payload["photo_id"] == "photo1"
+        replace.assert_called_once()
+        assert replace.call_args.args[1] == b"\xff\xd8fake-jpeg-bytes"
+        row = db.execute("SELECT url_original, url_medium FROM photos WHERE id='photo1'").fetchone()
+        assert row["url_original"] == "https://live.staticflickr.com/x/new_o.jpg"
+        assert row["url_medium"] == "https://live.staticflickr.com/x/new_z.jpg"
+
+    @pytest.mark.asyncio
+    async def test_requires_exactly_one_source(self, db):
+        import mcp_tools
+        neither = await mcp_tools._replace_photo({"photo_id": "photo1"})
+        assert "exactly one" in _text(neither)
+        both = await mcp_tools._replace_photo(
+            {"photo_id": "photo1", "file_path": "/tmp/x.jpg", "image_url": "https://e/x.jpg"}
+        )
+        assert "exactly one" in _text(both)
+
+    @pytest.mark.asyncio
+    async def test_missing_file_is_reported_not_raised(self, db):
+        import mcp_tools
+        result = await mcp_tools._replace_photo({"photo_id": "photo1", "file_path": "/nope/missing.jpg"})
+        assert "File not found" in _text(result)
+
+    @pytest.mark.asyncio
+    async def test_flickr_rejection_is_reported_and_urls_untouched(self, db, tmp_path):
+        import mcp_tools
+        from flickr_api import FlickrAPIError
+        image = tmp_path / "x.jpg"
+        image.write_bytes(b"bytes")
+        before = db.execute("SELECT url_original FROM photos WHERE id='photo1'").fetchone()["url_original"]
+
+        with patch("flickr_api._api_replace", side_effect=FlickrAPIError(3, "Filetype was not recognised")):
+            result = await mcp_tools._replace_photo({"photo_id": "photo1", "file_path": str(image)})
+
+        assert "Filetype was not recognised" in _text(result)
+        after = db.execute("SELECT url_original FROM photos WHERE id='photo1'").fetchone()["url_original"]
+        assert after == before
+
+    @pytest.mark.asyncio
+    async def test_rejects_non_http_url(self, db):
+        import mcp_tools
+        result = await mcp_tools._replace_photo({"photo_id": "photo1", "image_url": "file:///etc/passwd"})
+        assert "http(s) URL" in _text(result)
+
+
+# ---------------------------------------------------------------------------
+# search_photos include_images
+# ---------------------------------------------------------------------------
+
+class TestSearchWithImages:
+    @pytest.mark.asyncio
+    async def test_images_are_returned_alongside_metadata(self, db):
+        import mcp_tools
+        from mcp.types import ImageContent
+
+        fake = ImageContent(type="image", data="Zm9v", mimeType="image/jpeg")
+        with patch("tools.photos._photo_thumbnails", return_value={"photo1": fake}) as thumbs:
+            result = await mcp_tools._search_photos({"include_images": True})
+
+        assert json.loads(result[0].text)[0]["id"] == "photo1"
+        assert any(isinstance(c, ImageContent) for c in result)
+        thumbs.assert_called_once_with(["photo1"])
+
+    @pytest.mark.asyncio
+    async def test_no_images_unless_requested(self, db):
+        import mcp_tools
+        with patch("tools.photos._photo_thumbnails") as thumbs:
+            result = await mcp_tools._search_photos({})
+        thumbs.assert_not_called()
+        assert len(result) == 1
+
+    @pytest.mark.asyncio
+    async def test_unfetchable_image_degrades_to_a_text_line(self, db):
+        """One photo whose bytes can't be fetched must not fail the search."""
+        import mcp_tools
+        with patch("tools.photos._photo_thumbnails", return_value={"photo1": None}):
+            result = await mcp_tools._search_photos({"include_images": True})
+        assert "image unavailable" in result[1].text
+
+
+# ---------------------------------------------------------------------------
+# get_person_info friend/family flags
+# ---------------------------------------------------------------------------
+
+class TestPersonInfoContactFlags:
+    UNRELIABLE_PERSON = {
+        "person": {
+            "nsid": "contact1@N00",
+            "username": {"_content": "jsmith"},
+            # people.getInfo claims both flags for essentially every contact.
+            "friend": 1, "family": 1, "contact": 1,
+        }
+    }
+
+    @pytest.mark.asyncio
+    async def test_flags_come_from_synced_contacts_not_people_getinfo(self, db, creds):
+        import mcp_tools
+        db.execute("INSERT INTO sync_log (synced_at, mode, photos_fetched, type) "
+                   "VALUES (?, 'full', 1, 'contacts')", (int(time.time()),))
+        db.execute("UPDATE contacts SET is_friend=1, is_family=0 WHERE id='contact1@N00'")
+        db.commit()
+
+        with (
+            patch("flickr_api.resolve_user_id", return_value="contact1@N00"),
+            patch("flickr_api._api_get", return_value=self.UNRELIABLE_PERSON),
+        ):
+            result = await mcp_tools._get_person_info({"user_id": "contact1@N00"})
+        info = _json(result)
+        assert info["is_friend"] is True
+        assert info["is_family"] is False
+        assert "local contacts cache" in info["flags_source"]
+
+    @pytest.mark.asyncio
+    async def test_non_contact_after_sync_is_neither_friend_nor_family(self, db, creds):
+        import mcp_tools
+        db.execute("INSERT INTO sync_log (synced_at, mode, photos_fetched, type) "
+                   "VALUES (?, 'full', 1, 'contacts')", (int(time.time()),))
+        db.commit()
+        person = {"person": dict(self.UNRELIABLE_PERSON["person"], nsid="stranger@N00")}
+
+        with (
+            patch("flickr_api.resolve_user_id", return_value="stranger@N00"),
+            patch("flickr_api._api_get", return_value=person),
+        ):
+            result = await mcp_tools._get_person_info({"user_id": "stranger@N00"})
+        info = _json(result)
+        assert info["is_friend"] is False and info["is_family"] is False
+        assert "not a contact" in info["flags_source"]
+
+    @pytest.mark.asyncio
+    async def test_without_a_contacts_sync_the_api_values_are_labelled_unreliable(self, db, creds):
+        """No contacts sync and no cached row: there's nothing to correct the
+        API's flags with, so they're passed through but marked unreliable
+        rather than presented as fact."""
+        import mcp_tools
+        person = {"person": dict(self.UNRELIABLE_PERSON["person"], nsid="stranger@N00")}
+        with (
+            patch("flickr_api.resolve_user_id", return_value="stranger@N00"),
+            patch("flickr_api._api_get", return_value=person),
+        ):
+            result = await mcp_tools._get_person_info({"user_id": "stranger@N00"})
+        info = _json(result)
+        assert "UNRELIABLE" in info["flags_source"]
+        # The unreliable source still reports what Flickr said, just labelled.
+        assert info["is_friend"] is True and info["is_family"] is True
+
+
+# ---------------------------------------------------------------------------
+# add_to_group skip_existing
+# ---------------------------------------------------------------------------
+
+class TestAddToGroupSkipExisting:
+    CONTEXTS = {"pool": [{"id": "group1@N00", "title": "Landscape Lovers"}]}
+
+    @pytest.mark.asyncio
+    async def test_skips_groups_the_photo_is_already_in(self, db, api_post):
+        import mcp_tools
+        with patch("flickr_api._api_get", return_value=self.CONTEXTS):
+            result = await mcp_tools._add_to_group(
+                {"photo_id": "photo1", "group_ids": ["group1@N00", "group2@N00"]}
+            )
+        text = _text(result)
+        assert "already in group group1@N00" in text
+        assert "added to group group2@N00" in text
+        posted = [c.args[1]["group_id"] for c in api_post.call_args_list]
+        assert posted == ["group2@N00"]
+        # The skipped group is still recorded locally — the photo really is in it.
+        assert db.execute(
+            "SELECT COUNT(*) FROM photo_groups WHERE photo_id='photo1'"
+        ).fetchone()[0] == 2
+
+    @pytest.mark.asyncio
+    async def test_skip_existing_false_attempts_every_add(self, db, api_post):
+        import mcp_tools
+        with patch("flickr_api._api_get", return_value=self.CONTEXTS) as api_get:
+            await mcp_tools._add_to_group(
+                {"photo_id": "photo1", "group_ids": ["group1@N00"], "skip_existing": False}
+            )
+        api_get.assert_not_called()
+        assert api_post.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_failed_context_lookup_still_attempts_the_add(self, db, api_post):
+        """A context lookup that errors must never silently drop a requested add."""
+        import mcp_tools
+        with patch("flickr_api._api_get", side_effect=RuntimeError("Flickr API timed out")):
+            result = await mcp_tools._add_to_group({"photo_id": "photo1", "group_ids": ["group1@N00"]})
+        assert "added to group group1@N00" in _text(result)
+        assert api_post.call_count == 1

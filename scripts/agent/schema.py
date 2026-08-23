@@ -8,7 +8,8 @@ import mcp_tools
 # and waits for explicit user approval before executing any of these.
 WRITE_TOOLS: frozenset[str] = frozenset({
     # Flickr-mutating
-    "update_photo", "add_comment", "delete_comment",
+    "update_photo", "batch_update_photos", "replace_photo",
+    "add_comment", "delete_comment",
     "fave_photo", "remove_fave",
     "set_visibility", "set_location", "remove_location",
     "set_safety_level", "set_content_type", "set_dates",

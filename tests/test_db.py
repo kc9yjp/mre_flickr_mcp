@@ -7,9 +7,10 @@ renamed/reused username from silently resolving to a different Flickr
 account's cached data (see check_dir_ownership / seed_dir_ownership).
 """
 
+import sqlite3
 import sys
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -133,3 +134,65 @@ def test_get_db_for_user_without_nsid_context_is_unchecked(tmp_path):
         with db.get_db_for_user("plainuser") as conn:
             conn.execute("SELECT 1")
         assert not (tmp_path / "plainuser" / ".owner_nsid").exists()
+
+
+# ---------------------------------------------------------------------------
+# with_db_retry — lock contention from a concurrent sync
+# ---------------------------------------------------------------------------
+
+class TestWithDbRetry:
+    def test_retries_a_locked_database_then_succeeds(self, monkeypatch):
+        """A write blocked by another writer must be retried, not surfaced as a
+        failed tool call the user has to re-issue by hand."""
+        monkeypatch.setattr(db, "DB_RETRY_BASE_DELAY", 0)
+        calls = []
+
+        def _fn(conn):
+            calls.append(1)
+            if len(calls) < 3:
+                raise sqlite3.OperationalError("database is locked")
+            return "written"
+
+        conn = MagicMock()
+        with patch("db.get_db") as get_db:
+            get_db.return_value.__enter__.return_value = conn
+            assert db.with_db_retry(_fn) == "written"
+        assert len(calls) == 3
+
+    def test_gives_up_after_the_retry_budget(self, monkeypatch):
+        monkeypatch.setattr(db, "DB_RETRY_BASE_DELAY", 0)
+        calls = []
+
+        def _fn(conn):
+            calls.append(1)
+            raise sqlite3.OperationalError("database is locked")
+
+        conn = MagicMock()
+        with patch("db.get_db") as get_db:
+            get_db.return_value.__enter__.return_value = conn
+            with pytest.raises(sqlite3.OperationalError):
+                db.with_db_retry(_fn, attempts=3)
+        assert len(calls) == 3
+
+    def test_does_not_retry_a_permanent_error(self, monkeypatch):
+        """Only lock contention is transient — a missing table would just fail
+        three times slower."""
+        monkeypatch.setattr(db, "DB_RETRY_BASE_DELAY", 0)
+        calls = []
+
+        def _fn(conn):
+            calls.append(1)
+            raise sqlite3.OperationalError("no such table: photos")
+
+        conn = MagicMock()
+        with patch("db.get_db") as get_db:
+            get_db.return_value.__enter__.return_value = conn
+            with pytest.raises(sqlite3.OperationalError):
+                db.with_db_retry(_fn)
+        assert len(calls) == 1
+
+    def test_locked_error_classification(self):
+        assert db._is_locked_error(sqlite3.OperationalError("database is locked"))
+        assert db._is_locked_error(sqlite3.OperationalError("database table is locked"))
+        assert not db._is_locked_error(sqlite3.OperationalError("disk I/O error"))
+        assert not db._is_locked_error(ValueError("database is locked"))

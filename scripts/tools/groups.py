@@ -51,6 +51,9 @@ TOOLS = [
         name="add_to_group",
         description=(
             "Add a photo to one or more Flickr group pools. "
+            "Groups the photo is already in are detected and skipped automatically "
+            "(skip_existing, on by default), so there is no need to call get_photo_contexts "
+            "first just to avoid duplicate submissions. "
             "If the daily posting limit is hit for a group, that group's add is queued for automatic "
             "retry — other groups in the list are added normally and unaffected. "
             "Use retry_at to control when a queued retry fires: named times (morning, lunchtime, "
@@ -89,6 +92,14 @@ TOOLS = [
                     "description": (
                         "Number of days from today to schedule the add (default 0 = today/tomorrow as needed). "
                         "Use with queue=true to spread adds: days_offset=1 = tomorrow, days_offset=2 = day after, etc."
+                    ),
+                },
+                "skip_existing": {
+                    "type": "boolean",
+                    "description": (
+                        "Check the photo's current group pools first and skip any group it is already in "
+                        "(default true). Set false to attempt every add regardless — Flickr will reject "
+                        "duplicates with its own error."
                     ),
                 },
             },
@@ -604,6 +615,25 @@ def _add_photo_to_one_group(conn, photo_id: str, group_id: str, retry_at_str, qu
         return f"Photo {photo_id} NOT added to group {group_id}: {e.flickr_message}"
 
 
+def _current_pool_ids(photo_id: str) -> set[str] | None:
+    """Return the group ids whose pools already hold *photo_id*, or None.
+
+    One live ``flickr.photos.getAllContexts`` call covers the whole batch (and
+    is served from the 5-minute GET cache when get_photo_contexts just ran).
+    Returns None — meaning "unknown, don't skip anything" — if the lookup
+    fails, so a context hiccup can never silently drop a requested add.
+    """
+    try:
+        data = flickr_api._api_get("flickr.photos.getAllContexts", {"photo_id": photo_id})
+    except Exception as e:
+        logging.warning(
+            "add_to_group: could not check existing pools for photo %s (%s); "
+            "attempting every requested add", photo_id, e,
+        )
+        return None
+    return {p["id"] for p in data.get("pool", []) if p.get("id")}
+
+
 async def _add_to_group(args):
     photo_id = args["photo_id"]
     group_ids = args["group_ids"]
@@ -612,13 +642,29 @@ async def _add_to_group(args):
     retry_at_str = args.get("retry_at")
     queue_immediately = bool(args.get("queue", False))
     days_offset = int(args.get("days_offset", 0))
+    # Default on: "submit unless already a member" is what a caller almost
+    # always means, and it saves the get_photo_contexts round-trip that used
+    # to be chained in front of every add to avoid duplicate submissions.
+    skip_existing = bool(args.get("skip_existing", True))
+
+    existing = _current_pool_ids(photo_id) if skip_existing else None
 
     with get_db() as conn:
         _flush_group_queue(conn)
-        results = [
-            _add_photo_to_one_group(conn, photo_id, group_id, retry_at_str, queue_immediately, days_offset)
-            for group_id in group_ids
-        ]
+        results = []
+        for group_id in group_ids:
+            if existing is not None and group_id in existing:
+                # Keep the local mapping honest even when nothing was posted —
+                # the photo really is in that pool.
+                conn.execute(
+                    "INSERT OR IGNORE INTO photo_groups (photo_id, group_id) VALUES (?, ?)",
+                    (photo_id, group_id),
+                )
+                results.append(f"Photo {photo_id} already in group {group_id} — skipped.")
+                continue
+            results.append(
+                _add_photo_to_one_group(conn, photo_id, group_id, retry_at_str, queue_immediately, days_offset)
+            )
 
     return [TextContent(type="text", text="\n".join(results))]
 

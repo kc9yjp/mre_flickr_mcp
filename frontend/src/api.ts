@@ -74,6 +74,11 @@ export interface UserProfile {
   follows_you: boolean;
   is_friend: boolean;
   is_family: boolean;
+  /** Where is_friend/is_family came from: "contacts_cache" (the synced
+   *  contacts table, accurate) or "people_getinfo_unreliable" (Flickr's
+   *  people.getInfo, which flags nearly every contact as both — shown only
+   *  when contacts have never been synced). */
+  flags_source?: 'contacts_cache' | 'people_getinfo_unreliable';
 }
 
 export interface GroupInfo {

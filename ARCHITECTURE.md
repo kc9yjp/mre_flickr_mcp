@@ -43,7 +43,7 @@ flowchart TB
     end
 
     subgraph tools["scripts/mcp_tools.py + tools/*.py"]
-        Handlers["_HANDLERS registry (69 tools across 6 modules)"]
+        Handlers["_HANDLERS registry (71 tools across 6 modules)"]
     end
 
     subgraph agentloop["scripts/agent/ (chat agent)"]
@@ -288,7 +288,7 @@ for _mod in _ALL_MODULES:
 
 Each module exports `TOOLS` (a list of `mcp.types.Tool` — name, description,
 JSON Schema `inputSchema`) and `HANDLERS` (name → async function). See
-[TOOLS.md](TOOLS.md) for the full catalog (69 tools as of this branch).
+[TOOLS.md](TOOLS.md) for the full catalog (71 tools as of this branch).
 
 **Threading model** (`call_tool` in `mcp_tools.py`): the `sync` tool family
 uses asyncio subprocesses and per-user locks that must stay bound to the

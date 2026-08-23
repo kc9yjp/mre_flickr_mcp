@@ -1,10 +1,14 @@
 """Photo tool definitions and handlers."""
 
 import base64
+import contextvars
 import io
 import json
 import logging
+import os
 import time
+import urllib.parse
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 
 import requests
@@ -12,7 +16,7 @@ from mcp.types import ImageContent, TextContent, Tool
 from PIL import Image
 
 import flickr_api
-from db import get_db
+from db import get_db, with_db_retry
 
 TOOLS = [
     Tool(
@@ -20,6 +24,9 @@ TOOLS = [
         description=(
             "Search and filter the photo collection. Supports keyword search on title, "
             "tag filtering, date range, and sorting by date or popularity (views). "
+            "Set include_images=true to get each match's thumbnail back in the same call "
+            "— use it for metadata sweeps (e.g. incomplete=true) instead of one "
+            "fetch_photo_image call per result. "
             "url_original/url_medium are cached from the last sync and can go stale "
             "(403/410) for an external fetcher after a visibility change — call "
             "get_photo for a specific photo to get a freshly-resolved direct URL "
@@ -38,6 +45,18 @@ TOOLS = [
                 "incomplete":   {"type": "boolean", "description": "Only return photos missing a title, description, or tags"},
                 "min_comments": {"type": "integer", "description": "Only return photos with at least this many comments"},
                 "is_public":    {"type": "boolean", "description": "Filter by visibility: true=public only, false=private only, omit=all"},
+                "include_images": {
+                    "type": "boolean",
+                    "description": (
+                        "Also return a thumbnail of each matching photo in this same call, so a "
+                        "metadata sweep needs no follow-up fetch_photo_image per photo. "
+                        "Images are capped by image_limit."
+                    ),
+                },
+                "image_limit": {
+                    "type": "integer",
+                    "description": "How many thumbnails to attach when include_images is set (default 10, max 25)",
+                },
             },
         },
     ),
@@ -98,6 +117,66 @@ TOOLS = [
                 "tags":        {"type": "string", "description": "Space-separated tags, replaces existing tags (required — pass the unchanged value if not updating it)"},
             },
             "required": ["id", "title", "description", "tags"],
+        },
+    ),
+    Tool(
+        name="batch_update_photos",
+        description=(
+            "Update the title, description, and tags of many photos in one call — the "
+            "batch form of update_photo, for applying a whole reviewed set at once "
+            "instead of one call per photo. Pass an array of objects, each with an id "
+            "plus whichever of title/description/tags should change; for any photo where "
+            "you supply only one of title or description, the other is carried over from "
+            "Flickr's current value. Photos are written one at a time and independently: "
+            "the result reports per-photo status, and a failure on one photo does not "
+            "stop the rest unless stop_on_error is set. Max 50 photos per call."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "photos": {
+                    "type": "array",
+                    "description": "Photos to update (max 50)",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "id":          {"type": "string", "description": "Flickr photo ID"},
+                            "title":       {"type": "string", "description": "New title"},
+                            "description": {"type": "string", "description": "New description"},
+                            "tags":        {"type": "string", "description": "Space-separated tags, replaces existing tags"},
+                        },
+                        "required": ["id"],
+                    },
+                },
+                "stop_on_error": {
+                    "type": "boolean",
+                    "description": "Abort the remaining photos after the first failure (default false)",
+                },
+            },
+            "required": ["photos"],
+        },
+    ),
+    Tool(
+        name="replace_photo",
+        description=(
+            "Replace the image file behind an existing Flickr photo, keeping its ID, "
+            "title, description, tags, comments, faves, stats, and group/album memberships. "
+            "Use this to push back an edited, upscaled, or otherwise enhanced version of a "
+            "photo rather than uploading it as a new one. Supply exactly one of image_url "
+            "(an http(s) URL to download, e.g. a render returned by an image service) or "
+            "file_path (a file on the server). Note: a replace rotates the photo's URL "
+            "secret, so any direct image URL handed out earlier for this photo stops "
+            "working; the local cache's URLs are refreshed automatically. Replacing counts "
+            "against a free account's monthly upload allowance."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "photo_id":  {"type": "string", "description": "Flickr photo ID to replace the image of"},
+                "image_url": {"type": "string", "description": "http(s) URL of the replacement image to download and upload"},
+                "file_path": {"type": "string", "description": "Path to a replacement image file on the server"},
+            },
+            "required": ["photo_id"],
         },
     ),
     Tool(
@@ -482,7 +561,38 @@ async def _search_photos(args):
             f"SELECT * FROM photos {where} ORDER BY {order_clause} LIMIT ?",
             params + [limit],
         ).fetchall()
-    return [TextContent(type="text", text=json.dumps([dict(r) for r in rows], indent=2))]
+    records = [dict(r) for r in rows]
+    result = [TextContent(type="text", text=json.dumps(records, indent=2))]
+    if not args.get("include_images") or not records:
+        return result
+
+    # Metadata sweeps (search incomplete=true, then look at each photo) used to
+    # cost one fetch_photo_image call per result. Attaching the thumbnails here
+    # collapses that into this one call; the cap keeps the payload bounded.
+    image_limit = max(1, min(int(args.get("image_limit", 10)), MAX_SEARCH_IMAGES))
+    wanted = records[:image_limit]
+    thumbs = _photo_thumbnails([str(r["id"]) for r in wanted])
+    for position, record in enumerate(wanted, start=1):
+        photo_id = str(record["id"])
+        # Numbered so the photo each image belongs to stays unambiguous even
+        # for a client that flattens the text blocks away from the images.
+        header = (
+            f"Image {position} of {len(wanted)} — Photo ID: {photo_id} — "
+            f"{record.get('title') or '(untitled)'}"
+        )
+        image = thumbs.get(photo_id)
+        if image is None:
+            result.append(TextContent(type="text", text=f"{header}\n(image unavailable)"))
+            continue
+        result.append(TextContent(type="text", text=header))
+        result.append(image)
+    if len(records) > image_limit:
+        result.append(TextContent(
+            type="text",
+            text=(f"Showed images for the first {image_limit} of {len(records)} matches. "
+                  f"Raise image_limit (max {MAX_SEARCH_IMAGES}) or narrow the search for the rest."),
+        ))
+    return result
 
 
 def _live_photo_urls(photo_id: str) -> tuple[str | None, str | None]:
@@ -619,7 +729,19 @@ async def _list_recent_syncs(args):
     return [TextContent(type="text", text=json.dumps(syncs, indent=2))]
 
 
-async def _update_photo(args):
+# Cap on one batch_update_photos call. Each entry is 1-2 Flickr writes, so a
+# larger batch mostly means a longer window in which a partial failure is
+# harder to reason about.
+MAX_BATCH_UPDATE = 50
+
+
+def _apply_photo_update(args: dict) -> list[str]:
+    """Push one photo's title/description/tags to Flickr and the local cache.
+
+    Returns the list of field groups actually written ("title/description",
+    "tags").  Raises whatever the Flickr call raises -- callers decide whether
+    one failure aborts a batch.
+    """
     photo_id = args["id"]
     updated = []
 
@@ -642,15 +764,93 @@ async def _update_photo(args):
         flickr_api._api_post("flickr.photos.setTags", {"photo_id": photo_id, "tags": args["tags"]})
         updated.append("tags")
 
-    # Keep the local cache in step with what was just written to Flickr.
-    with get_db() as conn:
+    # Keep the local cache in step with what was just written to Flickr. The
+    # Flickr writes above already succeeded, so a lock held by a concurrent
+    # sync must not fail the whole call — retry the cache write instead of
+    # surfacing an OperationalError the caller can only answer by retrying
+    # the API writes too. Idempotent: re-running it writes the same values.
+    def _write_cache(conn):
         if "title" in args:
             conn.execute("UPDATE photos SET title=? WHERE id=?", (args["title"], photo_id))
         if "description" in args:
             conn.execute("UPDATE photos SET description=? WHERE id=?", (args["description"], photo_id))
         if "tags" in args:
             conn.execute("UPDATE photos SET tags=? WHERE id=?", (args["tags"], photo_id))
+
+    try:
+        with_db_retry(_write_cache, label=f"update_photo cache write (photo {photo_id})")
+    except Exception as e:
+        # Flickr is the source of truth and it's already updated; a stale local
+        # row is a cache miss the next sync fixes, not a failed update.
+        logging.error(
+            "update_photo: Flickr updated but local cache write failed for photo %s: %s",
+            photo_id, e,
+        )
+        updated.append("local cache NOT updated (next sync will fix)")
+    return updated
+
+
+async def _update_photo(args):
+    photo_id = args["id"]
+    updated = _apply_photo_update(args)
     return [TextContent(type="text", text=f"Updated {', '.join(updated)} for photo {photo_id}.")]
+
+
+async def _batch_update_photos(args):
+    """Apply title/description/tags updates to many photos in one tool call.
+
+    Each photo is written independently: one failure is reported against that
+    photo and the rest of the batch still runs (unless stop_on_error is set),
+    so a partly-applied batch is always legible from the result.
+    """
+    photos = args.get("photos") or []
+    if not isinstance(photos, list) or not photos:
+        return [TextContent(type="text", text="batch_update_photos: 'photos' must be a non-empty array.")]
+    if len(photos) > MAX_BATCH_UPDATE:
+        return [TextContent(
+            type="text",
+            text=f"batch_update_photos: too many photos ({len(photos)}); max {MAX_BATCH_UPDATE} per call.",
+        )]
+    stop_on_error = bool(args.get("stop_on_error", False))
+
+    results, succeeded, failed = [], 0, 0
+    for entry in photos:
+        if not isinstance(entry, dict) or not entry.get("id"):
+            results.append({"id": None, "status": "error", "error": "entry is missing 'id'"})
+            failed += 1
+            if stop_on_error:
+                break
+            continue
+        photo_id = str(entry["id"])
+        fields = {k: v for k, v in entry.items() if k in ("id", "title", "description", "tags")}
+        fields["id"] = photo_id
+        if len(fields) == 1:
+            results.append({"id": photo_id, "status": "skipped",
+                            "error": "no title, description, or tags supplied"})
+            failed += 1
+            if stop_on_error:
+                break
+            continue
+        try:
+            updated = _apply_photo_update(fields)
+            results.append({"id": photo_id, "status": "ok", "updated": updated})
+            succeeded += 1
+        except Exception as e:
+            message = getattr(e, "flickr_message", None) or str(e)
+            logging.warning("batch_update_photos: photo %s failed: %s", photo_id, e)
+            results.append({"id": photo_id, "status": "error", "error": message})
+            failed += 1
+            if stop_on_error:
+                break
+
+    payload = {
+        "requested": len(photos),
+        "succeeded": succeeded,
+        "failed":    failed,
+        "stopped_early": stop_on_error and failed > 0 and len(results) < len(photos),
+        "results":   results,
+    }
+    return [TextContent(type="text", text=json.dumps(payload, indent=2))]
 
 
 # Claude's vision pipeline downscales anything larger than this anyway (long edge,
@@ -659,8 +859,8 @@ async def _update_photo(args):
 MAX_IMAGE_DIMENSION = 1568
 
 
-def _downsample_image(content: bytes, mime: str) -> tuple[bytes, str]:
-    """Resize image bytes to fit within MAX_IMAGE_DIMENSION, re-encoding as JPEG.
+def _downsample_image(content: bytes, mime: str, max_dim: int = MAX_IMAGE_DIMENSION) -> tuple[bytes, str]:
+    """Resize image bytes to fit within *max_dim*, re-encoding as JPEG.
 
     Returns the (possibly unchanged) bytes and mime type. Falls back to the
     original bytes/mime on any decode error rather than failing the tool call.
@@ -671,9 +871,9 @@ def _downsample_image(content: bytes, mime: str) -> tuple[bytes, str]:
     except Exception as e:
         logging.warning("fetch_photo_image: failed to decode image for downsampling (%s): %s", mime, e)
         return content, mime
-    if max(img.size) <= MAX_IMAGE_DIMENSION:
+    if max(img.size) <= max_dim:
         return content, mime
-    img.thumbnail((MAX_IMAGE_DIMENSION, MAX_IMAGE_DIMENSION), Image.LANCZOS)
+    img.thumbnail((max_dim, max_dim), Image.LANCZOS)
     if img.mode not in ("RGB", "L"):
         img = img.convert("RGB")
     buf = io.BytesIO()
@@ -710,6 +910,172 @@ async def _fetch_photo_image(args):
         TextContent(type="text", text=f"Photo ID: {photo_id}\n{photopage}"),
         ImageContent(type="image", data=data, mimeType=mime),
     ]
+
+
+# Thumbnails bundled into a search result are for triage ("does this photo
+# still need a title?"), not close inspection -- a smaller long edge keeps a
+# 10-photo sweep to a sane payload. Callers wanting detail use fetch_photo_image.
+THUMBNAIL_DIMENSION = 640
+
+# Ceiling on how many thumbnails one search_photos call will attach.
+MAX_SEARCH_IMAGES = 25
+
+# Thumbnail fetches are two network round-trips each (getSizes + download),
+# so they run in a small pool rather than serially.
+_THUMBNAIL_WORKERS = 4
+
+# Ceiling on a replacement image fetched from a URL, so a bad link can't pull
+# an unbounded download into memory.
+MAX_REPLACE_BYTES = 64 * 1024 * 1024
+
+
+def _photo_thumbnail(photo_id: str, max_dim: int = THUMBNAIL_DIMENSION) -> ImageContent | None:
+    """Return *photo_id*'s image as a downscaled ImageContent, or None on failure.
+
+    Never raises: a photo whose sizes or bytes can't be fetched is reported by
+    the caller as a text line rather than failing the whole batch.
+    """
+    try:
+        sizes_data = flickr_api._api_get("flickr.photos.getSizes", {"photo_id": photo_id})
+        sizes = sizes_data.get("sizes", {}).get("size", [])
+        if not sizes:
+            logging.warning("thumbnail: no sizes returned for photo %s", photo_id)
+            return None
+        preferred = ("Medium 800", "Medium 640", "Medium", "Small 320", "Large")
+        url = next(
+            (s["source"] for label in preferred for s in sizes if s["label"] == label),
+            sizes[-1]["source"],
+        )
+        resp = requests.get(url, timeout=flickr_api.HTTP_TIMEOUT)
+        resp.raise_for_status()
+        mime = resp.headers.get("content-type", "image/jpeg").split(";")[0]
+        content, mime = _downsample_image(resp.content, mime, max_dim=max_dim)
+        return ImageContent(
+            type="image",
+            data=base64.standard_b64encode(content).decode(),
+            mimeType=mime,
+        )
+    except Exception as e:
+        logging.warning("thumbnail: failed to fetch image for photo %s: %s", photo_id, e)
+        return None
+
+
+def _photo_thumbnails(photo_ids: list[str], max_dim: int = THUMBNAIL_DIMENSION) -> dict[str, ImageContent | None]:
+    """Fetch thumbnails for several photos concurrently, keyed by photo id.
+
+    Each worker runs under a copy of the calling context so ``_current_user``
+    (and therefore per-user credentials and DB path) still resolves inside the
+    thread pool.
+    """
+    if not photo_ids:
+        return {}
+    results: dict[str, ImageContent | None] = {}
+    workers = min(len(photo_ids), _THUMBNAIL_WORKERS)
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = {}
+        for pid in photo_ids:
+            ctx = contextvars.copy_context()
+            futures[pool.submit(ctx.run, _photo_thumbnail, pid, max_dim)] = pid
+        for future in futures:
+            pid = futures[future]
+            try:
+                results[pid] = future.result()
+            except Exception as e:
+                logging.warning("thumbnail: worker failed for photo %s: %s", pid, e)
+                results[pid] = None
+    return results
+
+
+
+def _load_replacement_bytes(args: dict) -> tuple[bytes, str]:
+    """Resolve replace_photo's image source to (bytes, filename).
+
+    Accepts an ``image_url`` (the usual case — an enhanced/upscaled render
+    handed back by another service) or a local ``file_path``.  Raises
+    ``ValueError`` with a caller-facing message on bad input.
+    """
+    image_url = (args.get("image_url") or "").strip()
+    file_path = (args.get("file_path") or "").strip()
+    if bool(image_url) == bool(file_path):
+        raise ValueError("Supply exactly one of image_url or file_path.")
+
+    if file_path:
+        if not os.path.isfile(file_path):
+            raise ValueError(f"File not found: {file_path}")
+        size = os.path.getsize(file_path)
+        if size > MAX_REPLACE_BYTES:
+            raise ValueError(f"File is {size} bytes; the limit is {MAX_REPLACE_BYTES}.")
+        with open(file_path, "rb") as f:
+            return f.read(), os.path.basename(file_path)
+
+    if not image_url.lower().startswith(("http://", "https://")):
+        raise ValueError("image_url must be an http(s) URL.")
+    with requests.get(image_url, timeout=max(flickr_api.HTTP_TIMEOUT, 120), stream=True) as resp:
+        resp.raise_for_status()
+        declared = int(resp.headers.get("content-length") or 0)
+        if declared > MAX_REPLACE_BYTES:
+            raise ValueError(f"Image at image_url is {declared} bytes; the limit is {MAX_REPLACE_BYTES}.")
+        # Streamed and counted rather than resp.content, so a server that lies
+        # about (or omits) content-length still can't pull an unbounded body in.
+        chunks, total = [], 0
+        for chunk in resp.iter_content(chunk_size=256 * 1024):
+            total += len(chunk)
+            if total > MAX_REPLACE_BYTES:
+                raise ValueError(f"Image at image_url exceeds the {MAX_REPLACE_BYTES}-byte limit.")
+            chunks.append(chunk)
+    filename = os.path.basename(urllib.parse.urlparse(image_url).path) or "photo.jpg"
+    return b"".join(chunks), filename
+
+
+async def _replace_photo(args):
+    photo_id = str(args["photo_id"])
+    try:
+        content, filename = _load_replacement_bytes(args)
+    except ValueError as e:
+        return [TextContent(type="text", text=f"replace_photo: {e}")]
+    except requests.exceptions.RequestException as e:
+        logging.warning("replace_photo: failed to fetch replacement image for %s: %s", photo_id, e)
+        return [TextContent(type="text", text=f"replace_photo: could not download image_url ({e}).")]
+
+    try:
+        returned_id = flickr_api._api_replace(photo_id, content, filename)
+    except flickr_api.FlickrAPIError as e:
+        logging.warning("replace_photo: Flickr rejected replace for photo %s: %s", photo_id, e.flickr_message)
+        return [TextContent(type="text", text=f"replace_photo: Flickr rejected the replace — {e.flickr_message}")]
+    except RuntimeError as e:
+        logging.error("replace_photo: replace failed for photo %s: %s", photo_id, e)
+        return [TextContent(type="text", text=f"replace_photo: {e}")]
+
+    # A replace rotates the URL secret, so the synced url_original/url_medium
+    # now 404 for anything fetching them directly. Refresh both from Flickr;
+    # the cache write is retried because a concurrent sync can hold the lock.
+    url_original, url_medium = _live_photo_urls(photo_id)
+    refreshed = False
+    if url_original or url_medium:
+        def _write_urls(conn):
+            if url_original:
+                conn.execute("UPDATE photos SET url_original=? WHERE id=?", (url_original, photo_id))
+            if url_medium:
+                conn.execute("UPDATE photos SET url_medium=? WHERE id=?", (url_medium, photo_id))
+        try:
+            with_db_retry(_write_urls, label=f"replace_photo url refresh (photo {photo_id})")
+            refreshed = True
+        except Exception as e:
+            logging.error("replace_photo: could not refresh cached URLs for photo %s: %s", photo_id, e)
+
+    return [TextContent(type="text", text=json.dumps({
+        "photo_id":     returned_id,
+        "status":       "replaced",
+        "bytes_sent":   len(content),
+        "source":       args.get("image_url") or args.get("file_path"),
+        "url_original": url_original,
+        "urls_refreshed_locally": refreshed,
+        "note": (
+            "Title, description, tags, comments, faves, and group/album "
+            "memberships are unchanged — only the image was replaced. Any "
+            "previously handed-out direct image URL for this photo is now stale."
+        ),
+    }, indent=2))]
 
 
 async def _get_photo_comments(args):
@@ -931,6 +1297,40 @@ async def _get_person_info(args):
     except RuntimeError:
         own_nsid = ""
 
+    # flickr.people.getInfo's friend/family attributes are not trustworthy —
+    # it reports both as 1 for essentially every contact, which made contact
+    # cleanup impossible to drive from this tool. flickr.contacts.getList
+    # (what sync_contacts.py stores in the contacts table) returns the real
+    # per-contact flags, so prefer the synced values and only fall back to
+    # the API's when contacts have never been synced — saying so in the
+    # payload either way.
+    is_friend, is_family, flags_source = None, None, ""
+    try:
+        with get_db() as conn:
+            contacts_synced = conn.execute(
+                "SELECT COUNT(*) FROM sync_log WHERE type='contacts'"
+            ).fetchone()[0] > 0
+            row = conn.execute(
+                "SELECT is_friend, is_family FROM contacts WHERE id = ?", (nsid,)
+            ).fetchone()
+        if row is not None:
+            is_friend, is_family = bool(row["is_friend"]), bool(row["is_family"])
+            flags_source = "local contacts cache (flickr.contacts.getList)"
+        elif contacts_synced:
+            # Synced, and they aren't in it — you don't follow them, so
+            # neither flag can be set.
+            is_friend = is_family = False
+            flags_source = "local contacts cache (not a contact)"
+    except Exception as e:
+        logging.warning("get_person_info: contacts lookup failed for %s: %s", nsid, e)
+    if flags_source == "":
+        is_friend, is_family = bool(p.get("friend")), bool(p.get("family"))
+        flags_source = (
+            "flickr.people.getInfo — UNRELIABLE (this endpoint reports friend "
+            "and family as true for nearly every contact); run a contacts sync "
+            "for accurate flags"
+        )
+
     # Flickr's API never exposes a user's follower count (for anyone,
     # including yourself) — only how many people *they* follow, and only
     # when their contact list is public.
@@ -955,8 +1355,9 @@ async def _get_person_info(args):
         "ispro":            p.get("ispro", 0),
         "you_follow":       bool(p.get("contact")),
         "follows_you":      bool(p.get("revcontact")),
-        "is_friend":        bool(p.get("friend")),
-        "is_family":        bool(p.get("family")),
+        "is_friend":        is_friend,
+        "is_family":        is_family,
+        "flags_source":     flags_source,
         "following_count":  following_count,
         "followers_count":  "unavailable — Flickr's API does not expose follower counts for any account",
         "last_upload":      last_upload,
@@ -1245,6 +1646,8 @@ HANDLERS = {
     "get_summary":          lambda _: _get_summary(),
     "list_recent_syncs":    _list_recent_syncs,
     "update_photo":         _update_photo,
+    "batch_update_photos":  _batch_update_photos,
+    "replace_photo":        _replace_photo,
     "fetch_photo_image":    _fetch_photo_image,
     "get_photo_comments":   _get_photo_comments,
     "add_comment":          _add_comment,

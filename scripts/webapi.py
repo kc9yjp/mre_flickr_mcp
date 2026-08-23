@@ -462,6 +462,43 @@ async def api_album_photos(request: Request):
     })
 
 
+def _contact_flags(user: dict, nsid: str, person: dict) -> dict:
+    """Return ``{"is_friend", "is_family", "flags_source"}`` for *nsid*.
+
+    ``flickr.people.getInfo`` reports friend and family as true for nearly
+    every contact, so the synced ``contacts`` table (populated from
+    ``flickr.contacts.getList``, which does return the real flags) is the
+    source of truth.  Falls back to the API's values, clearly labelled, only
+    when contacts have never been synced for this user.
+    """
+    try:
+        with get_db_for_user(user["username"], user["nsid"]) as conn:
+            contacts_synced = conn.execute(
+                "SELECT COUNT(*) FROM sync_log WHERE type='contacts'"
+            ).fetchone()[0] > 0
+            row = conn.execute(
+                "SELECT is_friend, is_family FROM contacts WHERE id = ?", (nsid,)
+            ).fetchone()
+        if row is not None:
+            return {
+                "is_friend":    bool(row["is_friend"]),
+                "is_family":    bool(row["is_family"]),
+                "flags_source": "contacts_cache",
+            }
+        if contacts_synced:
+            return {"is_friend": False, "is_family": False, "flags_source": "contacts_cache"}
+    except Exception as e:
+        logging.warning(
+            "user_lookup: contacts flag lookup failed for %s (%s): %s",
+            nsid, user["nsid"], e,
+        )
+    return {
+        "is_friend":    bool(person.get("friend")),
+        "is_family":    bool(person.get("family")),
+        "flags_source": "people_getinfo_unreliable",
+    }
+
+
 async def api_user_lookup(request: Request):
     """GET /api/users/lookup?q=<username|nsid|profile-or-photo-URL> —
     resolve any Flickr user reference to a full profile, for the Photo
@@ -511,8 +548,10 @@ async def api_user_lookup(request: Request):
         "is_own":      resolved_nsid == user["nsid"],
         "you_follow":  bool(p.get("contact")),
         "follows_you": bool(p.get("revcontact")),
-        "is_friend":   bool(p.get("friend")),
-        "is_family":   bool(p.get("family")),
+        # people.getInfo's friend/family attributes come back set for nearly
+        # every contact, so read the real flags from the synced contacts table
+        # (flickr.contacts.getList) — see _contact_flags.
+        **_contact_flags(user, resolved_nsid, p),
     })
 
 

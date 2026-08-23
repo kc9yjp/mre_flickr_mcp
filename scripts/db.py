@@ -21,6 +21,7 @@ import os
 import pathlib
 import re
 import sqlite3
+import time
 from contextlib import contextmanager
 
 # ---------------------------------------------------------------------------
@@ -197,15 +198,38 @@ any changes to tool handler call sites.
 # Connection helpers
 # ---------------------------------------------------------------------------
 
+# How long sqlite waits for a lock held by another connection before raising
+# OperationalError("database is locked").  A sync script rewriting the photos
+# table can hold the write lock well past sqlite3.connect's 5s default, which
+# surfaced as spurious update_photo failures -- so the wait is longer here and
+# backed by the retry helper below.
+DB_TIMEOUT = float(os.environ.get("FLICKR_DB_TIMEOUT", 30))
+
+# Retry budget for a write blocked by another writer (see with_db_retry).
+DB_MAX_RETRIES = int(os.environ.get("FLICKR_DB_MAX_RETRIES", 4))
+DB_RETRY_BASE_DELAY = float(os.environ.get("FLICKR_DB_RETRY_BASE_DELAY", 0.5))
+
+
 def _connect(path):
     """Shared connection factory for all MCP tool DB access.
 
-    sqlite3.connect's default timeout=5.0 already installs a 5000ms busy
-    handler, so no explicit busy_timeout PRAGMA is needed.
+    ``timeout`` installs sqlite's busy handler, so a connection blocked by
+    another writer waits that long before raising rather than failing
+    immediately.
     """
-    conn = sqlite3.connect(path)
+    conn = sqlite3.connect(path, timeout=DB_TIMEOUT)
     conn.row_factory = sqlite3.Row
     return conn
+
+
+def _is_locked_error(exc: Exception) -> bool:
+    """True if *exc* is a sqlite lock-contention error worth retrying.
+
+    Only "database is locked" / "database table is locked" are transient.
+    Every other OperationalError (missing table, bad SQL, disk I/O error) is
+    a permanent failure that retrying would only delay.
+    """
+    return isinstance(exc, sqlite3.OperationalError) and "is locked" in str(exc).lower()
 
 
 def like_pattern(term: str) -> str:
@@ -268,6 +292,34 @@ def get_db():
         raise
     finally:
         conn.close()
+
+
+def with_db_retry(fn, *, label: str = "db write", attempts: int | None = None):
+    """Run ``fn(conn)`` inside ``get_db()``, retrying on sqlite lock contention.
+
+    Each attempt gets a fresh connection and transaction, so a rolled-back
+    attempt leaves nothing behind.  Waits ``DB_RETRY_BASE_DELAY`` doubled per
+    attempt (0.5s, 1s, 2s, ...) between tries, then re-raises the last error.
+
+    ``fn`` must be idempotent: it can run more than once.  Use it for the
+    local-cache half of a tool handler only -- never wrap a Flickr API write
+    in it, or a retry would re-send the write.
+    """
+    attempts = attempts or DB_MAX_RETRIES
+    for attempt in range(attempts):
+        try:
+            with get_db() as conn:
+                return fn(conn)
+        except sqlite3.OperationalError as e:
+            if not _is_locked_error(e) or attempt == attempts - 1:
+                logging.error("%s: giving up after %d attempt(s): %s", label, attempt + 1, e)
+                raise
+            wait = DB_RETRY_BASE_DELAY * (2 ** attempt)
+            logging.warning(
+                "%s: database locked (attempt %d/%d), retrying in %.1fs: %s",
+                label, attempt + 1, attempts, wait, e,
+            )
+            time.sleep(wait)
 
 
 @contextmanager

@@ -1,6 +1,6 @@
 # MCP Tools
 
-Full catalog of the 69 MCP tools exposed by this server, grouped by the
+Full catalog of the 71 MCP tools exposed by this server, grouped by the
 module that defines them under `scripts/tools/`. See
 [ARCHITECTURE.md](ARCHITECTURE.md#mcp-tool-layer) for how these are
 aggregated, dispatched, and threaded.
@@ -22,15 +22,17 @@ confirmation UI provides.
 
 ---
 
-## Photos (`tools/photos.py`) — 33 tools
+## Photos (`tools/photos.py`) — 35 tools
 
 | Tool | Write | Parameters | Description |
 |---|:---:|---|---|
-| `search_photos` | | *(all optional: `query`, `tag`, `date_from`, `date_to`, `sort`, `limit`)* | Search and filter the photo collection. Supports keyword search on title, tag filtering, date range, and sorting by date or popularity (views). |
+| `search_photos` | | *(all optional: `query`, `tags`, `date_from`, `date_to`, `sort_by`, `order`, `limit`, `incomplete`, `min_comments`, `is_public`, `include_images`, `image_limit`)* | Search and filter the photo collection. Supports keyword search on title, tag filtering, date range, and sorting by date or popularity (views). `include_images=true` attaches each match's thumbnail to the same response (`image_limit`, default 10, max 25), so a metadata sweep — e.g. `incomplete=true` — needs no follow-up `fetch_photo_image` per photo. |
 | `get_photo` | | `id`* | Return full metadata for a single photo by its Flickr ID. |
 | `get_summary` | | | Total count, total views, date range, last sync time, and top 20 tags by frequency. |
 | `list_recent_syncs` | | | Show sync history — when photo data was last fetched from Flickr. |
 | `update_photo` | ✍️ | `id`*, `title`*, `description`*, `tags`* | Update title/description/tags on Flickr and locally. **All four fields are required on every call** — pass the unchanged value for any field not being updated. |
+| `batch_update_photos` | ✍️ | `photos`* (array of `{id`*, `title`, `description`, `tags}`), `stop_on_error` | Apply title/description/tags updates to up to 50 photos in one call — the batch form of `update_photo`. Each photo is written independently and reported with its own status, so one failure doesn't abandon the rest of the batch (unless `stop_on_error` is set). |
+| `replace_photo` | ✍️ | `photo_id`*, one of `image_url` / `file_path` | Replace the image behind an existing photo — for pushing back an edited or upscaled version — keeping its ID, metadata, comments, faves, stats, and group/album memberships. Rotates the photo's URL secret (older direct URLs stop working); the local cache's URLs are refreshed automatically. Counts against a free account's upload allowance. |
 | `fetch_photo_image` | | `id`* | Download a photo and return it as an image for visual inspection (subject to the vision-gate setting in the Workbench chat). |
 | `get_photo_comments` | | `photo_id`* | Fetch all comments on a photo. |
 | `add_comment` | ✍️ | `photo_id`*, `comment_text`* | Post a comment on a photo. |
@@ -47,7 +49,7 @@ confirmation UI provides.
 | `set_dates` | ✍️ | `id`*, `date_taken`*, `granularity` | Correct the date-taken timestamp (e.g. camera clock errors). |
 | `get_exif` | | `photo_id`* | Camera, lens, exposure settings, etc. |
 | `get_upload_status` | | | Upload bandwidth and storage status for the current month. |
-| `get_person_info` | | `user_id`* (NSID or username) | Public profile info for any Flickr user. |
+| `get_person_info` | | `user_id`* (NSID or username) | Public profile info for any Flickr user. `is_friend`/`is_family` are read from the synced contacts cache rather than `flickr.people.getInfo`, which reports both as true for nearly every contact; `flags_source` says which was used. |
 | `get_user_photos` | | `user_id`*, `limit` (default 30, max 100) | List any Flickr user's public photostream, live from the API — most recent uploads first. Useful for previewing someone before deciding to follow them. |
 | `get_photostream_stats` | | | Total view counts across all photos, sets, and galleries for a given date. |
 | `get_popular_photos` | | | Most popular photos sorted by favorites, comments, or views. |
@@ -79,14 +81,14 @@ confirmation UI provides.
 |---|:---:|---|---|
 | `find_groups` | | *(optional keyword)* | Search your joined groups by name, description, or AI-generated summary/keywords (see `sync` with `type='groups'`). Returns a markdown listing, one section per group headed by its id. When the optional semantic search is enabled (`WORKBENCH_VECTOR_SEARCH_ENABLED`), any result slots left over after the keyword matches are filled with thematically similar groups, appended under a "Semantically similar groups" heading — `limit` caps the two combined. |
 | `set_group_note` | ✍️ | `group_id`*, `note`* | Personal note about a group, incorporated into its AI summary the next time groups are synced. |
-| `add_to_group` | ✍️ | `photo_id`*, `group_ids`*, `retry_at`, `queue`, `days_offset` | Add a photo to one or more group pools. If the daily posting limit is hit for a group, that group's add is queued for automatic retry while the rest of the list proceeds normally; `queue=true` schedules a future add deliberately (drip-posting); `retry_at` accepts named times (`morning`, `lunchtime`, `afternoon`, `evening`, `night`, `midnight`) or `HH:MM`, resolved in Chicago time; `days_offset` shifts the schedule by N days. |
+| `add_to_group` | ✍️ | `photo_id`*, `group_ids`*, `retry_at`, `queue`, `days_offset`, `skip_existing` | Add a photo to one or more group pools. Groups the photo is already in are detected and skipped (`skip_existing`, default true), so no `get_photo_contexts` call is needed up front just to avoid duplicate submissions. If the daily posting limit is hit for a group, that group's add is queued for automatic retry while the rest of the list proceeds normally; `queue=true` schedules a future add deliberately (drip-posting); `retry_at` accepts named times (`morning`, `lunchtime`, `afternoon`, `evening`, `night`, `midnight`) or `HH:MM`, resolved in Chicago time; `days_offset` shifts the schedule by N days. |
 | `remove_from_group` | ✍️ | `photo_id`*, `group_id`* | Remove a photo from a group pool. |
 | `join_group` | ✍️ | `group_id`* | Join a public group. |
 | `leave_group` | ✍️ | `group_id`* | Leave a group. |
 | `get_group_photos` | | `group_id`*, `limit` (default 50), `page` (default 1) | List photos in a group pool. |
 | `search_all_groups` | | `query`*, `limit` (default 20) | Search all Flickr groups, not just ones you've joined. |
 | `get_group_info` | | `group_id`* | Live lookup for any group by ID — name, description, rules, member/pool counts, and whether you've joined it. Use for groups outside your own joined-groups list, e.g. one a photo you don't own belongs to. |
-| `get_photo_contexts` | | `photo_id`*, `force_api` | All group pools and albums a photo currently belongs to — check before `add_to_group` to skip duplicates. |
+| `get_photo_contexts` | | `photo_id`*, `force_api` | All group pools and albums a photo currently belongs to. `add_to_group` now skips already-joined pools itself, so this is for inspection rather than a required pre-check. |
 | `get_group_stats` | | | How many of your photos are in each joined group, ranked by count. Requires a groups sync. |
 | `get_threshold_groups` | | `metric`* (`faves` / `views`), `order` (`asc` default / `desc`) | Joined groups that require a minimum fave or view count to post, sorted by that threshold. |
 | `get_photo_group_count` | | | Your photos ranked by how many groups they belong to — finds under/over-distributed photos. Requires a groups sync. |

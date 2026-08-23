@@ -87,6 +87,10 @@ Logs go to stderr and are visible via `docker compose logs -f flickr-mcp`.
 - `SESSION_COOKIE_SECURE` — set to `true` when running behind something that terminates TLS for the browser (a reverse proxy, or the tailscale sidecar in `docker-compose.yml`), so the session cookie is sent `Secure`. Defaults to `false` to match the documented default of plain `http://localhost:8000`.
 - `TS_SERVE_MODE` — controls the tailscale sidecar's exposure: `serve` (default) is tailnet-private; `funnel` also exposes the app to the public internet over the same hostname/TLS cert. `funnel` is required for the Desktop/claude.ai "Connectors" OAuth flow (see `scripts/oauth2.py`) — claude.ai's own backend brokers that handshake and calls your server's `.well-known`/`/oauth/*` endpoints itself, from outside your tailnet, which a tailnet-private `serve` can never satisfy. It exposes the *whole* app, not just the MCP/OAuth endpoints — `tailscale/serve-config.json` proxies `/` wholesale — and separately requires granting this node the `funnel` attribute in your tailnet's admin console (off by default even with the config flag set). See `tailscale/funnel-config.json`.
 - `CLOUDFLARE_TUNNEL_TOKEN` — required by the `cloudflared` sidecar (`docker-compose.yml`), an alternative to the tailscale funnel above for public exposure, fronted by Cloudflare's edge (WAF, DDoS protection, traffic analytics). Get a token from the Cloudflare Zero Trust dashboard (Networks → Tunnels → Create a tunnel → Docker). The container needs a token to start — with none set it fails and restart-loops — so start it explicitly (`docker compose up -d cloudflared`) rather than folding it into your regular `up -d`. It always forwards to `http://localhost:8000` (the whole app, sharing `flickr-mcp`'s network namespace); which paths are actually publicly reachable is controlled entirely by the tunnel's Public Hostname rules in the Cloudflare dashboard, not by anything in this repo — scope those to `/mcp`, `/sse`, `/messages` to expose only the MCP endpoints.
+- `FLICKR_DB_TIMEOUT` / `FLICKR_DB_MAX_RETRIES` / `FLICKR_DB_RETRY_BASE_DELAY` —
+  sqlite lock handling (defaults 30s, 4 attempts, 0.5s base backoff). A sync
+  can hold the write lock for a while; these control how long a tool's cache
+  write waits and how often `db.with_db_retry()` retries before giving up.
 - `WORKBENCH_VECTOR_SEARCH_ENABLED` — optional semantic group search, `false` by default. When off, no vector store, no embedding calls, and `chromadb` isn't even imported. See "Group semantic search" below, and `VECTOR_SEARCH.md` for setup plus the companion `WORKBENCH_EMBEDDING_*` / `WORKBENCH_CHROMA_*` variables.
 
 ## Multi-User Support
@@ -138,7 +142,7 @@ keeper_list       — photo_id, note (photos flagged as worth keeping despite we
 
 ## MCP Tools
 
-69 tools across `scripts/tools/{photos,albums,groups,contacts,galleries,sync}.py`.
+71 tools across `scripts/tools/{photos,albums,groups,contacts,galleries,sync}.py`.
 See **[TOOLS.md](TOOLS.md)** for the full catalog with parameters — kept
 there rather than duplicated here so there's one place to update when tools
 change. A few worth knowing up front:
@@ -150,9 +154,36 @@ change. A few worth knowing up front:
   favoring recall (see "Key Implementation Details" below); `find_groups`
   also gains an optional semantic path when `WORKBENCH_VECTOR_SEARCH_ENABLED=true`.
 - `sync` — trigger an incremental (or full/backfill) sync from within MCP.
+- `batch_update_photos` — the batch form of `update_photo` (up to 50 photos per
+  call, each written and reported independently), for applying a whole reviewed
+  set at once instead of one call per photo.
+- `replace_photo` — swap the image behind an existing photo (from an
+  `image_url` or a server `file_path`) while keeping its ID, metadata,
+  comments, faves, and memberships. Use it to push back an edited or upscaled
+  version rather than uploading a second copy.
+- `search_photos(include_images=true)` — returns each match's thumbnail in the
+  same response, so a metadata sweep (`incomplete=true`) doesn't need a
+  `fetch_photo_image` call per photo.
+- `add_to_group` — skips group pools the photo is already in by default
+  (`skip_existing`), so it no longer needs a `get_photo_contexts` call chained
+  in front of it just to avoid duplicate submissions.
 
 ## Key Implementation Details
 
+- **Local-cache writes that follow a Flickr write must not fail the call.**
+  A sync holding sqlite's write lock used to surface as an `OperationalError`
+  from `update_photo` *after* Flickr had already been updated, leaving the
+  caller to retry by hand. Wrap the cache half in `db.with_db_retry()` (fresh
+  connection + exponential backoff, retried only on lock contention — see
+  `_apply_photo_update` in `scripts/tools/photos.py`), and if it still fails,
+  log it and say so in the result rather than raising: Flickr is the source of
+  truth and the next sync repairs the row.
+- **`flickr.people.getInfo`'s `friend`/`family` flags are not trustworthy** —
+  it reports both as set for nearly every contact. The real per-contact flags
+  come from `flickr.contacts.getList`, which `sync_contacts.py` stores in the
+  `contacts` table; read them from there and only fall back to the API's
+  values (clearly labelled) when contacts have never been synced. See
+  `_get_person_info` in `tools/photos.py` and `_contact_flags` in `webapi.py`.
 - **Log liberally to the server log.** Any handler that catches an exception or hits an error path (failed API call, bad connection, save failure, etc.) should `logging.warning`/`logging.error` it with enough context (user nsid, connection/resource id, the exception) to debug from `docker compose logs -f flickr-mcp` alone — don't let errors surface only in a JSONResponse to the client. Follow the existing style, e.g. `logging.warning("llm_models: failed for connection %s (%s): %s", connection_id, user["nsid"], e)` in `routes.py`.
 - OAuth 1.0a signing is done manually (HMAC-SHA1) via `_sign()` — no third-party OAuth library
 - `_api_get()` / `_api_post()` handle OAuth signing for all Flickr API calls
