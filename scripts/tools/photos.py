@@ -5,7 +5,7 @@ import io
 import json
 import logging
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 
 import requests
 from mcp.types import ImageContent, TextContent, Tool
@@ -267,15 +267,20 @@ TOOLS = [
     ),
     Tool(
         name="set_dates",
-        description="Set the date taken for a photo (corrects wrong timestamps from camera clock errors).",
+        description=(
+            "Set the date taken and/or date posted for a photo (e.g. correct camera clock errors, "
+            "or move a photo's position in the photostream). Each date is optional and only the "
+            "ones given are changed, but at least one is required."
+        ),
         inputSchema={
             "type": "object",
             "properties": {
                 "id":          {"type": "string", "description": "Flickr photo ID"},
                 "date_taken":  {"type": "string", "description": "Date taken, YYYY-MM-DD HH:MM:SS"},
-                "granularity": {"type": "string", "enum": ["exact", "month", "year"], "description": "Precision of date_taken (default: exact)"},
+                "granularity": {"type": "string", "enum": ["exact", "month", "year"], "description": "Precision of date_taken (default: exact); ignored without date_taken"},
+                "date_posted": {"type": "integer", "description": "Date posted (uploaded), as a Unix timestamp. Flickr rejects dates in the future or before the account joined."},
             },
-            "required": ["id", "date_taken"],
+            "required": ["id"],
         },
     ),
     Tool(
@@ -871,16 +876,37 @@ async def _set_content_type(args):
 
 
 async def _set_dates(args):
-    granularity_map = {"exact": "0", "month": "4", "year": "6"}
-    granularity = granularity_map.get(args.get("granularity", "exact"), "0")
-    flickr_api._api_post("flickr.photos.setDates", {
-        "photo_id":               args["id"],
-        "date_taken":             args["date_taken"],
-        "date_taken_granularity": granularity,
-    })
+    date_taken = args.get("date_taken")
+    date_posted = args.get("date_posted")
+    if not date_taken and date_posted in (None, ""):
+        return [TextContent(type="text", text="Error: provide date_taken and/or date_posted.")]
+    if date_posted not in (None, ""):
+        try:
+            date_posted = int(date_posted)
+        except (TypeError, ValueError):
+            return [TextContent(type="text", text=f"Error: date_posted must be a Unix timestamp, got {date_posted!r}.")]
+    else:
+        date_posted = None
+
+    params = {"photo_id": args["id"]}
+    if date_taken:
+        granularity_map = {"exact": "0", "month": "4", "year": "6"}
+        params["date_taken"] = date_taken
+        params["date_taken_granularity"] = granularity_map.get(args.get("granularity", "exact"), "0")
+    if date_posted is not None:
+        params["date_posted"] = str(date_posted)
+    flickr_api._api_post("flickr.photos.setDates", params)
+
+    changes = []
     with get_db() as conn:
-        conn.execute("UPDATE photos SET date_taken=? WHERE id=?", (args["date_taken"], args["id"]))
-    return [TextContent(type="text", text=f"Date taken for photo {args['id']} set to {args['date_taken']}.")]
+        if date_taken:
+            conn.execute("UPDATE photos SET date_taken=? WHERE id=?", (date_taken, args["id"]))
+            changes.append(f"date taken set to {date_taken}")
+        if date_posted is not None:
+            conn.execute("UPDATE photos SET date_uploaded=? WHERE id=?", (date_posted, args["id"]))
+            posted_str = datetime.fromtimestamp(date_posted, timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+            changes.append(f"date posted set to {date_posted} ({posted_str})")
+    return [TextContent(type="text", text=f"Photo {args['id']}: " + "; ".join(changes) + ".")]
 
 
 async def _get_exif(args):

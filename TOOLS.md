@@ -44,7 +44,7 @@ confirmation UI provides.
 | `remove_location` | ✍️ | `id`* | Remove geolocation. |
 | `set_safety_level` | ✍️ | `id`*, `safety_level`* | `safe` / `moderate` / `restricted`. |
 | `set_content_type` | ✍️ | `id`*, `content_type`* | `photo` / `screenshot` / `other`. |
-| `set_dates` | ✍️ | `id`*, `date_taken`*, `granularity` | Correct the date-taken timestamp (e.g. camera clock errors). |
+| `set_dates` | ✍️ | `id`*, `date_taken`, `granularity`, `date_posted` | Set the date taken (e.g. camera clock errors) and/or date posted (Unix timestamp). Only the dates given are changed; at least one is required. |
 | `get_exif` | | `photo_id`* | Camera, lens, exposure settings, etc. |
 | `get_upload_status` | | | Upload bandwidth and storage status for the current month. |
 | `get_person_info` | | `user_id`* (NSID or username) | Public profile info for any Flickr user. |

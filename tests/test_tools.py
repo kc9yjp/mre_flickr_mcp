@@ -735,6 +735,63 @@ class TestSetVisibility:
 
 
 # ---------------------------------------------------------------------------
+# set_dates
+# ---------------------------------------------------------------------------
+
+class TestSetDates:
+    @pytest.mark.asyncio
+    async def test_date_taken_only_leaves_posted_alone(self, db, api_post):
+        import mcp_tools
+        api_post.return_value = {"stat": "ok"}
+        before = db.execute("SELECT date_uploaded FROM photos WHERE id='photo1'").fetchone()["date_uploaded"]
+        await mcp_tools._set_dates({"id": "photo1", "date_taken": "2020-01-02 03:04:05"})
+        params = api_post.call_args[0][1]
+        assert params["date_taken"] == "2020-01-02 03:04:05"
+        assert params["date_taken_granularity"] == "0"
+        assert "date_posted" not in params
+        row = db.execute("SELECT date_taken, date_uploaded FROM photos WHERE id='photo1'").fetchone()
+        assert row["date_taken"] == "2020-01-02 03:04:05"
+        assert row["date_uploaded"] == before
+
+    @pytest.mark.asyncio
+    async def test_date_posted_only_leaves_taken_alone(self, db, api_post):
+        import mcp_tools
+        api_post.return_value = {"stat": "ok"}
+        before = db.execute("SELECT date_taken FROM photos WHERE id='photo1'").fetchone()["date_taken"]
+        result = await mcp_tools._set_dates({"id": "photo1", "date_posted": 1600000000})
+        params = api_post.call_args[0][1]
+        assert params == {"photo_id": "photo1", "date_posted": "1600000000"}
+        row = db.execute("SELECT date_taken, date_uploaded FROM photos WHERE id='photo1'").fetchone()
+        assert row["date_uploaded"] == 1600000000
+        assert row["date_taken"] == before
+        assert "2020-09-13" in _text(result)
+
+    @pytest.mark.asyncio
+    async def test_both_dates(self, db, api_post):
+        import mcp_tools
+        api_post.return_value = {"stat": "ok"}
+        await mcp_tools._set_dates({"id": "photo1", "date_taken": "2020-01-02", "granularity": "month",
+                                    "date_posted": "1600000000"})
+        params = api_post.call_args[0][1]
+        assert params["date_taken_granularity"] == "4"
+        assert params["date_posted"] == "1600000000"
+
+    @pytest.mark.asyncio
+    async def test_requires_a_date(self, db, api_post):
+        import mcp_tools
+        result = await mcp_tools._set_dates({"id": "photo1"})
+        assert "Error" in _text(result)
+        api_post.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_rejects_non_timestamp(self, db, api_post):
+        import mcp_tools
+        result = await mcp_tools._set_dates({"id": "photo1", "date_posted": "yesterday"})
+        assert "Error" in _text(result)
+        api_post.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
 # set_location / remove_location
 # ---------------------------------------------------------------------------
 
