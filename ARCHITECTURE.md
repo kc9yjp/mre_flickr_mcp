@@ -218,6 +218,9 @@ drip-posting). Either way the attempt lands in this table with a
 called from the background loop, from `get_group_queue`, and from the
 Workbench Group Queue page's "Post now" / "Post due now" actions, and posts
 anything whose retry window has passed.
+Moderated groups answer with code 6/7 ("added to / already in the pending
+queue"); that's a successful submission awaiting admin approval, so it's
+recorded as `success` with an explanatory note rather than as an error.
 
 **Scheduled-publish queue** (`pending_publishes`): `schedule_publish` queues a
 photo to go public at a future time. It accepts the group queue's

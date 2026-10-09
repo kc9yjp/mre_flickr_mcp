@@ -105,6 +105,14 @@ _MIGRATIONS = [
         queued_at     INTEGER NOT NULL,
         completed_at  INTEGER
     )""",
+    # Moderated groups' "added to the pending queue" responses used to be
+    # recorded as failures; they're successful submissions awaiting admin
+    # approval (see tools/groups.py's _GROUP_PENDING_CODES). Only the message
+    # text was stored, so match on it. Note text must match GROUP_PENDING_NOTE.
+    """UPDATE pending_group_adds
+       SET status = 'success',
+           error_msg = 'Awaiting approval by the group''s admins (in the pool''s pending queue).'
+       WHERE status = 'error' AND error_msg LIKE '%pending queue%'""",
 ]
 
 SCHEMA_VERSION = len(_MIGRATIONS)

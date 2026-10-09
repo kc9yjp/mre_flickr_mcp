@@ -1410,3 +1410,65 @@ class TestGroupQueueWeb:
         assert conn.execute("SELECT COUNT(*) FROM pending_group_adds").fetchone()[0] == 0
         assert web_action(conn, {"action": "group_explode"})[1] == 400
         assert web_action(conn, {"action": "nonsense"})[1] == 400
+
+
+class TestGroupPendingApproval:
+    def _conn(self):
+        conn = make_db()
+        now = int(time.time())
+        conn.execute(
+            "INSERT INTO pending_group_adds (photo_id, group_id, status, retry_after, queued_at) "
+            "VALUES ('photo1', 'group1@N00', 'waiting', ?, ?)", (now - 60, now - 3600),
+        )
+        conn.commit()
+        return conn
+
+    @pytest.mark.parametrize("code", [6, 7])
+    def test_flush_records_pending_queue_as_success(self, code):
+        from flickr_api import FlickrAPIError
+        from tools.groups import GROUP_PENDING_NOTE, _flush_group_queue
+        conn = self._conn()
+        msg = "Your Photo has been added to the Pending Queue for this Pool"
+        with patch("flickr_api._api_post", side_effect=FlickrAPIError(code, msg)):
+            flushed = _flush_group_queue(conn)
+        assert flushed[0]["result"] == "pending_approval"
+        row = conn.execute("SELECT status, error_msg FROM pending_group_adds").fetchone()
+        assert row["status"] == "success" and row["error_msg"] == GROUP_PENDING_NOTE
+        # Not in the pool yet, so not recorded as a membership.
+        assert conn.execute("SELECT COUNT(*) FROM photo_groups").fetchone()[0] == 0
+
+    @pytest.mark.asyncio
+    async def test_immediate_add_reports_pending_approval(self, db, api_post):
+        from flickr_api import FlickrAPIError
+        import mcp_tools
+        api_post.side_effect = FlickrAPIError(6, "Your Photo has been added to the Pending Queue for this Pool")
+        result = await mcp_tools._add_to_group({"photo_id": "photo1", "group_ids": ["group1@N00"]})
+        text = _text(result)
+        assert "pending queue" in text and "NOT added" not in text
+        assert db.execute("SELECT COUNT(*) FROM pending_group_adds").fetchone()[0] == 0
+
+    def test_web_summary_mentions_pending(self):
+        from tools.queue_web import _summarize_group_flush
+        msg = _summarize_group_flush([{"result": "success"}, {"result": "pending_approval"}])
+        assert "1 added" in msg and "awaiting" in msg
+
+    def test_migration_moves_old_pending_errors_to_success(self):
+        import sqlite3 as _sqlite3
+        import flickr_sync
+        from tools.groups import GROUP_PENDING_NOTE
+        conn = _sqlite3.connect(":memory:")
+        conn.row_factory = _sqlite3.Row
+        flickr_sync.init_db(conn)
+        # Rewind to just before the fix-up migration and plant pre-fix rows.
+        fixup_index = next(i for i, sql in enumerate(flickr_sync._MIGRATIONS, 1) if "pending queue" in sql)
+        conn.execute(f"PRAGMA user_version = {fixup_index - 1}")
+        conn.execute(
+            "INSERT INTO pending_group_adds (photo_id, group_id, status, error_msg, queued_at) VALUES "
+            "('p1', 'g1', 'error', 'Your Photo has been added to the Pending Queue for this Pool', 1), "
+            "('p2', 'g2', 'error', 'Photo limit reached', 1)"
+        )
+        conn.commit()
+        flickr_sync._apply_migrations(conn)
+        rows = {r["photo_id"]: (r["status"], r["error_msg"]) for r in conn.execute("SELECT * FROM pending_group_adds")}
+        assert rows["p1"] == ("success", GROUP_PENDING_NOTE)
+        assert rows["p2"] == ("error", "Photo limit reached")

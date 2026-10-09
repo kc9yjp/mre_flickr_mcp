@@ -62,9 +62,12 @@ def _summarize_group_flush(flushed: list[dict]) -> str:
     if not flushed:
         return "Nothing was due."
     ok = sum(1 for r in flushed if r["result"] == "success")
+    pending = sum(1 for r in flushed if r["result"] == "pending_approval")
     limited = sum(1 for r in flushed if r["result"] == "still_limited")
     err = sum(1 for r in flushed if r["result"].startswith("error"))
     parts = [f"{ok} added"]
+    if pending:
+        parts.append(f"{pending} submitted and awaiting the group admins' approval")
     if limited:
         parts.append(f"{limited} still at the group's daily limit (will retry after midnight UTC)")
     if err:

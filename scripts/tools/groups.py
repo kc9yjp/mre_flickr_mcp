@@ -498,6 +498,13 @@ def _fmt_chicago(ts: int) -> str:
 # in the group, permissions) is a permanent failure and must not be queued.
 _GROUP_THROTTLE_ERROR_CODE = 5
 
+# Moderated groups answer flickr.groups.pools.add with code 6 ("Added to
+# pending queue") or 7 ("Already in pending queue"). Flickr reports these as
+# errors, but the submission went through — it's just awaiting the group
+# admins' approval — so they're recorded as successes with this note.
+_GROUP_PENDING_CODES = frozenset({6, 7})
+GROUP_PENDING_NOTE = "Awaiting approval by the group's admins (in the pool's pending queue)."
+
 
 def _flush_group_queue(conn, force: bool = False, item_id: int | None = None) -> list[dict]:
     """Process waiting queue items whose retry_after has passed.
@@ -536,7 +543,13 @@ def _flush_group_queue(conn, force: bool = False, item_id: int | None = None) ->
             )
             flushed.append({"photo_id": row["photo_id"], "group_id": row["group_id"], "result": "success"})
         except FlickrAPIError as e:
-            if e.code == _GROUP_THROTTLE_ERROR_CODE:
+            if e.code in _GROUP_PENDING_CODES:
+                conn.execute(
+                    "UPDATE pending_group_adds SET status='success', error_msg=?, completed_at=? WHERE id=?",
+                    (GROUP_PENDING_NOTE, now, row["id"]),
+                )
+                flushed.append({"photo_id": row["photo_id"], "group_id": row["group_id"], "result": "pending_approval"})
+            elif e.code == _GROUP_THROTTLE_ERROR_CODE:
                 conn.execute(
                     "UPDATE pending_group_adds SET retry_after=? WHERE id=?",
                     (_next_midnight_utc(), row["id"]),
@@ -599,6 +612,11 @@ def _add_photo_to_one_group(conn, photo_id: str, group_id: str, retry_at_str, qu
         )
         return f"Photo {photo_id} added to group {group_id}."
     except FlickrAPIError as e:
+        if e.code in _GROUP_PENDING_CODES:
+            return (
+                f"Photo {photo_id} submitted to group {group_id} — it's in the group's pending queue, "
+                "awaiting the admins' approval."
+            )
         if e.code == _GROUP_THROTTLE_ERROR_CODE:
             action, retry_after = _queue_group_add(conn, photo_id, group_id, retry_at_str, days_offset)
             eta = _fmt_chicago(retry_after)
