@@ -31,6 +31,8 @@ export interface PhotoDetail extends Photo {
   albums: { id: string; title: string }[];
   in_keeper_list: boolean;
   is_own: boolean;
+  // Waiting scheduled-publish entry for one of your own photos, if any.
+  scheduled_publish?: ScheduledPublish | null;
   owner?: { nsid: string; username: string; realname: string; profile_url: string; avatar_url: string };
 }
 
@@ -145,15 +147,18 @@ export interface QueueRow {
   completed_at: string | null;
 }
 
+// One scheduled-publish queue entry. `when` is the publish time for a
+// waiting row and the completion time for an errored/published one.
 export interface PublishRow {
   id: number;
   photo_id: string;
   photo_title: string;
   photo_url: string;
-  publish_at: string;
-  queued_at: string;
-  error_msg: string;
-  completed_at: string | null;
+  thumb_url: string | null;
+  when_ts: number | null;
+  when: string | null;
+  when_relative: string | null;
+  message: string;
 }
 
 export interface PublishQueueData {
@@ -161,6 +166,13 @@ export interface PublishQueueData {
   waiting: PublishRow[];
   errors: PublishRow[];
   successes: PublishRow[];
+}
+
+export interface ScheduledPublish {
+  id: number;
+  when_ts: number;
+  when: string;
+  when_relative: string;
 }
 
 export interface QueueData {

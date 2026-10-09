@@ -1779,6 +1779,147 @@ select:focus {
   white-space: nowrap;
 }
 
+.queue-section + .queue-section {
+  margin-top: 24px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.queue-section-header {
+  justify-content: space-between;
+  flex-wrap: wrap;
+}
+
+.queue-section-header h2 {
+  margin: 12px 0 4px;
+}
+
+.queue-msg {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  margin: 0 0 8px;
+  padding: 6px 10px;
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  background: var(--surface-raised);
+}
+
+.queue-history {
+  margin-top: 12px;
+}
+
+.queue-history summary {
+  cursor: pointer;
+  color: var(--ink-secondary);
+  font-size: 0.875rem;
+}
+
+/* Scheduled-publish rows: thumbnail + title/time/actions */
+.pub-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.pub-item {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-subtle);
+}
+
+.pub-list-compact .pub-item {
+  padding: 4px 8px;
+  border: none;
+  background: none;
+}
+
+.pub-thumb {
+  width: 64px;
+  height: 64px;
+  object-fit: cover;
+  border-radius: 4px;
+  flex: none;
+}
+
+.pub-list-compact .pub-thumb {
+  width: 36px;
+  height: 36px;
+}
+
+.pub-thumb-empty {
+  background: var(--surface-raised);
+}
+
+.pub-body {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.pub-when {
+  color: var(--ink-secondary);
+  font-size: 0.8125rem;
+}
+
+.pub-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.link-btn {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--accent);
+  text-align: left;
+  cursor: pointer;
+}
+
+.link-btn:hover:not(:disabled) {
+  text-decoration: underline;
+}
+
+.pub-title {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+
+/* Date/time picker shared by the Photo Viewer and the Queue panel */
+.schedule-form {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.schedule-quick,
+.schedule-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.schedule-note {
+  margin: 0;
+  font-size: 0.8125rem;
+}
+
 /* --- Setup page --- */
 
 .setup-tabs {

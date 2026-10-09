@@ -39,7 +39,7 @@ confirmation UI provides.
 | `remove_fave` | ✍️ | `photo_id`* | Remove a photo from your favorites. |
 | `get_photo_stats` | | `photo_id`*, `date` (default today) | View/favorite/comment stats for a specific date. |
 | `find_weak_photos` | | *(optional `include_private`, etc.)* | Rank photos by a weakness score combining low views-per-day, zero favorites, and zero comments. Public-only by default. |
-| `set_visibility` | ✍️ | `id`*, `is_public`*, `is_friend`, `is_family` | Make a photo public or private. To publish later instead of now, see `schedule_publish`. |
+| `set_visibility` | ✍️ | `id`*, `is_public`*, `is_friend`, `is_family` | Make a photo public or private right now. Making it public also cancels any scheduled publish for it; to publish later instead, see `schedule_publish`. |
 | `set_location` | ✍️ | `id`*, `lat`*, `lon`*, `accuracy` (1–16, default 16) | Set geolocation. |
 | `remove_location` | ✍️ | `id`* | Remove geolocation. |
 | `set_safety_level` | ✍️ | `id`*, `safety_level`* | `safe` / `moderate` / `restricted`. |
@@ -119,9 +119,11 @@ confirmation UI provides.
 
 | Tool | Write | Parameters | Description |
 |---|:---:|---|---|
-| `schedule_publish` | ✍️ | `photo_id`*, `publish_at` (named time or `HH:MM`, Chicago time; default 5pm), `days_offset` | Queue a photo to be made public later. At publish time its date posted is reset to just before then, so it surfaces in the photostream and contacts' feeds. Re-scheduling a waiting photo updates its time. |
-| `get_publish_queue` | | | Waiting, failed, and recently published items; also publishes anything now due. |
-| `cancel_scheduled_publish` | ✍️ | `photo_id`* | Remove a waiting photo from the publish queue. |
+| `schedule_publish` | ✍️ | `photo_id`*, `publish_at` (`YYYY-MM-DD HH:MM`, `YYYY-MM-DD` = 5pm that day, a named time, or `HH:MM`; Chicago time; default next 5pm), `days_offset` (named time / `HH:MM` only) | Queue a photo to be made public later. At publish time its date posted is reset to just before then, so it surfaces as new in the photostream and contacts' feeds. Calling again changes a waiting photo's time or retries a failed one. Past or unrecognised times are rejected. |
+| `get_publish_queue` | | | Waiting photos (soonest first, with time and time-until), failures with Flickr's reason, and recent publishes; also publishes anything now due. |
+| `cancel_scheduled_publish` | ✍️ | `photo_id`* | Take a photo out of the publish queue (waiting or failed); it stays private. |
+
+In the Workbench, schedule a private photo from the **Publishing** section of the Photo Viewer, and manage the queue (change time, publish now, unschedule, retry or dismiss failures) in the **Queue** panel.
 
 ## Sync (`tools/sync.py`) — 1 tool
 

@@ -133,20 +133,27 @@ const QUEUE = {
   errors: [queueRow(3, "error")],
   successes: [queueRow(4, "success"), queueRow(5, "success"), queueRow(6, "success")],
 };
-function publishRow(id: number, status: "waiting" | "error" | "success"): PublishRow {
+function publishRow(id: number, status: "waiting" | "error" | "success", whenTs: number): PublishRow {
   const photo = PHOTOS[id % PHOTOS.length];
   return {
     id, photo_id: photo.id, photo_title: photo.title, photo_url: photo.url_photopage,
-    publish_at: isoDaysAgo(-id),
-    queued_at: isoDaysAgo(1),
-    error_msg: status === "error" ? "Photo not found" : "",
-    completed_at: status === "success" ? isoDaysAgo(id) : null,
+    thumb_url: photo.url_medium, when_ts: whenTs, when: null, when_relative: null,
+    message: status === "error" ? "Photo not found" : "",
   };
 }
 const PUBLISHES = {
-  waiting: [publishRow(11, "waiting"), publishRow(12, "waiting"), publishRow(13, "waiting")],
-  errors: [] as PublishRow[],
-  successes: [publishRow(14, "success")],
+  waiting: [
+    publishRow(11, "waiting", nowSec() + 5 * 3600),
+    publishRow(12, "waiting", nowSec() + 29 * 3600),
+    publishRow(13, "waiting", nowSec() + 53 * 3600),
+  ],
+  errors: [publishRow(15, "error", nowSec() - 2 * 3600)],
+  successes: [publishRow(14, "success", nowSec() - 20 * 3600)],
+};
+const allPublishRows = () => [...PUBLISHES.waiting, ...PUBLISHES.errors, ...PUBLISHES.successes];
+const scheduledFor = (photoId: string) => {
+  const r = PUBLISHES.waiting.find((x) => x.photo_id === photoId);
+  return r ? { id: r.id, when_ts: r.when_ts!, when: "", when_relative: "" } : null;
 };
 const queueData = (): QueueData => ({
   counts: { waiting: QUEUE.waiting.length, success: QUEUE.successes.length, error: QUEUE.errors.length },
@@ -295,6 +302,7 @@ function registerRoutes() {
       albums: [{ id: ALBUMS[0].id, title: ALBUMS[0].title }],
       in_keeper_list: false,
       is_own: true,
+      scheduled_publish: scheduledFor(p.id),
     } satisfies PhotoDetail);
   });
 
@@ -310,16 +318,48 @@ function registerRoutes() {
 
   on("GET", "/api/queue", () => json(queueData()));
   on("POST", "/api/queue", (_m, _p, body) => {
-    if (body?.action === "delete_publish") {
-      const before = PUBLISHES.waiting.length;
-      PUBLISHES.waiting = PUBLISHES.waiting.filter((r) => r.id !== body.item_id);
-      return json({ ok: true, deleted: before - PUBLISHES.waiting.length });
-    }
-    if (body?.action === "publish_now") {
-      const published = PUBLISHES.waiting.length;
-      PUBLISHES.successes = [...PUBLISHES.waiting, ...PUBLISHES.successes];
-      PUBLISHES.waiting = [];
-      return json({ ok: true, published, errors: 0 });
+    if (typeof body?.action === "string" && body.action.startsWith("publish_")) {
+      const toTs = (iso: string) => Math.floor(new Date(iso).getTime() / 1000);
+      const publish = (rows: PublishRow[]) => {
+        const ids = new Set(rows.map((r) => r.id));
+        PUBLISHES.waiting = PUBLISHES.waiting.filter((r) => !ids.has(r.id));
+        PUBLISHES.errors = PUBLISHES.errors.filter((r) => !ids.has(r.id));
+        PUBLISHES.successes = [...rows.map((r) => ({ ...r, when_ts: nowSec(), message: "" })), ...PUBLISHES.successes];
+        return json({ ok: true, message: `${rows.length} published.` });
+      };
+      switch (body.action) {
+        case "publish_schedule": {
+          const existing = PUBLISHES.waiting.find((r) => r.photo_id === body.photo_id);
+          if (existing) existing.when_ts = toTs(body.publish_at);
+          else {
+            const idx = Math.max(0, PHOTOS.findIndex((p) => p.id === body.photo_id));
+            const row = publishRow(idx, "waiting", toTs(body.publish_at));
+            PUBLISHES.waiting.push({ ...row, id: Math.max(0, ...allPublishRows().map((r) => r.id)) + 1 });
+          }
+          PUBLISHES.waiting.sort((a, b) => (a.when_ts ?? 0) - (b.when_ts ?? 0));
+          return json({ ok: true, message: "Scheduled.", scheduled: scheduledFor(body.photo_id) });
+        }
+        case "publish_cancel_photo":
+          PUBLISHES.waiting = PUBLISHES.waiting.filter((r) => r.photo_id !== body.photo_id);
+          return json({ ok: true, message: "Schedule cancelled." });
+        case "publish_reschedule": {
+          const row = allPublishRows().find((r) => r.id === body.item_id);
+          if (!row) return json({ error: "That item is no longer in the queue." }, 404);
+          PUBLISHES.errors = PUBLISHES.errors.filter((r) => r.id !== row.id);
+          PUBLISHES.waiting = [...PUBLISHES.waiting.filter((r) => r.id !== row.id),
+            { ...row, when_ts: toTs(body.publish_at), message: "" }];
+          PUBLISHES.waiting.sort((a, b) => (a.when_ts ?? 0) - (b.when_ts ?? 0));
+          return json({ ok: true, message: "Rescheduled." });
+        }
+        case "publish_remove":
+          PUBLISHES.waiting = PUBLISHES.waiting.filter((r) => r.id !== body.item_id);
+          PUBLISHES.errors = PUBLISHES.errors.filter((r) => r.id !== body.item_id);
+          return json({ ok: true, message: "Removed from the queue." });
+        case "publish_now":
+          return publish(body.item_id != null
+            ? [...PUBLISHES.waiting, ...PUBLISHES.errors].filter((r) => r.id === body.item_id)
+            : PUBLISHES.waiting);
+      }
     }
     if (body && body.delete_id != null) {
       for (const key of ["waiting", "errors", "successes"] as const) {

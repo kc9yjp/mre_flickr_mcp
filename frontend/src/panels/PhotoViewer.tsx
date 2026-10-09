@@ -8,6 +8,7 @@ import { getJSON, PhotoDetail } from "../api";
 import * as bus from "../bus";
 import { compactNumber } from "../format";
 import { PhotoId } from "../PhotoId";
+import { PhotoPublishSchedule } from "../SchedulePublish";
 import { SafeHtml } from "../safeHtml";
 import { useWorkflowCommands } from "../useWorkflowCommands";
 
@@ -170,6 +171,7 @@ export function PhotoViewer() {
           <span>{compactNumber(detail.favorites)} faves</span>
           <span>{compactNumber(detail.comments)} comments</span>
           {detail.is_own && <span>{detail.is_public ? "public" : "private"}</span>}
+          {detail.is_own && detail.scheduled_publish && <span>scheduled</span>}
           {detail.in_keeper_list && <span>keeper</span>}
         </div>
 
@@ -192,6 +194,12 @@ export function PhotoViewer() {
           </div>
           {detail.is_own && (
             <>
+              <PhotoPublishSchedule
+                photoId={detail.id}
+                isPublic={!!detail.is_public}
+                scheduled={detail.scheduled_publish ?? null}
+                onChange={(s) => setDetail({ ...detail, scheduled_publish: s })}
+              />
               <div className="detail-meta-block">
                 <div className="detail-meta-label">Groups</div>
                 <div className="detail-meta-value">

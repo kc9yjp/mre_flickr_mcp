@@ -220,9 +220,13 @@ Workbench Queue panel's "retry" actions, and posts anything whose retry
 window has passed.
 
 **Scheduled-publish queue** (`pending_publishes`): `schedule_publish` queues a
-photo to go public at a future time (same `publish_at`/`days_offset` time
-syntax as the group queue, but an unrecognised time is rejected rather than
-silently falling back). `_flush_publish_queue` (in `tools/publish_queue.py`)
+photo to go public at a future time. It accepts the group queue's
+`publish_at`/`days_offset` syntax plus absolute dates, and rejects
+unrecognised or past times rather than silently falling back. The Workbench
+Photo Viewer and Queue panel go through the same helpers
+(`_web_action`, `_queue_snapshot`), sending absolute UTC instants picked in
+the browser's time zone. `set_visibility(is_public=true)` drops any waiting
+entry for that photo so a later flush can't reset its date again. `_flush_publish_queue` (in `tools/publish_queue.py`)
 runs from the same places — the background loop, `get_publish_queue`, and the
 Queue panel's "Publish all now" — and for each due photo first resets its
 date posted to one minute before now (`flickr.photos.setDates`), then makes

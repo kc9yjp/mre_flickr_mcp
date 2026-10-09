@@ -200,7 +200,11 @@ TOOLS = [
     ),
     Tool(
         name="set_visibility",
-        description="Set a photo's visibility on Flickr — pass is_public=false to make it private.",
+        description=(
+            "Set a photo's visibility on Flickr right now — pass is_public=false to make it private. "
+            "To make a photo public at a later time instead, use schedule_publish. Making a photo "
+            "public here also cancels any scheduled publish for it."
+        ),
         inputSchema={
             "type": "object",
             "properties": {
@@ -844,10 +848,21 @@ async def _set_visibility(args):
     is_friend = 1 if args.get("is_friend", False) else 0
     is_family = 1 if args.get("is_family", False) else 0
     _set_perms(photo_id, is_public, is_friend, is_family)
+    unscheduled = 0
     with get_db() as conn:
         conn.execute("UPDATE photos SET is_public = ? WHERE id = ?", (is_public, photo_id))
+        if is_public:
+            # Published by hand — a still-waiting scheduled publish would
+            # otherwise fire later and reset its date posted out from under it.
+            unscheduled = conn.execute(
+                "DELETE FROM pending_publishes WHERE photo_id = ? AND status IN ('waiting', 'error')",
+                (photo_id,),
+            ).rowcount
     visibility = "public" if is_public else "private"
-    return [TextContent(type="text", text=f"Photo {photo_id} is now {visibility} on Flickr.")]
+    text = f"Photo {photo_id} is now {visibility} on Flickr."
+    if unscheduled:
+        text += " It was also scheduled to publish later; that schedule has been cancelled."
+    return [TextContent(type="text", text=text)]
 
 
 async def _set_location(args):

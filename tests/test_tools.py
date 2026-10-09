@@ -1128,7 +1128,7 @@ class TestSchedulePublish:
         import mcp_tools
         await mcp_tools._schedule_publish({"photo_id": "photo1"})
         result = await mcp_tools._cancel_scheduled_publish({"photo_id": "photo1"})
-        assert "Cancelled" in _text(result)
+        assert "no longer scheduled" in _text(result)
         assert db.execute("SELECT COUNT(*) FROM pending_publishes").fetchone()[0] == 0
 
 
@@ -1206,3 +1206,140 @@ class TestFlushPublishQueue:
         row = conn.execute("SELECT status, error_msg FROM pending_publishes").fetchone()
         assert row["status"] == "success" and "Invalid date" in row["error_msg"]
         assert conn.execute("SELECT is_public FROM photos").fetchone()["is_public"] == 1
+
+
+class TestPublishTimes:
+    def test_absolute_date_time_is_chicago(self):
+        import datetime
+        from zoneinfo import ZoneInfo
+        from tools.publish_queue import _resolve_publish_time
+        year = datetime.date.today().year + 1
+        ts = _resolve_publish_time(f"{year}-03-15 08:30")
+        dt = datetime.datetime.fromtimestamp(ts, ZoneInfo("America/Chicago"))
+        assert (dt.year, dt.month, dt.day, dt.hour, dt.minute) == (year, 3, 15, 8, 30)
+
+    def test_date_only_defaults_to_5pm(self):
+        import datetime
+        from zoneinfo import ZoneInfo
+        from tools.publish_queue import _resolve_publish_time
+        year = datetime.date.today().year + 1
+        dt = datetime.datetime.fromtimestamp(_resolve_publish_time(f"{year}-03-15"), ZoneInfo("America/Chicago"))
+        assert dt.hour == 17
+
+    def test_iso_with_offset_is_honoured(self):
+        import datetime
+        from tools.publish_queue import _resolve_publish_time
+        year = datetime.date.today().year + 1
+        ts = _resolve_publish_time(f"{year}-03-15T13:00:00Z")
+        assert ts == int(datetime.datetime(year, 3, 15, 13, tzinfo=datetime.timezone.utc).timestamp())
+
+    def test_past_is_rejected(self):
+        import pytest as _pytest
+        from tools.publish_queue import PublishTimeError, _resolve_publish_time
+        with _pytest.raises(PublishTimeError, match="past"):
+            _resolve_publish_time("2020-01-01 08:00")
+
+    def test_days_offset_with_full_date_is_rejected(self):
+        import datetime
+        import pytest as _pytest
+        from tools.publish_queue import PublishTimeError, _resolve_publish_time
+        with _pytest.raises(PublishTimeError):
+            _resolve_publish_time(f"{datetime.date.today().year + 1}-03-15", days_offset=2)
+
+    def test_fmt_relative(self):
+        from tools.publish_queue import _fmt_relative
+        assert _fmt_relative(1000 + 2 * 86400, now=1000) == "in 2 days"
+        assert _fmt_relative(1000 - 3600, now=1000) == "1 hour ago"
+
+
+class TestPublishQueueManagement:
+    @pytest.mark.asyncio
+    async def test_set_visibility_public_cancels_schedule(self, db, api_post):
+        import mcp_tools
+        api_post.return_value = {"stat": "ok"}
+        await mcp_tools._schedule_publish({"photo_id": "photo1", "publish_at": "morning"})
+        result = await mcp_tools._set_visibility({"id": "photo1", "is_public": True})
+        assert "cancelled" in _text(result)
+        assert db.execute("SELECT COUNT(*) FROM pending_publishes").fetchone()[0] == 0
+
+    @pytest.mark.asyncio
+    async def test_set_visibility_private_keeps_schedule(self, db, api_post):
+        import mcp_tools
+        api_post.return_value = {"stat": "ok"}
+        await mcp_tools._schedule_publish({"photo_id": "photo1", "publish_at": "morning"})
+        await mcp_tools._set_visibility({"id": "photo1", "is_public": False})
+        assert db.execute("SELECT COUNT(*) FROM pending_publishes WHERE status='waiting'").fetchone()[0] == 1
+
+    @pytest.mark.asyncio
+    async def test_rescheduling_a_failed_photo_replaces_the_error(self, db, api_post):
+        import mcp_tools
+        now = int(time.time())
+        db.execute(
+            "INSERT INTO pending_publishes (photo_id, status, publish_after, queued_at, completed_at, error_msg) "
+            "VALUES ('photo1', 'error', ?, ?, ?, 'boom')", (now - 60, now - 3600, now - 60),
+        )
+        db.commit()
+        result = await mcp_tools._schedule_publish({"photo_id": "photo1", "publish_at": "evening"})
+        assert "scheduled" in _text(result)
+        statuses = [r[0] for r in db.execute("SELECT status FROM pending_publishes").fetchall()]
+        assert statuses == ["waiting"]
+
+    def _conn_with(self, status="waiting", delta=3600):
+        conn = make_db()
+        now = int(time.time())
+        conn.execute("INSERT INTO photos (id, title, is_public) VALUES ('photo1', 'T', 0)")
+        conn.execute(
+            "INSERT INTO pending_publishes (photo_id, status, publish_after, queued_at, error_msg) "
+            "VALUES ('photo1', ?, ?, ?, ?)", (status, now + delta, now, "boom" if status == "error" else None),
+        )
+        conn.commit()
+        return conn
+
+    def test_web_reschedule(self):
+        import datetime
+        from tools.publish_queue import _web_action
+        conn = self._conn_with()
+        target = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=3)
+        body, status = _web_action(conn, {"action": "publish_reschedule", "item_id": 1,
+                                          "publish_at": target.isoformat()})
+        assert status == 200, body
+        row = conn.execute("SELECT publish_after FROM pending_publishes").fetchone()
+        assert abs(row["publish_after"] - target.timestamp()) < 2
+
+    def test_web_reschedule_rejects_past(self):
+        from tools.publish_queue import _web_action
+        conn = self._conn_with()
+        body, status = _web_action(conn, {"action": "publish_reschedule", "item_id": 1,
+                                          "publish_at": "2020-01-01T00:00:00Z"})
+        assert status == 400 and "past" in body["error"]
+
+    def test_web_publish_one_now_ignores_schedule(self):
+        from tools.publish_queue import _web_action
+        conn = self._conn_with(delta=86400)
+        with patch("flickr_api._api_post", return_value={"stat": "ok"}):
+            body, status = _web_action(conn, {"action": "publish_now", "item_id": 1})
+        assert status == 200 and "1 published" in body["message"]
+        assert conn.execute("SELECT status FROM pending_publishes").fetchone()["status"] == "success"
+
+    def test_web_retry_failed_item(self):
+        from tools.publish_queue import _web_action
+        conn = self._conn_with(status="error", delta=-60)
+        with patch("flickr_api._api_post", return_value={"stat": "ok"}):
+            body, status = _web_action(conn, {"action": "publish_now", "item_id": 1})
+        assert status == 200
+        assert conn.execute("SELECT status FROM pending_publishes").fetchone()["status"] == "success"
+
+    def test_web_remove_and_missing_item(self):
+        from tools.publish_queue import _web_action
+        conn = self._conn_with()
+        assert _web_action(conn, {"action": "publish_remove", "item_id": 1})[1] == 200
+        assert _web_action(conn, {"action": "publish_remove", "item_id": 1})[1] == 404
+
+    def test_web_schedule_returns_entry_for_viewer(self):
+        import datetime
+        from tools.publish_queue import _web_action
+        conn = make_db()
+        target = (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=5)).isoformat()
+        body, status = _web_action(conn, {"action": "publish_schedule", "photo_id": "p9", "publish_at": target})
+        assert status == 200
+        assert body["scheduled"]["id"] == 1
