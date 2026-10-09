@@ -167,6 +167,7 @@ Each user's `flickr.db` (schema created by `flickr_sync.py:init_db`):
 | `photo_groups` | Junction table: which of your photos are in which groups |
 | `sync_log` | History of sync runs: type, mode, photos fetched, duration |
 | `pending_group_adds` | Queue for rate-limited or scheduled group-pool adds (see below) |
+| `pending_publishes` | Photos scheduled to be made public (see below) |
 | `settings` | Per-user key/value overrides for the registry in `db.SETTINGS_DEFAULTS` |
 | `keeper_list` | Photos flagged as worth keeping despite weak stats |
 
@@ -217,6 +218,20 @@ drip-posting). Either way the attempt lands in this table with a
 called from the background loop, from `get_group_queue`, and from the
 Workbench Queue panel's "retry" actions, and posts anything whose retry
 window has passed.
+
+**Scheduled-publish queue** (`pending_publishes`): `schedule_publish` queues a
+photo to go public at a future time (same `publish_at`/`days_offset` time
+syntax as the group queue, but an unrecognised time is rejected rather than
+silently falling back). `_flush_publish_queue` (in `tools/publish_queue.py`)
+runs from the same places — the background loop, `get_publish_queue`, and the
+Queue panel's "Publish all now" — and for each due photo first resets its
+date posted to one minute before now (`flickr.photos.setDates`), then makes
+it public (`flickr.photos.setPerms`). Flickr orders photostreams and
+contacts' feeds by date posted, so without the reset an old private photo
+would go public buried at its original upload date. A Flickr rejection of
+the publish marks the item `error`; a transient failure (timeout, rate
+limit, 5xx) leaves it `waiting` for the next loop wake; a rejected date
+reset alone still publishes and records a note.
 
 **Group AI summary** (`groups.needs_summary`): `sync_groups.py` runs in two
 phases. Phase one (`sync_groups()` + `sync_group_descriptions()`) diffs

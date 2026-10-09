@@ -18,7 +18,7 @@
 
 import type {
   Album, AlbumPhotoPage, Connection, ConnectionPreset, Conversation, LLMSettings, Me, Photo, PhotoDetail,
-  PhotoPage, Prompt, PromptCategory, PromptsData, PromptVariable, QueueData, QueueRow, SessionStats, SetupData,
+  PhotoPage, Prompt, PromptCategory, PromptsData, PromptVariable, PublishRow, QueueData, QueueRow, SessionStats, SetupData,
   Stats, StreamEvent, SyncRow, SyncStatus, WorkflowCommand,
 } from "../api";
 
@@ -133,9 +133,28 @@ const QUEUE = {
   errors: [queueRow(3, "error")],
   successes: [queueRow(4, "success"), queueRow(5, "success"), queueRow(6, "success")],
 };
+function publishRow(id: number, status: "waiting" | "error" | "success"): PublishRow {
+  const photo = PHOTOS[id % PHOTOS.length];
+  return {
+    id, photo_id: photo.id, photo_title: photo.title, photo_url: photo.url_photopage,
+    publish_at: isoDaysAgo(-id),
+    queued_at: isoDaysAgo(1),
+    error_msg: status === "error" ? "Photo not found" : "",
+    completed_at: status === "success" ? isoDaysAgo(id) : null,
+  };
+}
+const PUBLISHES = {
+  waiting: [publishRow(11, "waiting"), publishRow(12, "waiting"), publishRow(13, "waiting")],
+  errors: [] as PublishRow[],
+  successes: [publishRow(14, "success")],
+};
 const queueData = (): QueueData => ({
   counts: { waiting: QUEUE.waiting.length, success: QUEUE.successes.length, error: QUEUE.errors.length },
   ...QUEUE,
+  publishes: {
+    counts: { waiting: PUBLISHES.waiting.length, success: PUBLISHES.successes.length, error: PUBLISHES.errors.length },
+    ...PUBLISHES,
+  },
 });
 
 const SETTINGS: MockSetting[] = [
@@ -291,6 +310,17 @@ function registerRoutes() {
 
   on("GET", "/api/queue", () => json(queueData()));
   on("POST", "/api/queue", (_m, _p, body) => {
+    if (body?.action === "delete_publish") {
+      const before = PUBLISHES.waiting.length;
+      PUBLISHES.waiting = PUBLISHES.waiting.filter((r) => r.id !== body.item_id);
+      return json({ ok: true, deleted: before - PUBLISHES.waiting.length });
+    }
+    if (body?.action === "publish_now") {
+      const published = PUBLISHES.waiting.length;
+      PUBLISHES.successes = [...PUBLISHES.waiting, ...PUBLISHES.successes];
+      PUBLISHES.waiting = [];
+      return json({ ok: true, published, errors: 0 });
+    }
     if (body && body.delete_id != null) {
       for (const key of ["waiting", "errors", "successes"] as const) {
         QUEUE[key] = QUEUE[key].filter((r) => r.id !== body.delete_id);

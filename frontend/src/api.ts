@@ -145,11 +145,31 @@ export interface QueueRow {
   completed_at: string | null;
 }
 
+export interface PublishRow {
+  id: number;
+  photo_id: string;
+  photo_title: string;
+  photo_url: string;
+  publish_at: string;
+  queued_at: string;
+  error_msg: string;
+  completed_at: string | null;
+}
+
+export interface PublishQueueData {
+  counts: { waiting: number; success: number; error: number };
+  waiting: PublishRow[];
+  errors: PublishRow[];
+  successes: PublishRow[];
+}
+
 export interface QueueData {
   counts: { waiting: number; success: number; error: number };
   waiting: QueueRow[];
   errors: QueueRow[];
   successes: QueueRow[];
+  // Optional so older servers / static design fixtures without it still render.
+  publishes?: PublishQueueData;
 }
 
 export interface SetupData {

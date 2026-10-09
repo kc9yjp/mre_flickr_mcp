@@ -217,18 +217,20 @@ def cancel_sync(sync_type: str, username: str | None = None) -> bool:
     return False
 
 
-def _flush_queue_for_user(user: dict) -> list[dict]:
-    """Flush due pending group adds for one user with their context set.
+def _flush_queue_for_user(user: dict, flush=None) -> list[dict]:
+    """Flush a due queue for one user with their context set.
 
-    Timed queue items (add_to_group queue=true / rate-limit retries) have no
-    other executor; the background loop calls this on every wake so scheduled
-    adds actually post without waiting for the next interactive tool call.
+    Timed queue items (add_to_group queue=true / rate-limit retries,
+    schedule_publish) have no other executor; the background loop calls this
+    on every wake so scheduled work happens without waiting for the next
+    interactive tool call. *flush* defaults to the group-add queue.
     """
-    from tools.groups import _flush_group_queue
+    if flush is None:
+        from tools.groups import _flush_group_queue as flush
     token = db._current_user.set(user)
     try:
         with get_db_for_user(user["username"], user["nsid"]) as conn:
-            return _flush_group_queue(conn)
+            return flush(conn)
     finally:
         db._current_user.reset(token)
 
@@ -262,6 +264,13 @@ async def _background_refresh():
                             )
                     except Exception:
                         logging.exception("Group-add queue flush failed for %s", username)
+                    try:
+                        from tools.publish_queue import _flush_publish_queue
+                        flushed = await asyncio.to_thread(_flush_queue_for_user, user, _flush_publish_queue)
+                        for r in flushed:
+                            logging.info("Publish queue: %s photo %s: %s", username, r["photo_id"], r["result"])
+                    except Exception:
+                        logging.exception("Publish queue flush failed for %s", username)
                 if not os.path.exists(upath):
                     last_sync = 0
                 else:

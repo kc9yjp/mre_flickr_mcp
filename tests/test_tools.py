@@ -1090,3 +1090,119 @@ class TestKeeperList:
         entry = next(i for i in items if i["photo_id"] == "unknownphoto")
         assert entry["url"] == f"https://www.flickr.com/photos/{FAKE_CREDS['user_nsid']}/unknownphoto/"
         assert "ejwettstein" not in entry["url"]
+
+
+# ---------------------------------------------------------------------------
+# Scheduled-publish queue
+# ---------------------------------------------------------------------------
+
+class TestSchedulePublish:
+    @pytest.mark.asyncio
+    async def test_schedules_without_calling_flickr(self, db, api_post):
+        import mcp_tools
+        result = await mcp_tools._schedule_publish({"photo_id": "photo1", "publish_at": "morning", "days_offset": 1})
+        assert "scheduled" in _text(result)
+        api_post.assert_not_called()
+        row = db.execute("SELECT status, publish_after FROM pending_publishes WHERE photo_id='photo1'").fetchone()
+        assert row["status"] == "waiting"
+        assert row["publish_after"] > time.time()
+
+    @pytest.mark.asyncio
+    async def test_reschedules_existing(self, db, api_post):
+        import mcp_tools
+        await mcp_tools._schedule_publish({"photo_id": "photo1", "publish_at": "morning"})
+        result = await mcp_tools._schedule_publish({"photo_id": "photo1", "publish_at": "evening", "days_offset": 3})
+        assert "rescheduled" in _text(result)
+        count = db.execute("SELECT COUNT(*) FROM pending_publishes WHERE photo_id='photo1'").fetchone()[0]
+        assert count == 1
+
+    @pytest.mark.asyncio
+    async def test_rejects_unrecognised_time(self, db, api_post):
+        import mcp_tools
+        result = await mcp_tools._schedule_publish({"photo_id": "photo1", "publish_at": "next tuesday"})
+        assert "Error" in _text(result)
+        assert db.execute("SELECT COUNT(*) FROM pending_publishes").fetchone()[0] == 0
+
+    @pytest.mark.asyncio
+    async def test_cancel(self, db, api_post):
+        import mcp_tools
+        await mcp_tools._schedule_publish({"photo_id": "photo1"})
+        result = await mcp_tools._cancel_scheduled_publish({"photo_id": "photo1"})
+        assert "Cancelled" in _text(result)
+        assert db.execute("SELECT COUNT(*) FROM pending_publishes").fetchone()[0] == 0
+
+
+class TestFlushPublishQueue:
+    def _conn(self, publish_after_delta: int):
+        conn = make_db()
+        now = int(time.time())
+        conn.execute(
+            "INSERT INTO photos (id, title, is_public, date_uploaded) VALUES ('photo1', 'T', 0, 1000)"
+        )
+        conn.execute(
+            "INSERT INTO pending_publishes (photo_id, status, publish_after, queued_at) VALUES (?, 'waiting', ?, ?)",
+            ("photo1", now + publish_after_delta, now - 3600),
+        )
+        conn.commit()
+        return conn
+
+    def test_due_item_resets_date_then_publishes(self):
+        from tools.publish_queue import _flush_publish_queue, _DATE_POSTED_LEAD_SECONDS
+        conn = self._conn(-60)
+        with patch("flickr_api._api_post", return_value={"stat": "ok"}) as mock_post:
+            before = int(time.time())
+            flushed = _flush_publish_queue(conn)
+        assert flushed == [{"photo_id": "photo1", "result": "success"}]
+        methods = [c.args[0] for c in mock_post.call_args_list]
+        assert methods == ["flickr.photos.setDates", "flickr.photos.setPerms"]
+        posted = int(mock_post.call_args_list[0].args[1]["date_posted"])
+        assert before - _DATE_POSTED_LEAD_SECONDS - 1 <= posted <= int(time.time()) - _DATE_POSTED_LEAD_SECONDS
+        assert mock_post.call_args_list[1].args[1]["is_public"] == "1"
+        photo = conn.execute("SELECT is_public, date_uploaded FROM photos").fetchone()
+        assert photo["is_public"] == 1
+        assert photo["date_uploaded"] == posted
+        assert conn.execute("SELECT status FROM pending_publishes").fetchone()["status"] == "success"
+
+    def test_future_item_is_skipped(self):
+        from tools.publish_queue import _flush_publish_queue
+        conn = self._conn(3600)
+        with patch("flickr_api._api_post") as mock_post:
+            assert _flush_publish_queue(conn) == []
+        mock_post.assert_not_called()
+
+    def test_force_publishes_future_items(self):
+        from tools.publish_queue import _flush_publish_queue
+        conn = self._conn(3600)
+        with patch("flickr_api._api_post", return_value={"stat": "ok"}):
+            flushed = _flush_publish_queue(conn, force=True)
+        assert flushed[0]["result"] == "success"
+
+    def test_flickr_rejection_of_publish_marks_error(self):
+        from flickr_api import FlickrAPIError
+        from tools.publish_queue import _flush_publish_queue
+        conn = self._conn(-60)
+        with patch("flickr_api._api_post", side_effect=[{"stat": "ok"}, FlickrAPIError(1, "Photo not found")]):
+            flushed = _flush_publish_queue(conn)
+        assert "error" in flushed[0]["result"]
+        row = conn.execute("SELECT status, error_msg FROM pending_publishes").fetchone()
+        assert row["status"] == "error" and row["error_msg"] == "Photo not found"
+
+    def test_transient_failure_stays_waiting(self):
+        from tools.publish_queue import _flush_publish_queue
+        conn = self._conn(-60)
+        with patch("flickr_api._api_post", side_effect=RuntimeError("Flickr API timed out")):
+            flushed = _flush_publish_queue(conn)
+        assert flushed[0]["result"].startswith("retry_later")
+        assert conn.execute("SELECT status FROM pending_publishes").fetchone()["status"] == "waiting"
+        assert conn.execute("SELECT is_public FROM photos").fetchone()["is_public"] == 0
+
+    def test_date_reset_rejection_still_publishes_with_note(self):
+        from flickr_api import FlickrAPIError
+        from tools.publish_queue import _flush_publish_queue
+        conn = self._conn(-60)
+        with patch("flickr_api._api_post", side_effect=[FlickrAPIError(3, "Invalid date"), {"stat": "ok"}]):
+            flushed = _flush_publish_queue(conn)
+        assert flushed[0]["result"].startswith("success")
+        row = conn.execute("SELECT status, error_msg FROM pending_publishes").fetchone()
+        assert row["status"] == "success" and "Invalid date" in row["error_msg"]
+        assert conn.execute("SELECT is_public FROM photos").fetchone()["is_public"] == 1

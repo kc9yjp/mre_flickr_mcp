@@ -9,7 +9,7 @@ from mcp.types import TextContent
 import flickr_api
 from db import get_db  # noqa: F401 — imported so tests can patch db.get_db
 from flickr_api import _api_get, _api_post, _load_credentials, _load_env  # noqa: F401
-from tools import albums, contacts, galleries, groups, photos
+from tools import albums, contacts, galleries, groups, photos, publish_queue
 from tools import sync as sync_tools
 
 server = Server("flickr")
@@ -25,7 +25,7 @@ _run_sync_script = sync_tools._run_sync_script
 _background_refresh = sync_tools._background_refresh
 cancel_sync = sync_tools.cancel_sync
 
-_ALL_MODULES = [photos, albums, groups, contacts, galleries, sync_tools]
+_ALL_MODULES = [photos, albums, groups, contacts, galleries, publish_queue, sync_tools]
 
 _HANDLERS: dict = {}
 for _mod in _ALL_MODULES:
@@ -91,5 +91,8 @@ from tools.contacts import (  # noqa: E402, F401
 )
 from tools.galleries import (  # noqa: E402, F401
     _get_galleries, _create_gallery, _add_to_gallery, _get_gallery_photos,
+)
+from tools.publish_queue import (  # noqa: E402, F401
+    _schedule_publish, _get_publish_queue, _cancel_scheduled_publish,
 )
 from tools.sync import _sync  # noqa: E402, F401

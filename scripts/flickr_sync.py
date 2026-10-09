@@ -95,6 +95,16 @@ _MIGRATIONS = [
     # — incorporated into the prompt the next time the AI summary regenerates.
     "ALTER TABLE groups ADD COLUMN user_note TEXT",
     "ALTER TABLE groups ADD COLUMN open_subject INTEGER",
+    # Scheduled "make public" queue — see tools/publish_queue.py.
+    """CREATE TABLE IF NOT EXISTS pending_publishes (
+        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+        photo_id      TEXT NOT NULL,
+        status        TEXT NOT NULL DEFAULT 'waiting',
+        error_msg     TEXT,
+        publish_after INTEGER NOT NULL,
+        queued_at     INTEGER NOT NULL,
+        completed_at  INTEGER
+    )""",
 ]
 
 SCHEMA_VERSION = len(_MIGRATIONS)

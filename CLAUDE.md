@@ -132,13 +132,14 @@ albums            — id, title, description, primary_photo_id, count_photos, co
 photo_groups      — photo_id, group_id (which of your photos are in each group)
 sync_log          — type, mode, photos_fetched, synced_at
 pending_group_adds — queue for rate-limited or scheduled group-pool adds (see ARCHITECTURE.md's "Group-add queue")
+pending_publishes — photos scheduled to be made public (see ARCHITECTURE.md's "Scheduled-publish queue")
 settings          — per-user key/value overrides
 keeper_list       — photo_id, note (photos flagged as worth keeping despite weak stats)
 ```
 
 ## MCP Tools
 
-69 tools across `scripts/tools/{photos,albums,groups,contacts,galleries,sync}.py`.
+72 tools across `scripts/tools/{photos,albums,groups,contacts,galleries,publish_queue,sync}.py`.
 See **[TOOLS.md](TOOLS.md)** for the full catalog with parameters — kept
 there rather than duplicated here so there's one place to update when tools
 change. A few worth knowing up front:

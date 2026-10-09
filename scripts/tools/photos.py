@@ -826,11 +826,8 @@ async def _find_weak_photos(args):
     return [TextContent(type="text", text=json.dumps(results, indent=2))]
 
 
-async def _set_visibility(args):
-    photo_id = args["id"]
-    is_public = 1 if args["is_public"] else 0
-    is_friend = 1 if args.get("is_friend", False) else 0
-    is_family = 1 if args.get("is_family", False) else 0
+def _set_perms(photo_id: str, is_public: int, is_friend: int = 0, is_family: int = 0) -> None:
+    """Call flickr.photos.setPerms — shared by set_visibility and the publish queue."""
     flickr_api._api_post("flickr.photos.setPerms", {
         "photo_id":     photo_id,
         "is_public":    str(is_public),
@@ -839,6 +836,14 @@ async def _set_visibility(args):
         "perm_comment": "3" if is_public else "0",
         "perm_addmeta": "2" if is_public else "0",
     })
+
+
+async def _set_visibility(args):
+    photo_id = args["id"]
+    is_public = 1 if args["is_public"] else 0
+    is_friend = 1 if args.get("is_friend", False) else 0
+    is_family = 1 if args.get("is_family", False) else 0
+    _set_perms(photo_id, is_public, is_friend, is_family)
     with get_db() as conn:
         conn.execute("UPDATE photos SET is_public = ? WHERE id = ?", (is_public, photo_id))
     visibility = "public" if is_public else "private"

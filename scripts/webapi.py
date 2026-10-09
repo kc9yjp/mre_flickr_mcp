@@ -914,6 +914,7 @@ async def api_queue(request: Request):
 
     from db import _current_user as _ctx
     from tools.groups import _flush_group_queue, _fmt_chicago
+    from tools.publish_queue import _flush_publish_queue
 
     username = user["username"]
 
@@ -941,6 +942,20 @@ async def api_queue(request: Request):
                     lim = sum(1 for r in flushed if r["result"] == "still_limited")
                     err = sum(1 for r in flushed if r["result"].startswith("error"))
                     return JSONResponse({"ok": True, "added": ok, "limited": lim, "errors": err})
+                elif action == "delete_publish":
+                    item_id = body.get("item_id")
+                    if not isinstance(item_id, int):
+                        return JSONResponse({"error": "item_id required"}, status_code=400)
+                    deleted = conn.execute(
+                        "DELETE FROM pending_publishes WHERE id=? AND status='waiting'",
+                        (item_id,),
+                    ).rowcount
+                    return JSONResponse({"ok": True, "deleted": deleted})
+                elif action == "publish_now":
+                    flushed = _flush_publish_queue(conn, force=True)
+                    ok  = sum(1 for r in flushed if r["result"].startswith("success"))
+                    err = sum(1 for r in flushed if r["result"].startswith("error"))
+                    return JSONResponse({"ok": True, "published": ok, "errors": err})
                 else:
                     return JSONResponse({"error": f"unknown action: {action}"}, status_code=400)
         except Exception as e:
@@ -1003,6 +1018,33 @@ async def api_queue(request: Request):
                 "WHERE pga.status='success' ORDER BY pga.completed_at DESC LIMIT 20"
             ).fetchall()]
 
+            pub_counts = {"waiting": 0, "success": 0, "error": 0}
+            pub_counts.update({row["status"]: row["n"] for row in conn.execute(
+                "SELECT status, COUNT(*) AS n FROM pending_publishes GROUP BY status"
+            ).fetchall()})
+
+            def _pub_rows(where_order: str) -> list[dict]:
+                return [{
+                    "id":               r["id"],
+                    "photo_id":         r["photo_id"],
+                    "photo_title":      r["photo_title"] or r["photo_id"],
+                    "photo_url":        r["photo_url"] or f"https://www.flickr.com/photo.gne?id={r['photo_id']}",
+                    "publish_at":       _fmt_chicago(r["publish_after"]),
+                    "queued_at":        _fmt_chicago(r["queued_at"]),
+                    "error_msg":        r["error_msg"] or "",
+                    "completed_at":     _fmt_chicago(r["completed_at"]) if r["completed_at"] else None,
+                } for r in conn.execute(
+                    "SELECT pp.*, p.title AS photo_title, p.url_photopage AS photo_url "
+                    "FROM pending_publishes pp LEFT JOIN photos p ON pp.photo_id = p.id " + where_order
+                ).fetchall()]
+
+            publishes = {
+                "counts":    pub_counts,
+                "waiting":   _pub_rows("WHERE pp.status='waiting' ORDER BY pp.publish_after ASC"),
+                "errors":    _pub_rows("WHERE pp.status='error' ORDER BY pp.completed_at DESC LIMIT 30"),
+                "successes": _pub_rows("WHERE pp.status='success' ORDER BY pp.completed_at DESC LIMIT 20"),
+            }
+
     except Exception as e:
         logging.exception("api_queue load error")
         return JSONResponse({"error": str(e)}, status_code=500)
@@ -1012,6 +1054,7 @@ async def api_queue(request: Request):
         "waiting": waiting_rows,
         "errors": error_rows,
         "successes": success_rows,
+        "publishes": publishes,
     })
 
 

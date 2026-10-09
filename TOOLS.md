@@ -1,6 +1,6 @@
 # MCP Tools
 
-Full catalog of the 69 MCP tools exposed by this server, grouped by the
+Full catalog of the 72 MCP tools exposed by this server, grouped by the
 module that defines them under `scripts/tools/`. See
 [ARCHITECTURE.md](ARCHITECTURE.md#mcp-tool-layer) for how these are
 aggregated, dispatched, and threaded.
@@ -39,7 +39,7 @@ confirmation UI provides.
 | `remove_fave` | ✍️ | `photo_id`* | Remove a photo from your favorites. |
 | `get_photo_stats` | | `photo_id`*, `date` (default today) | View/favorite/comment stats for a specific date. |
 | `find_weak_photos` | | *(optional `include_private`, etc.)* | Rank photos by a weakness score combining low views-per-day, zero favorites, and zero comments. Public-only by default. |
-| `set_visibility` | ✍️ | `id`*, `is_public`*, `is_friend`, `is_family` | Make a photo public or private. |
+| `set_visibility` | ✍️ | `id`*, `is_public`*, `is_friend`, `is_family` | Make a photo public or private. To publish later instead of now, see `schedule_publish`. |
 | `set_location` | ✍️ | `id`*, `lat`*, `lon`*, `accuracy` (1–16, default 16) | Set geolocation. |
 | `remove_location` | ✍️ | `id`* | Remove geolocation. |
 | `set_safety_level` | ✍️ | `id`*, `safety_level`* | `safe` / `moderate` / `restricted`. |
@@ -114,6 +114,14 @@ confirmation UI provides.
 | `create_gallery` | ✍️ | `title`*, `description`*, `primary_photo_id` | Create a new gallery. |
 | `add_to_gallery` | ✍️ | `gallery_id`*, `photo_id`*, `comment` | Add a photo to a gallery, with an optional annotation. |
 | `get_gallery_photos` | | `gallery_id`*, `limit` (default 50), `page` (default 1) | List photos in a gallery. |
+
+## Scheduled publishing (`tools/publish_queue.py`) — 3 tools
+
+| Tool | Write | Parameters | Description |
+|---|:---:|---|---|
+| `schedule_publish` | ✍️ | `photo_id`*, `publish_at` (named time or `HH:MM`, Chicago time; default 5pm), `days_offset` | Queue a photo to be made public later. At publish time its date posted is reset to just before then, so it surfaces in the photostream and contacts' feeds. Re-scheduling a waiting photo updates its time. |
+| `get_publish_queue` | | | Waiting, failed, and recently published items; also publishes anything now due. |
+| `cancel_scheduled_publish` | ✍️ | `photo_id`* | Remove a waiting photo from the publish queue. |
 
 ## Sync (`tools/sync.py`) — 1 tool
 
