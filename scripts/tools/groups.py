@@ -499,14 +499,20 @@ def _fmt_chicago(ts: int) -> str:
 _GROUP_THROTTLE_ERROR_CODE = 5
 
 
-def _flush_group_queue(conn, force: bool = False) -> list[dict]:
+def _flush_group_queue(conn, force: bool = False, item_id: int | None = None) -> list[dict]:
     """Process waiting queue items whose retry_after has passed.
 
-    When *force* is True, all waiting items are retried regardless of schedule.
+    When *force* is True, all waiting items are retried regardless of schedule;
+    *item_id* limits the run to that one waiting row (implies force).
     Returns a list of result dicts.
     """
     now = int(time.time())
-    if force:
+    if item_id is not None:
+        rows = conn.execute(
+            "SELECT id, photo_id, group_id FROM pending_group_adds WHERE status='waiting' AND id=?",
+            (item_id,),
+        ).fetchall()
+    elif force:
         rows = conn.execute(
             "SELECT id, photo_id, group_id FROM pending_group_adds WHERE status='waiting'",
         ).fetchall()

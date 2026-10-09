@@ -1343,3 +1343,70 @@ class TestPublishQueueManagement:
         body, status = _web_action(conn, {"action": "publish_schedule", "photo_id": "p9", "publish_at": target})
         assert status == 200
         assert body["scheduled"]["id"] == 1
+
+
+class TestGroupQueueWeb:
+    def _conn(self, status="waiting", delta=3600):
+        conn = make_db()
+        now = int(time.time())
+        conn.execute("INSERT INTO photos (id, title, url_medium) VALUES ('photo1', 'T', 'https://x/photo1_z.jpg')")
+        conn.execute("INSERT INTO groups (id, name) VALUES ('group1@N00', 'Landscape Lovers')")
+        conn.execute(
+            "INSERT INTO pending_group_adds (photo_id, group_id, status, retry_after, queued_at, error_msg, completed_at) "
+            "VALUES ('photo1', 'group1@N00', ?, ?, ?, ?, ?)",
+            (status, now + delta, now - 60, "boom" if status == "error" else None, now if status == "error" else None),
+        )
+        conn.commit()
+        return conn
+
+    def test_snapshot_has_thumbnail_group_and_time(self):
+        from tools.queue_web import group_snapshot
+        snap = group_snapshot(self._conn())
+        item = snap["waiting"][0]
+        assert snap["counts"]["waiting"] == 1
+        assert item["thumb_url"] == "https://x/photo1_z.jpg"
+        assert item["group_name"] == "Landscape Lovers"
+        assert item["when_ts"] > time.time()
+
+    def test_post_one_now_ignores_schedule(self):
+        from tools.queue_web import web_action
+        conn = self._conn(delta=86400)
+        with patch("flickr_api._api_post", return_value={"stat": "ok"}):
+            body, status = web_action(conn, {"action": "group_post_now", "item_id": 1})
+        assert status == 200 and "1 added" in body["message"]
+        assert conn.execute("SELECT status FROM pending_group_adds").fetchone()["status"] == "success"
+
+    def test_retry_failed_item(self):
+        from tools.queue_web import web_action
+        conn = self._conn(status="error")
+        with patch("flickr_api._api_post", return_value={"stat": "ok"}):
+            body, status = web_action(conn, {"action": "group_post_now", "item_id": 1})
+        assert status == 200
+        assert conn.execute("SELECT status FROM pending_group_adds").fetchone()["status"] == "success"
+
+    def test_post_due_skips_future(self):
+        from tools.queue_web import web_action
+        conn = self._conn(delta=3600)
+        with patch("flickr_api._api_post") as mock_post:
+            body, status = web_action(conn, {"action": "group_post_due"})
+        mock_post.assert_not_called()
+        assert body["message"] == "Nothing was due."
+
+    def test_reschedule_failed_item_requeues_it(self):
+        import datetime
+        from tools.queue_web import web_action
+        conn = self._conn(status="error")
+        target = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=2)
+        body, status = web_action(conn, {"action": "group_reschedule", "item_id": 1, "publish_at": target.isoformat()})
+        assert status == 200
+        row = conn.execute("SELECT status, retry_after, error_msg FROM pending_group_adds").fetchone()
+        assert row["status"] == "waiting" and row["error_msg"] is None
+        assert abs(row["retry_after"] - target.timestamp()) < 2
+
+    def test_remove_and_unknown_action(self):
+        from tools.queue_web import web_action
+        conn = self._conn()
+        assert web_action(conn, {"action": "group_remove", "item_id": 1})[1] == 200
+        assert conn.execute("SELECT COUNT(*) FROM pending_group_adds").fetchone()[0] == 0
+        assert web_action(conn, {"action": "group_explode"})[1] == 400
+        assert web_action(conn, {"action": "nonsense"})[1] == 400

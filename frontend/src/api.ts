@@ -133,23 +133,11 @@ export interface SyncStatus {
   rows: SyncRow[];
 }
 
-export interface QueueRow {
-  id: number;
-  photo_id: string;
-  photo_title: string;
-  photo_url: string;
-  group_id: string;
-  group_name: string;
-  group_url: string;
-  retry_at: string | null;
-  queued_at: string;
-  error_msg: string;
-  completed_at: string | null;
-}
-
-// One scheduled-publish queue entry. `when` is the publish time for a
-// waiting row and the completion time for an errored/published one.
-export interface PublishRow {
+// One entry in either Workbench queue (scheduled publishes or group adds).
+// `when_ts` is the scheduled time for a waiting item and the completion
+// (or attempt) time for a failed/finished one. Group fields are present only
+// on group-queue items.
+export interface QueueItem {
   id: number;
   photo_id: string;
   photo_title: string;
@@ -159,13 +147,16 @@ export interface PublishRow {
   when: string | null;
   when_relative: string | null;
   message: string;
+  group_id?: string;
+  group_name?: string;
+  group_url?: string;
 }
 
-export interface PublishQueueData {
+export interface QueueSnapshot {
   counts: { waiting: number; success: number; error: number };
-  waiting: PublishRow[];
-  errors: PublishRow[];
-  successes: PublishRow[];
+  waiting: QueueItem[];
+  errors: QueueItem[];
+  successes: QueueItem[];
 }
 
 export interface ScheduledPublish {
@@ -173,15 +164,6 @@ export interface ScheduledPublish {
   when_ts: number;
   when: string;
   when_relative: string;
-}
-
-export interface QueueData {
-  counts: { waiting: number; success: number; error: number };
-  waiting: QueueRow[];
-  errors: QueueRow[];
-  successes: QueueRow[];
-  // Optional so older servers / static design fixtures without it still render.
-  publishes?: PublishQueueData;
 }
 
 export interface SetupData {

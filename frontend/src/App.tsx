@@ -19,7 +19,8 @@ import { Chat } from "./panels/Chat";
 import { Models } from "./panels/Models";
 import { Prompts } from "./panels/Prompts";
 import { Sync } from "./panels/Sync";
-import { Queue } from "./panels/Queue";
+import { GroupQueue } from "./panels/GroupQueue";
+import { PublishQueue } from "./panels/PublishQueue";
 import { Setup } from "./panels/Setup";
 import { Settings } from "./panels/Settings";
 import { MobileLayout } from "./MobileLayout";
@@ -46,10 +47,29 @@ const components: Record<string, React.FC<IDockviewPanelProps>> = {
   models: Models,
   prompts: Prompts,
   sync: Sync,
-  queue: Queue,
+  publishQueue: PublishQueue,
+  groupQueue: GroupQueue,
   setup: Setup,
   settings: Settings,
 };
+
+// The single "queue" panel was split into publishQueue and groupQueue —
+// carry a saved layout's Queue tab over as the Publish Queue (same spot,
+// new title) instead of discarding the whole layout with a version bump.
+// "queue" only ever appears as a panel id / component name in the JSON.
+function migrateLayout(node: unknown): unknown {
+  if (node === "queue") return "publishQueue";
+  if (Array.isArray(node)) return node.map(migrateLayout);
+  if (node && typeof node === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(node)) {
+      out[k === "queue" ? "publishQueue" : k] =
+        k === "title" && v === "Queue" ? PANEL_SPECS.publishQueue.title : migrateLayout(v);
+    }
+    return out;
+  }
+  return node;
+}
 
 // Both titles and positions come from PANEL_SPECS (the single source of
 // truth also used by the View menu, the command palette, and
@@ -147,7 +167,7 @@ export default function App() {
     let restored = false;
     if (saved) {
       try {
-        event.api.fromJSON(JSON.parse(saved));
+        event.api.fromJSON(migrateLayout(JSON.parse(saved)) as Parameters<DockviewApi["fromJSON"]>[0]);
         restored = true;
       } catch {
         localStorage.removeItem(LAYOUT_KEY);

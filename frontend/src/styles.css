@@ -1756,21 +1756,15 @@ select:focus {
 .queue-section-header {
   display: flex;
   align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
   gap: 10px;
-}
-
-.queue-section-header h3 {
-  margin: 14px 0 8px;
+  margin-top: 8px;
 }
 
 .queue-actions {
   display: flex;
   gap: 6px;
-}
-
-.queue-table a {
-  color: var(--accent);
-  text-decoration: none;
 }
 
 .queue-time {
@@ -1779,19 +1773,30 @@ select:focus {
   white-space: nowrap;
 }
 
-.queue-section + .queue-section {
-  margin-top: 24px;
-  padding-top: 8px;
-  border-top: 1px solid var(--border);
+.queue-section-header .queue-stats {
+  margin-bottom: 0;
 }
 
-.queue-section-header {
+.queue-page-header {
+  display: flex;
+  align-items: center;
   justify-content: space-between;
   flex-wrap: wrap;
+  gap: 8px;
 }
 
-.queue-section-header h2 {
-  margin: 12px 0 4px;
+.queue-page-header h2 {
+  margin: 4px 0;
+}
+
+.queue-refresh {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.queue-panel .pub-list {
+  margin-top: 10px;
 }
 
 .queue-msg {
@@ -1856,6 +1861,24 @@ select:focus {
 
 .pub-thumb-empty {
   background: var(--surface-raised);
+}
+
+.pub-thumb-btn {
+  padding: 0;
+  border: none;
+  background: none;
+  flex: none;
+  line-height: 0;
+}
+
+.pub-group {
+  font-size: 0.8125rem;
+  color: var(--ink-secondary);
+}
+
+.pub-group a {
+  color: var(--accent);
+  text-decoration: none;
 }
 
 .pub-body {

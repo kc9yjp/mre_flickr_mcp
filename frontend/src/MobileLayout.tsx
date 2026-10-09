@@ -17,7 +17,8 @@ import { Command } from "./panels/Command";
 import { Models } from "./panels/Models";
 import { Prompts } from "./panels/Prompts";
 import { Sync } from "./panels/Sync";
-import { Queue } from "./panels/Queue";
+import { GroupQueue } from "./panels/GroupQueue";
+import { PublishQueue } from "./panels/PublishQueue";
 import { Setup } from "./panels/Setup";
 import { Settings } from "./panels/Settings";
 import { UserMenu } from "./UserMenu";
@@ -52,7 +53,8 @@ const PANEL_COMPONENTS: Record<PanelId, React.FC> = {
   models: Models,
   prompts: Prompts,
   sync: Sync,
-  queue: Queue,
+  publishQueue: PublishQueue,
+  groupQueue: GroupQueue,
   setup: Setup,
   settings: Settings,
 };

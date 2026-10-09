@@ -62,7 +62,7 @@ Visit `http://localhost:8000` after starting the container:
 | Page | Purpose |
 |------|---------|
 | `/login` | Browser-based Flickr OAuth login (no terminal paste) |
-| `/app` | **Mr. E's Photo Workbench** — dockable panels for Photo Browser, Sync (status/trigger, Reset Database), Stats/Summary, Setup (personal MCP config snippet), Chat, Queue, and Settings |
+| `/app` | **Mr. E's Photo Workbench** — dockable panels for Photo Browser, Sync (status/trigger, Reset Database), Stats/Summary, Setup (personal MCP config snippet), Chat, Publish Queue and Group Queue (scheduled publishes / group-pool adds), and Settings |
 
 `/` redirects to `/app` for logged-in users, `/login` otherwise. The classic
 server-rendered `/stats`, `/sync`, `/setup` pages were removed when the

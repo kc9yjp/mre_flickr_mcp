@@ -12,7 +12,7 @@ interface Events {
   insertChatText: string; // append this text to the chat input (not sent) so the user can build a prompt around it
   editPrompt: string;   // request the Prompts panel open a prompt (by id) for editing
   promptsChanged: void; // a prompt/category/variable was created, edited, deleted, or reset — refetch /api/commands
-  publishQueueChanged: void; // a photo was scheduled/unscheduled outside the Queue panel — refetch /api/queue
+  publishQueueChanged: void; // a photo was scheduled/unscheduled outside the Publish Queue page — refetch it
   llmConnectionsChanged: void; // a connection was added/edited/deleted, or its disabled_models changed — refetch /api/llm-settings + model lists
   photoOpened: string | null; // Photo Viewer's current photo, for chat context
   showPhotoList: string[]; // a tool found these photo ids — show them in the Photo Browser grid

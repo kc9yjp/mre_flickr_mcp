@@ -18,7 +18,7 @@
 
 import type {
   Album, AlbumPhotoPage, Connection, ConnectionPreset, Conversation, LLMSettings, Me, Photo, PhotoDetail,
-  PhotoPage, Prompt, PromptCategory, PromptsData, PromptVariable, PublishRow, QueueData, QueueRow, SessionStats, SetupData,
+  PhotoPage, Prompt, PromptCategory, PromptsData, PromptVariable, QueueItem, QueueSnapshot, SessionStats, SetupData,
   Stats, StreamEvent, SyncRow, SyncStatus, WorkflowCommand,
 } from "../api";
 
@@ -116,53 +116,105 @@ const SYNC_STATUS: SyncStatus = {
   rows: [syncRow("photos", 1842), syncRow("contacts", 96), syncRow("groups", 34, 3), syncRow("albums", 12)],
 };
 
-function queueRow(id: number, status: "waiting" | "error" | "success"): QueueRow {
+// Both Workbench queues (scheduled publishes, group adds) share one item
+// shape and one set of actions, so one in-memory store type backs both.
+type MockQueue = { waiting: QueueItem[]; errors: QueueItem[]; successes: QueueItem[] };
+const GROUP_NAMES = ["Street Photographers", "Golden Hour", "Film Only", "Mono Monday"];
+
+function queueItem(id: number, whenTs: number, opts: { group?: boolean; message?: string } = {}): QueueItem {
   const photo = PHOTOS[id % PHOTOS.length];
-  const groupNames = ["Street Photographers", "Golden Hour", "Film Only", "Mono Monday"];
-  return {
-    id, photo_id: photo.id, photo_title: photo.title, photo_url: photo.url_photopage,
-    group_id: `700${id % 4}`, group_name: groupNames[id % 4], group_url: `https://www.flickr.com/groups/700${id % 4}/`,
-    retry_at: status === "waiting" ? isoDaysAgo(-1) : null,
-    queued_at: isoDaysAgo(1),
-    error_msg: status === "error" ? "Pool full — try again later." : "",
-    completed_at: status === "success" ? isoDaysAgo(2) : null,
-  };
-}
-const QUEUE = {
-  waiting: [queueRow(1, "waiting"), queueRow(2, "waiting")],
-  errors: [queueRow(3, "error")],
-  successes: [queueRow(4, "success"), queueRow(5, "success"), queueRow(6, "success")],
-};
-function publishRow(id: number, status: "waiting" | "error" | "success", whenTs: number): PublishRow {
-  const photo = PHOTOS[id % PHOTOS.length];
-  return {
+  const item: QueueItem = {
     id, photo_id: photo.id, photo_title: photo.title, photo_url: photo.url_photopage,
     thumb_url: photo.url_medium, when_ts: whenTs, when: null, when_relative: null,
-    message: status === "error" ? "Photo not found" : "",
+    message: opts.message ?? "",
   };
+  if (opts.group) {
+    Object.assign(item, {
+      group_id: `700${id % 4}`, group_name: GROUP_NAMES[id % 4],
+      group_url: `https://www.flickr.com/groups/700${id % 4}/pool/`,
+    });
+  }
+  return item;
 }
-const PUBLISHES = {
-  waiting: [
-    publishRow(11, "waiting", nowSec() + 5 * 3600),
-    publishRow(12, "waiting", nowSec() + 29 * 3600),
-    publishRow(13, "waiting", nowSec() + 53 * 3600),
-  ],
-  errors: [publishRow(15, "error", nowSec() - 2 * 3600)],
-  successes: [publishRow(14, "success", nowSec() - 20 * 3600)],
+
+const QUEUES: Record<"publish" | "groups", MockQueue> = {
+  publish: {
+    waiting: [
+      queueItem(11, nowSec() + 5 * 3600),
+      queueItem(12, nowSec() + 29 * 3600),
+      queueItem(13, nowSec() + 53 * 3600),
+    ],
+    errors: [queueItem(15, nowSec() - 2 * 3600, { message: "Photo not found" })],
+    successes: [queueItem(14, nowSec() - 20 * 3600)],
+  },
+  groups: {
+    waiting: [
+      queueItem(1, nowSec() - 600, { group: true }),
+      queueItem(2, nowSec() + 7 * 3600, { group: true }),
+      queueItem(6, nowSec() + 31 * 3600, { group: true }),
+    ],
+    errors: [queueItem(3, nowSec() - 3 * 3600, { group: true, message: "Group requires 25 faves; photo has 19" })],
+    successes: [4, 5].map((i) => queueItem(i, nowSec() - i * 3600, { group: true })),
+  },
 };
-const allPublishRows = () => [...PUBLISHES.waiting, ...PUBLISHES.errors, ...PUBLISHES.successes];
+
+const snapshot = (q: MockQueue): QueueSnapshot => ({
+  counts: { waiting: q.waiting.length, success: q.successes.length, error: q.errors.length },
+  ...q,
+});
+const allItems = (q: MockQueue) => [...q.waiting, ...q.errors, ...q.successes];
 const scheduledFor = (photoId: string) => {
-  const r = PUBLISHES.waiting.find((x) => x.photo_id === photoId);
+  const r = QUEUES.publish.waiting.find((x) => x.photo_id === photoId);
   return r ? { id: r.id, when_ts: r.when_ts!, when: "", when_relative: "" } : null;
 };
-const queueData = (): QueueData => ({
-  counts: { waiting: QUEUE.waiting.length, success: QUEUE.successes.length, error: QUEUE.errors.length },
-  ...QUEUE,
-  publishes: {
-    counts: { waiting: PUBLISHES.waiting.length, success: PUBLISHES.successes.length, error: PUBLISHES.errors.length },
-    ...PUBLISHES,
-  },
-});
+
+// Shared handling for {publish,group}_{now,reschedule,remove} and group_post_due.
+function queueAction(q: MockQueue, verb: string, body: Record<string, any>, doneWord: string) {
+  const toTs = (iso: string) => Math.floor(new Date(iso).getTime() / 1000);
+  const complete = (items: QueueItem[]) => {
+    const ids = new Set(items.map((r) => r.id));
+    q.waiting = q.waiting.filter((r) => !ids.has(r.id));
+    q.errors = q.errors.filter((r) => !ids.has(r.id));
+    q.successes = [...items.map((r) => ({ ...r, when_ts: nowSec(), message: "" })), ...q.successes];
+    return json({ ok: true, message: `${items.length} ${doneWord}.` });
+  };
+  const sortWaiting = () => q.waiting.sort((a, b) => (a.when_ts ?? 0) - (b.when_ts ?? 0));
+  switch (verb) {
+    case "now":
+    case "post_now":
+      return complete(body.item_id != null
+        ? [...q.waiting, ...q.errors].filter((r) => r.id === body.item_id)
+        : q.waiting);
+    case "post_due":
+      return complete(q.waiting.filter((r) => (r.when_ts ?? 0) <= nowSec()));
+    case "reschedule": {
+      const row = allItems(q).find((r) => r.id === body.item_id);
+      if (!row) return json({ error: "That item is no longer in the queue." }, 404);
+      q.errors = q.errors.filter((r) => r.id !== row.id);
+      q.waiting = [...q.waiting.filter((r) => r.id !== row.id), { ...row, when_ts: toTs(body.publish_at), message: "" }];
+      sortWaiting();
+      return json({ ok: true, message: "Rescheduled." });
+    }
+    case "remove":
+      q.waiting = q.waiting.filter((r) => r.id !== body.item_id);
+      q.errors = q.errors.filter((r) => r.id !== body.item_id);
+      return json({ ok: true, message: "Removed from the queue." });
+    case "schedule": {
+      const existing = q.waiting.find((r) => r.photo_id === body.photo_id);
+      if (existing) existing.when_ts = toTs(body.publish_at);
+      else {
+        const idx = Math.max(0, PHOTOS.findIndex((p) => p.id === body.photo_id));
+        q.waiting.push({ ...queueItem(idx, toTs(body.publish_at)), id: Math.max(0, ...allItems(q).map((r) => r.id)) + 1 });
+      }
+      sortWaiting();
+      return json({ ok: true, message: "Scheduled.", scheduled: scheduledFor(body.photo_id) });
+    }
+    case "cancel_photo":
+      q.waiting = q.waiting.filter((r) => r.photo_id !== body.photo_id);
+      return json({ ok: true, message: "Schedule cancelled." });
+  }
+  return json({ error: `unknown action: ${body.action}` }, 400);
+}
 
 const SETTINGS: MockSetting[] = [
   { key: "retry_timezone", label: "Retry timezone", description: "Timezone used to schedule queued group-pool retries.", default: "UTC", value: "America/Los_Angeles" },
@@ -316,61 +368,15 @@ function registerRoutes() {
   on("POST", "/api/sync/:type/cancel", () => json({ cancelled: false, reason: "nothing running (mock)" }));
   on("POST", "/api/reset", () => json({ ok: true }));
 
-  on("GET", "/api/queue", () => json(queueData()));
+  on("GET", "/api/queue/:kind", (m) => {
+    const q = QUEUES[m[1] as keyof typeof QUEUES];
+    return q ? json(snapshot(q)) : json({ error: "unknown queue" }, 404);
+  });
   on("POST", "/api/queue", (_m, _p, body) => {
-    if (typeof body?.action === "string" && body.action.startsWith("publish_")) {
-      const toTs = (iso: string) => Math.floor(new Date(iso).getTime() / 1000);
-      const publish = (rows: PublishRow[]) => {
-        const ids = new Set(rows.map((r) => r.id));
-        PUBLISHES.waiting = PUBLISHES.waiting.filter((r) => !ids.has(r.id));
-        PUBLISHES.errors = PUBLISHES.errors.filter((r) => !ids.has(r.id));
-        PUBLISHES.successes = [...rows.map((r) => ({ ...r, when_ts: nowSec(), message: "" })), ...PUBLISHES.successes];
-        return json({ ok: true, message: `${rows.length} published.` });
-      };
-      switch (body.action) {
-        case "publish_schedule": {
-          const existing = PUBLISHES.waiting.find((r) => r.photo_id === body.photo_id);
-          if (existing) existing.when_ts = toTs(body.publish_at);
-          else {
-            const idx = Math.max(0, PHOTOS.findIndex((p) => p.id === body.photo_id));
-            const row = publishRow(idx, "waiting", toTs(body.publish_at));
-            PUBLISHES.waiting.push({ ...row, id: Math.max(0, ...allPublishRows().map((r) => r.id)) + 1 });
-          }
-          PUBLISHES.waiting.sort((a, b) => (a.when_ts ?? 0) - (b.when_ts ?? 0));
-          return json({ ok: true, message: "Scheduled.", scheduled: scheduledFor(body.photo_id) });
-        }
-        case "publish_cancel_photo":
-          PUBLISHES.waiting = PUBLISHES.waiting.filter((r) => r.photo_id !== body.photo_id);
-          return json({ ok: true, message: "Schedule cancelled." });
-        case "publish_reschedule": {
-          const row = allPublishRows().find((r) => r.id === body.item_id);
-          if (!row) return json({ error: "That item is no longer in the queue." }, 404);
-          PUBLISHES.errors = PUBLISHES.errors.filter((r) => r.id !== row.id);
-          PUBLISHES.waiting = [...PUBLISHES.waiting.filter((r) => r.id !== row.id),
-            { ...row, when_ts: toTs(body.publish_at), message: "" }];
-          PUBLISHES.waiting.sort((a, b) => (a.when_ts ?? 0) - (b.when_ts ?? 0));
-          return json({ ok: true, message: "Rescheduled." });
-        }
-        case "publish_remove":
-          PUBLISHES.waiting = PUBLISHES.waiting.filter((r) => r.id !== body.item_id);
-          PUBLISHES.errors = PUBLISHES.errors.filter((r) => r.id !== body.item_id);
-          return json({ ok: true, message: "Removed from the queue." });
-        case "publish_now":
-          return publish(body.item_id != null
-            ? [...PUBLISHES.waiting, ...PUBLISHES.errors].filter((r) => r.id === body.item_id)
-            : PUBLISHES.waiting);
-      }
-    }
-    if (body && body.delete_id != null) {
-      for (const key of ["waiting", "errors", "successes"] as const) {
-        QUEUE[key] = QUEUE[key].filter((r) => r.id !== body.delete_id);
-      }
-      return json({ ok: true, deleted: 1 });
-    }
-    const allIds = [...QUEUE.waiting, ...QUEUE.errors, ...QUEUE.successes].map((r) => r.id);
-    const id = Math.max(0, ...allIds) + 1;
-    QUEUE.waiting.push(queueRow(id, "waiting"));
-    return json({ ok: true, added: 1 });
+    const action = String(body?.action ?? "");
+    if (action.startsWith("publish_")) return queueAction(QUEUES.publish, action.slice(8), body, "published");
+    if (action.startsWith("group_")) return queueAction(QUEUES.groups, action.slice(6), body, "added");
+    return json({ error: `unknown action: ${action}` }, 400);
   });
 
   on("GET", "/api/settings", () => json({ settings: SETTINGS }));

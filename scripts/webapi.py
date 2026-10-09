@@ -919,7 +919,12 @@ async def api_sync_cancel(request: Request):
 
 
 async def api_queue(request: Request):
-    """GET /api/queue — queue data; POST /api/queue — retry/delete actions."""
+    """GET /api/queue/{kind} — publish or group queue snapshot; POST /api/queue — item actions.
+
+    Actions are prefixed by queue (publish_*, group_*) and handled in
+    tools/queue_web.py, which gives both Workbench queue pages the same
+    item shape and the same set of actions.
+    """
     user = _session_user(request)
     if not user:
         return _unauthorized()
@@ -927,8 +932,7 @@ async def api_queue(request: Request):
         return err
 
     from db import _current_user as _ctx
-    from tools.groups import _flush_group_queue, _fmt_chicago
-    from tools.publish_queue import _queue_snapshot as _publish_snapshot, _web_action as _publish_web_action
+    from tools.queue_web import group_snapshot, publish_snapshot, web_action
 
     username = user["username"]
 
@@ -937,105 +941,31 @@ async def api_queue(request: Request):
             body = await request.json()
         except ValueError:
             return JSONResponse({"error": "invalid JSON"}, status_code=400)
-        action = body.get("action", "")
+        if not isinstance(body, dict):
+            return JSONResponse({"error": "expected a JSON object"}, status_code=400)
         token = _ctx.set(user)
         try:
             with get_db_for_user(username, user["nsid"]) as conn:
-                if action == "delete_item":
-                    item_id = body.get("item_id")
-                    if not isinstance(item_id, int):
-                        return JSONResponse({"error": "item_id required"}, status_code=400)
-                    deleted = conn.execute(
-                        "DELETE FROM pending_group_adds WHERE id=? AND status='waiting'",
-                        (item_id,),
-                    ).rowcount
-                    return JSONResponse({"ok": True, "deleted": deleted})
-                elif action in ("retry_ready", "retry_all"):
-                    flushed = _flush_group_queue(conn, force=(action == "retry_all"))
-                    ok  = sum(1 for r in flushed if r["result"] == "success")
-                    lim = sum(1 for r in flushed if r["result"] == "still_limited")
-                    err = sum(1 for r in flushed if r["result"].startswith("error"))
-                    return JSONResponse({"ok": True, "added": ok, "limited": lim, "errors": err})
-                elif action.startswith("publish_"):
-                    payload, status = _publish_web_action(conn, body)
-                    if status >= 400:
-                        logging.warning("api_queue: %s failed for %s: %s", action, user["nsid"], payload.get("error"))
-                    return JSONResponse(payload, status_code=status)
-                else:
-                    return JSONResponse({"error": f"unknown action: {action}"}, status_code=400)
+                payload, status = web_action(conn, body)
+            if status >= 400:
+                logging.warning("api_queue: %s failed for %s: %s", body.get("action"), user["nsid"], payload.get("error"))
+            return JSONResponse(payload, status_code=status)
         except Exception as e:
-            logging.exception("api_queue action error")
+            logging.exception("api_queue: action %s failed for %s", body.get("action"), user["nsid"])
             return JSONResponse({"error": str(e)}, status_code=500)
         finally:
             _ctx.reset(token)
 
-    def _row(r):
-        return {
-            "id":           r["id"],
-            "photo_id":     r["photo_id"],
-            "photo_title":  r["photo_title"] or r["photo_id"],
-            "photo_url":    r["photo_url"] or f"https://www.flickr.com/photo.gne?id={r['photo_id']}",
-            "group_id":     r["group_id"],
-            "group_name":   r["group_name"] or r["group_id"],
-            "group_url":    f"https://www.flickr.com/groups/{r['group_id']}/pool/",
-            "retry_at":     _fmt_chicago(r["retry_after"]) if r["retry_after"] else None,
-            "queued_at":    _fmt_chicago(r["queued_at"]),
-            "error_msg":    r["error_msg"] or "",
-            "completed_at": _fmt_chicago(r["completed_at"]) if r["completed_at"] else None,
-        }
-
+    kind = request.path_params.get("kind", "")
+    snapshot = {"publish": publish_snapshot, "groups": group_snapshot}.get(kind)
+    if snapshot is None:
+        return JSONResponse({"error": f"unknown queue: {kind}"}, status_code=404)
     try:
         with get_db_for_user(username, user["nsid"]) as conn:
-            counts = {row["status"]: row["n"] for row in conn.execute(
-                "SELECT status, COUNT(*) AS n FROM pending_group_adds GROUP BY status"
-            ).fetchall()}
-            counts.setdefault("waiting", 0)
-            counts.setdefault("success", 0)
-            counts.setdefault("error", 0)
-
-            waiting_rows = [_row(r) for r in conn.execute(
-                "SELECT pga.id, pga.photo_id, pga.group_id, pga.retry_after, pga.queued_at, "
-                "       NULL AS error_msg, NULL AS completed_at, "
-                "       p.title AS photo_title, p.url_photopage AS photo_url, g.name AS group_name "
-                "FROM pending_group_adds pga "
-                "LEFT JOIN photos p ON pga.photo_id = p.id "
-                "LEFT JOIN groups g ON pga.group_id = g.id "
-                "WHERE pga.status='waiting' ORDER BY pga.retry_after ASC"
-            ).fetchall()]
-
-            error_rows = [_row(r) for r in conn.execute(
-                "SELECT pga.id, pga.photo_id, pga.group_id, pga.queued_at, pga.completed_at, pga.error_msg, "
-                "       NULL AS retry_after, "
-                "       p.title AS photo_title, p.url_photopage AS photo_url, g.name AS group_name "
-                "FROM pending_group_adds pga "
-                "LEFT JOIN photos p ON pga.photo_id = p.id "
-                "LEFT JOIN groups g ON pga.group_id = g.id "
-                "WHERE pga.status='error' ORDER BY pga.queued_at DESC LIMIT 30"
-            ).fetchall()]
-
-            success_rows = [_row(r) for r in conn.execute(
-                "SELECT pga.id, pga.photo_id, pga.group_id, pga.queued_at, pga.completed_at, "
-                "       NULL AS error_msg, NULL AS retry_after, "
-                "       p.title AS photo_title, p.url_photopage AS photo_url, g.name AS group_name "
-                "FROM pending_group_adds pga "
-                "LEFT JOIN photos p ON pga.photo_id = p.id "
-                "LEFT JOIN groups g ON pga.group_id = g.id "
-                "WHERE pga.status='success' ORDER BY pga.completed_at DESC LIMIT 20"
-            ).fetchall()]
-
-            publishes = _publish_snapshot(conn)
-
+            return JSONResponse(snapshot(conn))
     except Exception as e:
-        logging.exception("api_queue load error")
+        logging.exception("api_queue: loading %s queue failed for %s", kind, user["nsid"])
         return JSONResponse({"error": str(e)}, status_code=500)
-
-    return JSONResponse({
-        "counts": counts,
-        "waiting": waiting_rows,
-        "errors": error_rows,
-        "successes": success_rows,
-        "publishes": publishes,
-    })
 
 
 async def api_setup(request: Request):
@@ -1337,7 +1267,8 @@ def api_routes() -> list[Route]:
         Route("/api/sync/status",  endpoint=api_sync_status),
         Route("/api/sync/{type}/cancel", endpoint=api_sync_cancel, methods=["POST"]),
         Route("/api/sync/{type}",  endpoint=api_sync_trigger, methods=["POST"]),
-        Route("/api/queue",        endpoint=api_queue, methods=["GET", "POST"]),
+        Route("/api/queue",        endpoint=api_queue, methods=["POST"]),
+        Route("/api/queue/{kind}", endpoint=api_queue, methods=["GET"]),
         Route("/api/setup",        endpoint=api_setup),
         Route("/api/reset",        endpoint=api_reset, methods=["POST"]),
         Route("/api/settings",     endpoint=api_settings, methods=["GET", "POST"]),

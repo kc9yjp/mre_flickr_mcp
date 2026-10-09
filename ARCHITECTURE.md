@@ -216,19 +216,19 @@ future add (`queue=true`, `retry_at=morning`, `days_offset=2` for
 drip-posting). Either way the attempt lands in this table with a
 `retry_after` timestamp; `_flush_group_queue` (in `tools/groups.py`) is
 called from the background loop, from `get_group_queue`, and from the
-Workbench Queue panel's "retry" actions, and posts anything whose retry
-window has passed.
+Workbench Group Queue page's "Post now" / "Post due now" actions, and posts
+anything whose retry window has passed.
 
 **Scheduled-publish queue** (`pending_publishes`): `schedule_publish` queues a
 photo to go public at a future time. It accepts the group queue's
 `publish_at`/`days_offset` syntax plus absolute dates, and rejects
 unrecognised or past times rather than silently falling back. The Workbench
-Photo Viewer and Queue panel go through the same helpers
-(`_web_action`, `_queue_snapshot`), sending absolute UTC instants picked in
-the browser's time zone. `set_visibility(is_public=true)` drops any waiting
-entry for that photo so a later flush can't reset its date again. `_flush_publish_queue` (in `tools/publish_queue.py`)
-runs from the same places — the background loop, `get_publish_queue`, and the
-Queue panel's "Publish all now" — and for each due photo first resets its
+Photo Viewer and Publish Queue page go through the same helpers,
+sending absolute UTC instants picked in the browser's time zone.
+`set_visibility(is_public=true)` drops any waiting entry for that photo so a
+later flush can't reset its date again. `_flush_publish_queue` (in
+`tools/publish_queue.py`) runs from the same places — the background loop,
+`get_publish_queue`, and the Publish Queue page's "Publish now" — and for each due photo first resets its
 date posted to one minute before now (`flickr.photos.setDates`), then makes
 it public (`flickr.photos.setPerms`). Flickr orders photostreams and
 contacts' feeds by date posted, so without the reset an old private photo
@@ -236,6 +236,16 @@ would go public buried at its original upload date. A Flickr rejection of
 the publish marks the item `error`; a transient failure (timeout, rate
 limit, 5xx) leaves it `waiting` for the next loop wake; a rejected date
 reset alone still publishes and records a note.
+
+**Queue pages in the Workbench**: the Publish Queue and Group Queue panels
+are one component (`frontend/src/panels/QueuePage.tsx`) configured with
+different wording. Both read `GET /api/queue/{publish,groups}` and act through
+`POST /api/queue` with `publish_*` / `group_*` actions; `tools/queue_web.py`
+builds the two snapshots in one item shape (thumbnail, time, message, plus
+group fields) and dispatches the actions, so each page offers the same
+per-item Change time / now / remove buttons and Try again / Schedule again /
+Dismiss for failures. Pages reload every 30s while visible, on returning to
+the tab, and on demand.
 
 **Group AI summary** (`groups.needs_summary`): `sync_groups.py` runs in two
 phases. Phase one (`sync_groups()` + `sync_group_descriptions()`) diffs
@@ -416,7 +426,7 @@ can call every MCP tool directly.
 **Frontend** (`frontend/`, React + TypeScript + Vite): a
 [dockview](https://dockview.dev/) multi-panel shell (`App.tsx`) with panels
 for Photo Browser, an "Other's Photo" viewer, Summary, Chat, Commands,
-Models, Prompts, Sync, Queue, Setup, and Settings — each panel is a React
+Models, Prompts, Sync, Publish Queue, Group Queue, Setup, and Settings — each panel is a React
 component under `frontend/src/panels/`, registered once in
 `frontend/src/panelDefs.ts` so the dockview shell, the mobile layout, and
 the Ctrl/Cmd-K command palette (`CommandPalette.tsx`) all share one

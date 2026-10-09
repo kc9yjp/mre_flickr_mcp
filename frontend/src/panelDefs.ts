@@ -15,13 +15,14 @@ export const PANEL_SPECS: Record<
   models:   { title: "Models", position: { referencePanel: "chat",    direction: "within" } },
   prompts:  { title: "Prompts",  position: { referencePanel: "chat",  direction: "within" } },
   sync:     { title: "Sync",     position: { referencePanel: "chat", direction: "within" } },
-  queue:    { title: "Queue",    position: { referencePanel: "chat", direction: "within" } },
+  publishQueue: { title: "Publish Queue", position: { referencePanel: "chat", direction: "within" } },
+  groupQueue:   { title: "Group Queue",   position: { referencePanel: "chat", direction: "within" } },
   setup:    { title: "Setup",    position: { referencePanel: "chat", direction: "within" } },
   settings: { title: "Settings", position: { referencePanel: "chat", direction: "within" } },
 };
 
 export const PANEL_ORDER = [
-  "photos", "photoViewer", "chat", "summary", "command", "models", "prompts", "sync", "queue", "setup", "settings",
+  "photos", "photoViewer", "chat", "summary", "command", "models", "prompts", "sync", "publishQueue", "groupQueue", "setup", "settings",
 ] as const;
 
 export type PanelId = (typeof PANEL_ORDER)[number];

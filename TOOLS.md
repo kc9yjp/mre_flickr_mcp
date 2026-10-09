@@ -123,7 +123,7 @@ confirmation UI provides.
 | `get_publish_queue` | | | Waiting photos (soonest first, with time and time-until), failures with Flickr's reason, and recent publishes; also publishes anything now due. |
 | `cancel_scheduled_publish` | ✍️ | `photo_id`* | Take a photo out of the publish queue (waiting or failed); it stays private. |
 
-In the Workbench, schedule a private photo from the **Publishing** section of the Photo Viewer, and manage the queue (change time, publish now, unschedule, retry or dismiss failures) in the **Queue** panel.
+In the Workbench, schedule a private photo from the **Publishing** section of the Photo Viewer, and manage the queue (change time, publish now, unschedule, retry or dismiss failures) on the **Publish Queue** page. Queued group adds have a matching **Group Queue** page.
 
 ## Sync (`tools/sync.py`) — 1 tool
 
