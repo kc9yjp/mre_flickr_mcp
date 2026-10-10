@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import sqlite3
 
 from mcp.server import Server
 from mcp.types import TextContent
@@ -59,6 +60,16 @@ async def call_tool(name: str, arguments: dict):
         return await asyncio.to_thread(lambda: asyncio.run(handler(arguments)))
     except (FileNotFoundError, RuntimeError) as e:
         return [TextContent(type="text", text=str(e))]
+    except sqlite3.OperationalError as e:
+        # Almost always "database is locked" — a sync held the write lock past
+        # the busy timeout. Say so plainly: most write tools call Flickr before
+        # touching the local DB, so the Flickr change may well have happened.
+        logging.warning("Tool %s hit a local database error: %s", name, e)
+        return [TextContent(type="text", text=(
+            f"The server's local database was busy ({e}), so {name} could not finish. "
+            "If this tool changes things on Flickr, that change may already have been applied — "
+            "check the current state (e.g. with get_photo) before retrying."
+        ))]
     except Exception as e:
         logging.exception("Unexpected error in tool %s", name)
         return [TextContent(type="text", text=f"Unexpected error: {type(e).__name__}")]

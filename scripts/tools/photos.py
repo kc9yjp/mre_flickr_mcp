@@ -4,6 +4,7 @@ import base64
 import io
 import json
 import logging
+import sqlite3
 import time
 from datetime import datetime, timezone
 
@@ -651,15 +652,23 @@ async def _update_photo(args):
         flickr_api._api_post("flickr.photos.setTags", {"photo_id": photo_id, "tags": args["tags"]})
         updated.append("tags")
 
-    # Keep the local cache in step with what was just written to Flickr.
-    with get_db() as conn:
-        if "title" in args:
-            conn.execute("UPDATE photos SET title=? WHERE id=?", (args["title"], photo_id))
-        if "description" in args:
-            conn.execute("UPDATE photos SET description=? WHERE id=?", (args["description"], photo_id))
-        if "tags" in args:
-            conn.execute("UPDATE photos SET tags=? WHERE id=?", (args["tags"], photo_id))
-    return [TextContent(type="text", text=f"Updated {', '.join(updated)} for photo {photo_id}.")]
+    # Keep the local cache in step with what was just written to Flickr. The
+    # Flickr update has already succeeded at this point, so a cache failure
+    # (e.g. the DB locked by a sync) must not be reported as the update
+    # failing — the next photo sync refreshes the cache anyway.
+    text = f"Updated {', '.join(updated)} for photo {photo_id}."
+    try:
+        with get_db() as conn:
+            if "title" in args:
+                conn.execute("UPDATE photos SET title=? WHERE id=?", (args["title"], photo_id))
+            if "description" in args:
+                conn.execute("UPDATE photos SET description=? WHERE id=?", (args["description"], photo_id))
+            if "tags" in args:
+                conn.execute("UPDATE photos SET tags=? WHERE id=?", (args["tags"], photo_id))
+    except sqlite3.Error as e:
+        logging.warning("update_photo: Flickr updated but local cache write failed for photo %s: %s", photo_id, e)
+        text += " (Saved on Flickr; the local search cache will catch up on the next photo sync.)"
+    return [TextContent(type="text", text=text)]
 
 
 # Claude's vision pipeline downscales anything larger than this anyway (long edge,

@@ -1472,3 +1472,72 @@ class TestGroupPendingApproval:
         rows = {r["photo_id"]: (r["status"], r["error_msg"]) for r in conn.execute("SELECT * FROM pending_group_adds")}
         assert rows["p1"] == ("success", GROUP_PENDING_NOTE)
         assert rows["p2"] == ("error", "Photo limit reached")
+
+
+class TestSyncWriteLocks:
+    """Sync phases run in a subprocess sharing the DB with the server; holding a
+    write transaction across a Flickr call starves tool calls ("database is locked")."""
+
+    def _conn(self):
+        import flickr_sync
+        conn = sqlite3.connect(":memory:")
+        flickr_sync.init_db(conn)
+        conn.execute("INSERT INTO groups (id, name, description) VALUES ('g1', 'G1', 'old'), ('g2', 'G2', 'old')")
+        conn.commit()
+        return conn
+
+    def test_photo_groups_commits_its_writes(self):
+        import flickr_sync
+        conn = self._conn()
+        page = {"photos": {"pages": 1, "photo": [{"id": "p1"}]}}
+        with (
+            patch("flickr_api._load_credentials", return_value=FAKE_CREDS),
+            patch("flickr_api._api_get", return_value=page),
+        ):
+            flickr_sync.sync_photo_groups(conn)
+        assert not conn.in_transaction
+        assert conn.execute("SELECT COUNT(*) FROM photo_groups").fetchone()[0] == 2
+
+    def test_descriptions_hold_no_lock_during_api_calls(self):
+        import flickr_sync
+        conn = self._conn()
+
+        def fake_get(method, params):
+            assert not conn.in_transaction, "write transaction open across a Flickr call"
+            return {"group": {"description": {"_content": "new " + params["group_id"]}}}
+
+        with patch("flickr_api._api_get", side_effect=fake_get), patch("time.sleep"):
+            changed = flickr_sync.sync_group_descriptions(conn)
+        assert changed == 2 and not conn.in_transaction
+        assert conn.execute("SELECT description FROM groups WHERE id='g1'").fetchone()[0] == "new g1"
+
+
+class TestLockedDatabaseReporting:
+    @pytest.mark.asyncio
+    async def test_update_photo_reports_flickr_success_when_cache_write_fails(self, db, api_post):
+        import contextlib
+        import mcp_tools
+
+        @contextlib.contextmanager
+        def locked_db():
+            raise sqlite3.OperationalError("database is locked")
+            yield  # pragma: no cover
+
+        api_post.return_value = {"stat": "ok"}
+        with patch("tools.photos.get_db", locked_db):
+            result = await mcp_tools._update_photo({"id": "photo1", "tags": "hydrangea flower"})
+        text = _text(result)
+        assert "Updated tags" in text and "Saved on Flickr" in text
+        api_post.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_call_tool_explains_locked_database(self):
+        import mcp_tools
+
+        async def boom(args):
+            raise sqlite3.OperationalError("database is locked")
+
+        with patch.dict(mcp_tools._HANDLERS, {"set_visibility": boom}):
+            result = await mcp_tools.call_tool("set_visibility", {"id": "x", "is_public": True})
+        text = _text(result)
+        assert "database was busy" in text and "may already have been applied" in text

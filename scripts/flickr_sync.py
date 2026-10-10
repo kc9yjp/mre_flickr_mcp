@@ -385,6 +385,9 @@ def fetch_backfill(user_nsid, conn):
         page, pages = 1, 1
         window_count = 0
         while page <= pages:
+            # The caller upserts what we yield; commit it before going back to
+            # the network so the write lock isn't held during the fetch.
+            conn.commit()
             data = api_get("flickr.photos.search", {
                 "user_id":        user_nsid,
                 "min_upload_date": str(t),
@@ -494,7 +497,9 @@ def sync_group_descriptions(conn):
     rows = conn.execute("SELECT id, description FROM groups").fetchall()
     if not rows:
         return 0
-    changed = 0
+    # Collect changes first and write them in one short transaction at the
+    # end, so the write lock isn't held across a Flickr call per group.
+    changes = []
     for group_id, prev_description in rows:
         try:
             data = flickr_api._api_get("flickr.groups.getInfo", {"group_id": group_id})
@@ -504,15 +509,12 @@ def sync_group_descriptions(conn):
         group = data.get("group", {})
         description = ((group.get("description") or {}).get("_content", "") or "")[:2000]
         if description != (prev_description or ""):
-            conn.execute(
-                "UPDATE groups SET description=?, needs_summary=1 WHERE id=?",
-                (description, group_id),
-            )
-            changed += 1
+            changes.append((description, group_id))
         time.sleep(0.15)
+    conn.executemany("UPDATE groups SET description=?, needs_summary=1 WHERE id=?", changes)
     conn.commit()
-    print(f"  {changed} group descriptions changed.")
-    return changed
+    print(f"  {len(changes)} group descriptions changed.")
+    return len(changes)
 
 
 def _parse_group_summary_json(text: str) -> dict:
@@ -637,8 +639,10 @@ def sync_photo_groups(conn):
     """Populate photo_groups by fetching the user's photos from each group pool.
 
     The whole crawl happens in memory first, then the table is updated in one
-    short write transaction (committed by the caller), so the write lock is
-    never held across network calls.  Rows are replaced per group: a group
+    short write transaction committed here, so the write lock is never held
+    across network calls. (It used to be left for the caller to commit, which
+    sync_groups.py never did — the lock then stayed open through the whole
+    AI-summary phase and starved the server's tool calls.)  Rows are replaced per group: a group
     whose pool fetch fails keeps its previous memberships instead of being
     wiped by a partial sync.
     """
@@ -684,6 +688,7 @@ def sync_photo_groups(conn):
             rows,
         )
         total += len(rows)
+    conn.commit()
 
     if failed:
         print(f"  Warning: {failed} of {len(groups)} group pools could not be fetched; "

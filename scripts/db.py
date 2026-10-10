@@ -197,13 +197,19 @@ any changes to tool handler call sites.
 # Connection helpers
 # ---------------------------------------------------------------------------
 
+_BUSY_TIMEOUT_SECONDS = 15.0
+
+
 def _connect(path):
     """Shared connection factory for all MCP tool DB access.
 
-    sqlite3.connect's default timeout=5.0 already installs a 5000ms busy
-    handler, so no explicit busy_timeout PRAGMA is needed.
+    timeout= installs SQLite's busy handler: a tool call that hits a write
+    lock held by a sync subprocess waits up to this long instead of failing
+    with "database is locked". Syncs keep their write transactions short
+    (never across a network call), so in practice the wait is milliseconds;
+    this is headroom, raised from the 5s default after a tool call failed.
     """
-    conn = sqlite3.connect(path)
+    conn = sqlite3.connect(path, timeout=_BUSY_TIMEOUT_SECONDS)
     conn.row_factory = sqlite3.Row
     return conn
 
