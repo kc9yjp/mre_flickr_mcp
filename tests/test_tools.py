@@ -1589,3 +1589,85 @@ class TestGroupAlreadyInPool:
         rows = {r["photo_id"]: (r["status"], r["error_msg"]) for r in conn.execute("SELECT * FROM pending_group_adds")}
         assert rows["p1"] == ("success", GROUP_ALREADY_IN_POOL_NOTE)
         assert rows["p2"] == ("error", "Photo limit reached")
+
+
+class TestFetchPhotoImage:
+    SIZES = {"sizes": {"size": [
+        {"label": "Medium 800", "source": "https://cdn/x_c.jpg"},
+        {"label": "Large", "source": "https://cdn/x_b.jpg"},
+        {"label": "Large 1600", "source": "https://cdn/x_h.jpg"},
+        {"label": "Large 2048", "source": "https://cdn/x_k.jpg"},
+        {"label": "Original", "source": "https://cdn/x_o.jpg"},
+    ]}}
+
+    @staticmethod
+    def _resp(status, headers=None, content=b"\xff\xd8jpeg"):
+        r = MagicMock()
+        r.status_code = status
+        r.headers = {"content-type": "image/jpeg", **(headers or {})}
+        r.content = content
+        return r
+
+    @pytest.fixture(autouse=True)
+    def _fast(self):
+        import tools.photos as photos
+        photos._image_cache.clear()
+        with patch("tools.photos.time.sleep") as sleep, patch.object(photos, "_MIN_FETCH_INTERVAL_SECONDS", 0):
+            yield sleep
+        photos._image_cache.clear()
+
+    def test_candidates_prefer_1600_and_skip_original(self):
+        from tools.photos import _image_candidates
+        assert _image_candidates(self.SIZES["sizes"]["size"]) == [
+            "https://cdn/x_h.jpg", "https://cdn/x_k.jpg", "https://cdn/x_b.jpg", "https://cdn/x_c.jpg",
+        ]
+
+    def test_candidates_fall_back_to_original_only_when_nothing_else(self):
+        from tools.photos import _image_candidates
+        assert _image_candidates([{"label": "Original", "source": "https://cdn/x_o.jpg"}]) == ["https://cdn/x_o.jpg"]
+
+    @pytest.mark.asyncio
+    async def test_retries_429_honouring_retry_after(self, db, api_get, _fast):
+        import mcp_tools
+        api_get.return_value = self.SIZES
+        with patch("tools.photos.requests.get", side_effect=[self._resp(429, {"Retry-After": "2"}), self._resp(200)]) as get:
+            result = await mcp_tools._fetch_photo_image({"id": "photo1"})
+        assert result[1].type == "image"
+        assert [c.args[0] for c in get.call_args_list] == ["https://cdn/x_h.jpg"] * 2
+        _fast.assert_any_call(2.0)
+
+    @pytest.mark.asyncio
+    async def test_falls_back_to_smaller_size_when_throttled(self, db, api_get):
+        import mcp_tools
+        api_get.return_value = self.SIZES
+        responses = [self._resp(429)] * 3 + [self._resp(200)]
+        with patch("tools.photos.requests.get", side_effect=responses) as get:
+            result = await mcp_tools._fetch_photo_image({"id": "photo1"})
+        assert result[1].type == "image"
+        assert get.call_args_list[-1].args[0] == "https://cdn/x_k.jpg"
+
+    @pytest.mark.asyncio
+    async def test_persistent_429_returns_clear_message(self, db, api_get):
+        import mcp_tools
+        api_get.return_value = self.SIZES
+        with patch("tools.photos.requests.get", return_value=self._resp(429)):
+            result = await mcp_tools._fetch_photo_image({"id": "photo1"})
+        assert len(result) == 1 and "rate-limiting" in _text(result)
+
+    @pytest.mark.asyncio
+    async def test_404_moves_straight_to_next_size(self, db, api_get):
+        import mcp_tools
+        api_get.return_value = self.SIZES
+        with patch("tools.photos.requests.get", side_effect=[self._resp(404), self._resp(200)]) as get:
+            result = await mcp_tools._fetch_photo_image({"id": "photo1"})
+        assert result[1].type == "image" and get.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_second_fetch_is_served_from_cache(self, db, api_get):
+        import mcp_tools
+        api_get.return_value = self.SIZES
+        with patch("tools.photos.requests.get", return_value=self._resp(200)) as get:
+            await mcp_tools._fetch_photo_image({"id": "photo1"})
+            result = await mcp_tools._fetch_photo_image({"id": "photo1"})
+        assert result[1].type == "image"
+        assert get.call_count == 1 and api_get.call_count == 1

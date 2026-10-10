@@ -5,7 +5,9 @@ import io
 import json
 import logging
 import sqlite3
+import threading
 import time
+from collections import OrderedDict
 from datetime import datetime, timezone
 
 import requests
@@ -103,7 +105,12 @@ TOOLS = [
     ),
     Tool(
         name="fetch_photo_image",
-        description="Download a photo by ID and return it as an image for visual inspection.",
+        description=(
+            "Download a photo by ID and return it as an image for visual inspection. "
+            "Flickr's image server throttles bursts, so fetch images one at a time rather than "
+            "several in parallel; the server retries and paces downloads itself, and re-fetching "
+            "the same photo within a few minutes is served from a cache."
+        ),
         inputSchema={
             "type": "object",
             "properties": {
@@ -699,31 +706,142 @@ def _downsample_image(content: bytes, mime: str) -> tuple[bytes, str]:
     return buf.getvalue(), "image/jpeg"
 
 
+# --- Image download: Flickr's CDN (live.staticflickr.com) answers bursts of
+# requests with 429 Too Many Requests, and Claude happily fires several
+# fetch_photo_image calls at once. So downloads are paced across all worker
+# threads, retried with backoff, and fall back to smaller renditions; recent
+# results are cached because the same photo is often fetched again soon.
+
+# Renditions to try, best first. Large 1600 is closest to MAX_IMAGE_DIMENSION
+# (anything bigger is downscaled anyway); the rest are fallbacks — smaller
+# files, and a different URL that may not be throttled.
+_IMAGE_SIZE_PREFERENCE = ("Large 1600", "Large 2048", "Large", "Medium 800", "Medium 640", "Medium")
+_RETRYABLE_STATUS = frozenset({429, 500, 502, 503, 504})
+_ATTEMPTS_PER_URL = 3
+_MAX_RETRY_WAIT_SECONDS = 10.0
+_FETCH_BUDGET_SECONDS = 45.0
+_MIN_FETCH_INTERVAL_SECONDS = 0.5
+_IMAGE_CACHE_SIZE = 32
+_IMAGE_CACHE_TTL_SECONDS = 600
+
+_fetch_slots = threading.BoundedSemaphore(2)
+_pace_lock = threading.Lock()
+_last_fetch_start = 0.0
+_image_cache: "OrderedDict[str, tuple[float, str, str, str]]" = OrderedDict()
+_image_cache_lock = threading.Lock()
+
+
+class ImageFetchError(Exception):
+    """Couldn't download any rendition; the message is meant for the caller."""
+
+
+def _image_candidates(sizes: list[dict]) -> list[str]:
+    by_label = {s.get("label"): s.get("source") for s in sizes}
+    urls = [by_label[label] for label in _IMAGE_SIZE_PREFERENCE if by_label.get(label)]
+    if not urls and sizes:
+        urls.append(sizes[-1].get("source"))  # only the original exists
+    return [u for u in dict.fromkeys(urls) if u]
+
+
+def _retry_wait(resp, attempt: int) -> float:
+    header = resp.headers.get("Retry-After") if resp is not None else None
+    try:
+        wait = float(header) if header is not None else 1.5 * (2 ** attempt)
+    except ValueError:
+        wait = 1.5 * (2 ** attempt)
+    return min(max(wait, 0.5), _MAX_RETRY_WAIT_SECONDS)
+
+
+def _paced_get(url: str):
+    """requests.get with at most two downloads in flight and a minimum gap between starts."""
+    global _last_fetch_start
+    with _fetch_slots:
+        with _pace_lock:
+            gap = _last_fetch_start + _MIN_FETCH_INTERVAL_SECONDS - time.monotonic()
+            if gap > 0:
+                time.sleep(gap)
+            _last_fetch_start = time.monotonic()
+        return requests.get(url, timeout=flickr_api.HTTP_TIMEOUT)
+
+
+def _download_image(photo_id: str, urls: list[str]) -> tuple[bytes, str]:
+    """Download the first rendition that works, retrying throttled/transient failures."""
+    deadline = time.monotonic() + _FETCH_BUDGET_SECONDS
+    last_problem = "no image URL"
+    for url in urls:
+        for attempt in range(_ATTEMPTS_PER_URL):
+            resp = None
+            try:
+                resp = _paced_get(url)
+                if resp.status_code == 200:
+                    return resp.content, resp.headers.get("content-type", "image/jpeg").split(";")[0]
+                last_problem = f"HTTP {resp.status_code}"
+                if resp.status_code not in _RETRYABLE_STATUS:
+                    break  # 403/404/410 etc.: this rendition won't work, try the next
+            except (requests.Timeout, requests.ConnectionError) as e:
+                last_problem = f"network error ({type(e).__name__})"
+            wait = _retry_wait(resp, attempt)
+            if attempt + 1 >= _ATTEMPTS_PER_URL or time.monotonic() + wait > deadline:
+                break
+            logging.info("fetch_photo_image: %s for photo %s (%s), retrying in %.1fs",
+                         last_problem, photo_id, url, wait)
+            time.sleep(wait)
+        logging.warning("fetch_photo_image: giving up on %s for photo %s: %s", url, photo_id, last_problem)
+        if time.monotonic() >= deadline:
+            break
+    if "429" in last_problem:
+        raise ImageFetchError(
+            f"Flickr's image server is rate-limiting requests right now (HTTP 429), so photo {photo_id}'s "
+            "image couldn't be downloaded even after retrying smaller sizes. Wait a little and try again, "
+            "and fetch images one at a time rather than several at once."
+        )
+    raise ImageFetchError(f"Couldn't download the image for photo {photo_id} ({last_problem}).")
+
+
+def _cached_image(photo_id: str):
+    with _image_cache_lock:
+        hit = _image_cache.get(photo_id)
+        if hit and time.monotonic() - hit[0] < _IMAGE_CACHE_TTL_SECONDS:
+            _image_cache.move_to_end(photo_id)
+            return hit[1:]
+        _image_cache.pop(photo_id, None)
+    return None
+
+
+def _cache_image(photo_id: str, photopage: str, data: str, mime: str) -> None:
+    with _image_cache_lock:
+        _image_cache[photo_id] = (time.monotonic(), photopage, data, mime)
+        _image_cache.move_to_end(photo_id)
+        while len(_image_cache) > _IMAGE_CACHE_SIZE:
+            _image_cache.popitem(last=False)
+
+
 async def _fetch_photo_image(args):
     photo_id = args["id"]
-    with get_db() as conn:
-        row = conn.execute("SELECT url_original, url_photopage FROM photos WHERE id = ?", (photo_id,)).fetchone()
-    if row:
-        photopage = row["url_photopage"]
+    cached = _cached_image(photo_id)
+    if cached:
+        photopage, data, mime = cached
     else:
-        info = flickr_api._api_get("flickr.photos.getInfo", {"photo_id": photo_id})
-        photo = info["photo"]
-        owner = photo["owner"]["nsid"]
-        photopage = f"https://www.flickr.com/photos/{owner}/{photo_id}/"
-    sizes_data = flickr_api._api_get("flickr.photos.getSizes", {"photo_id": photo_id})
-    sizes = sizes_data["sizes"]["size"]
-    preferred = ("Large 2048", "Large 1600", "Large")
-    url = next(
-        (s["source"] for label in preferred for s in sizes if s["label"] == label),
-        sizes[-1]["source"],
-    )
-    if not url:
-        return [TextContent(type="text", text="No image URL available for this photo.")]
-    resp = requests.get(url, timeout=flickr_api.HTTP_TIMEOUT)
-    resp.raise_for_status()
-    mime = resp.headers.get("content-type", "image/jpeg").split(";")[0]
-    content, mime = _downsample_image(resp.content, mime)
-    data = base64.standard_b64encode(content).decode()
+        with get_db() as conn:
+            row = conn.execute("SELECT url_photopage FROM photos WHERE id = ?", (photo_id,)).fetchone()
+        if row:
+            photopage = row["url_photopage"]
+        else:
+            info = flickr_api._api_get("flickr.photos.getInfo", {"photo_id": photo_id})
+            photo = info["photo"]
+            owner = photo["owner"]["nsid"]
+            photopage = f"https://www.flickr.com/photos/{owner}/{photo_id}/"
+        sizes_data = flickr_api._api_get("flickr.photos.getSizes", {"photo_id": photo_id})
+        urls = _image_candidates(sizes_data["sizes"]["size"])
+        if not urls:
+            return [TextContent(type="text", text="No image URL available for this photo.")]
+        try:
+            content, mime = _download_image(photo_id, urls)
+        except ImageFetchError as e:
+            return [TextContent(type="text", text=str(e))]
+        content, mime = _downsample_image(content, mime)
+        data = base64.standard_b64encode(content).decode()
+        _cache_image(photo_id, photopage, data, mime)
     return [
         TextContent(type="text", text=f"Photo ID: {photo_id}\n{photopage}"),
         ImageContent(type="image", data=data, mimeType=mime),
