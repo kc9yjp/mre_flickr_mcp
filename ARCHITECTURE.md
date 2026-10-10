@@ -221,6 +221,8 @@ anything whose retry window has passed.
 Moderated groups answer with code 6/7 ("added to / already in the pending
 queue"); that's a successful submission awaiting admin approval, so it's
 recorded as `success` with an explanatory note rather than as an error.
+"Photo already in pool" (code 3) is likewise a success — the photo is
+already where it was meant to go.
 
 **Scheduled-publish queue** (`pending_publishes`): `schedule_publish` queues a
 photo to go public at a future time. It accepts the group queue's

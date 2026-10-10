@@ -505,6 +505,11 @@ _GROUP_THROTTLE_ERROR_CODE = 5
 _GROUP_PENDING_CODES = frozenset({6, 7})
 GROUP_PENDING_NOTE = "Awaiting approval by the group's admins (in the pool's pending queue)."
 
+# Code 3 ("Photo already in pool"): the goal — photo in the pool — is already
+# met, so it's a success too (and the membership is recorded locally).
+_GROUP_ALREADY_IN_POOL_CODE = 3
+GROUP_ALREADY_IN_POOL_NOTE = "Already in this group's pool."
+
 
 def _flush_group_queue(conn, force: bool = False, item_id: int | None = None) -> list[dict]:
     """Process waiting queue items whose retry_after has passed.
@@ -549,6 +554,16 @@ def _flush_group_queue(conn, force: bool = False, item_id: int | None = None) ->
                     (GROUP_PENDING_NOTE, now, row["id"]),
                 )
                 flushed.append({"photo_id": row["photo_id"], "group_id": row["group_id"], "result": "pending_approval"})
+            elif e.code == _GROUP_ALREADY_IN_POOL_CODE:
+                conn.execute(
+                    "UPDATE pending_group_adds SET status='success', error_msg=?, completed_at=? WHERE id=?",
+                    (GROUP_ALREADY_IN_POOL_NOTE, now, row["id"]),
+                )
+                conn.execute(
+                    "INSERT OR IGNORE INTO photo_groups (photo_id, group_id) VALUES (?, ?)",
+                    (row["photo_id"], row["group_id"]),
+                )
+                flushed.append({"photo_id": row["photo_id"], "group_id": row["group_id"], "result": "already_in_pool"})
             elif e.code == _GROUP_THROTTLE_ERROR_CODE:
                 conn.execute(
                     "UPDATE pending_group_adds SET retry_after=? WHERE id=?",
@@ -617,6 +632,12 @@ def _add_photo_to_one_group(conn, photo_id: str, group_id: str, retry_at_str, qu
                 f"Photo {photo_id} submitted to group {group_id} — it's in the group's pending queue, "
                 "awaiting the admins' approval."
             )
+        if e.code == _GROUP_ALREADY_IN_POOL_CODE:
+            conn.execute(
+                "INSERT OR IGNORE INTO photo_groups (photo_id, group_id) VALUES (?, ?)",
+                (photo_id, group_id),
+            )
+            return f"Photo {photo_id} is already in group {group_id}'s pool — nothing to do."
         if e.code == _GROUP_THROTTLE_ERROR_CODE:
             action, retry_after = _queue_group_add(conn, photo_id, group_id, retry_at_str, days_offset)
             eta = _fmt_chicago(retry_after)

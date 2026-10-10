@@ -113,6 +113,11 @@ _MIGRATIONS = [
        SET status = 'success',
            error_msg = 'Awaiting approval by the group''s admins (in the pool''s pending queue).'
        WHERE status = 'error' AND error_msg LIKE '%pending queue%'""",
+    # Likewise "Photo already in pool" (code 3) — the photo is in the pool,
+    # so it's a success. Note text must match GROUP_ALREADY_IN_POOL_NOTE.
+    """UPDATE pending_group_adds
+       SET status = 'success', error_msg = 'Already in this group''s pool.'
+       WHERE status = 'error' AND error_msg LIKE '%already in pool%'""",
 ]
 
 SCHEMA_VERSION = len(_MIGRATIONS)

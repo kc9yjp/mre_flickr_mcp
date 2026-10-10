@@ -1541,3 +1541,51 @@ class TestLockedDatabaseReporting:
             result = await mcp_tools.call_tool("set_visibility", {"id": "x", "is_public": True})
         text = _text(result)
         assert "database was busy" in text and "may already have been applied" in text
+
+
+class TestGroupAlreadyInPool:
+    def test_flush_records_already_in_pool_as_success(self):
+        from flickr_api import FlickrAPIError
+        from tools.groups import GROUP_ALREADY_IN_POOL_NOTE, _flush_group_queue
+        conn = make_db()
+        now = int(time.time())
+        conn.execute(
+            "INSERT INTO pending_group_adds (photo_id, group_id, status, retry_after, queued_at) "
+            "VALUES ('photo1', 'group1@N00', 'waiting', ?, ?)", (now - 60, now - 3600),
+        )
+        conn.commit()
+        with patch("flickr_api._api_post", side_effect=FlickrAPIError(3, "Photo already in pool")):
+            flushed = _flush_group_queue(conn)
+        assert flushed[0]["result"] == "already_in_pool"
+        row = conn.execute("SELECT status, error_msg FROM pending_group_adds").fetchone()
+        assert row["status"] == "success" and row["error_msg"] == GROUP_ALREADY_IN_POOL_NOTE
+        assert conn.execute("SELECT COUNT(*) FROM photo_groups").fetchone()[0] == 1
+
+    @pytest.mark.asyncio
+    async def test_immediate_add_reports_already_in_pool(self, db, api_post):
+        from flickr_api import FlickrAPIError
+        import mcp_tools
+        api_post.side_effect = FlickrAPIError(3, "Photo already in pool")
+        result = await mcp_tools._add_to_group({"photo_id": "photo1", "group_ids": ["group2@N00"]})
+        assert "already in" in _text(result) and "NOT added" not in _text(result)
+        assert db.execute(
+            "SELECT 1 FROM photo_groups WHERE photo_id='photo1' AND group_id='group2@N00'"
+        ).fetchone() is not None
+
+    def test_migration_moves_old_already_in_pool_errors_to_success(self):
+        import flickr_sync
+        from tools.groups import GROUP_ALREADY_IN_POOL_NOTE
+        conn = sqlite3.connect(":memory:")
+        conn.row_factory = sqlite3.Row
+        flickr_sync.init_db(conn)
+        fixup = next(i for i, sql in enumerate(flickr_sync._MIGRATIONS, 1) if "already in pool" in sql)
+        conn.execute(f"PRAGMA user_version = {fixup - 1}")
+        conn.execute(
+            "INSERT INTO pending_group_adds (photo_id, group_id, status, error_msg, queued_at) VALUES "
+            "('p1', 'g1', 'error', 'Photo already in pool', 1), ('p2', 'g2', 'error', 'Photo limit reached', 1)"
+        )
+        conn.commit()
+        flickr_sync._apply_migrations(conn)
+        rows = {r["photo_id"]: (r["status"], r["error_msg"]) for r in conn.execute("SELECT * FROM pending_group_adds")}
+        assert rows["p1"] == ("success", GROUP_ALREADY_IN_POOL_NOTE)
+        assert rows["p2"] == ("error", "Photo limit reached")
